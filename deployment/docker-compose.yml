@@ -1,0 +1,15 @@
+services:
+  node-a:
+    image: helium
+    container_name: node-a
+    command: -protocolmap /helium/config/protocolmap.json
+    volumes:
+      - ./nodeA.json:/helium/config/node.json
+      - ./protocolmap.json:/helium/config/protocolmap.json
+  node-b:
+    image: helium
+    container_name: node-b
+    command: -protocolmap /helium/config/protocolmap.json
+    volumes:
+      - ./nodeB.json:/helium/config/node.json
+      - ./protocolmap.json:/helium/config/protocolmap.json

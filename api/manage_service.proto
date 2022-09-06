@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option go_package = "github.com/ldsec/lattigo-cloud/pkg/api";
+
+package lattigo_cloud_proto;
+
+service ManageService {
+  rpc SayHello (HelloRequest) returns (HelloResponse) {}
+}
+
+// The Hello Request
+message HelloRequest {}
+
+// The Hello Response
+message HelloResponse {}

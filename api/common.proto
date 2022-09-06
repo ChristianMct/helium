@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option go_package = "github.com/ldsec/lattigo-cloud/pkg/api";
+
+package lattigo_cloud_proto;
+
+message ProtocolID {
+    string ProtocolID = 1;
+}
+
+message SessionID {
+    string session_id = 1;
+}
+
+message NodeID {
+    string node_id = 1;
+}
+
+message Void {
+}

@@ -1,0 +1,259 @@
+package setup
+
+import (
+	"context"
+	"fmt"
+	"lattigo-cloud/pkg/api"
+	"lattigo-cloud/pkg/node"
+	pkg "lattigo-cloud/pkg/session"
+	"log"
+
+	"github.com/tuneinsight/lattigo/v3/drlwe"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+)
+
+type SetupService struct {
+	*node.Node
+	*api.UnimplementedSetupServiceServer
+
+	peers map[pkg.NodeID]api.SetupServiceClient
+
+	protocols map[ProtocolID]ProtocolInt
+	aggTasks  chan AggregateTask
+}
+
+type ProtocolID string
+
+type ProtocolDescriptor struct {
+	Type         api.ProtocolType
+	Args         map[string]string
+	Aggregator   pkg.NodeID
+	Participants []pkg.NodeID
+}
+
+type ShareRequest struct {
+	ProtocolID
+	From         pkg.NodeID
+	To           pkg.NodeID
+	Round        uint64
+	Previous     []byte
+	AggregateFor []pkg.NodeID
+	NoData       bool
+}
+
+func (s ShareRequest) String() string {
+	return fmt.Sprintf("ShareRequest[protocol_id: %s from: %s to: %s has_previous: %v]", s.ProtocolID, s.From, s.To, len(s.Previous) > 0)
+}
+
+type ProtocolMap []ProtocolDescriptor
+
+func NewSetupService(n *node.Node) (s *SetupService, err error) {
+	s = new(SetupService)
+	s.Node = n
+	s.protocols = make(map[ProtocolID]ProtocolInt)
+	s.aggTasks = make(chan AggregateTask, 1024)
+	s.peers = make(map[pkg.NodeID]api.SetupServiceClient)
+	if n.HasAddress() {
+		n.RegisterService(&api.SetupService_ServiceDesc, s)
+	}
+	return s, nil
+}
+
+// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers). These connections are used to intialised the api.SetupServiceClient instances of the nodes (stored in peers).
+func (s *SetupService) Connect() {
+	for peerID, peerConn := range s.Conns() {
+		s.peers[peerID] = api.NewSetupServiceClient(peerConn)
+	}
+}
+
+// Execute executes the ProtocolFetchShareTasks of s. These tasks consist in retrieving the share from each peer in the protocol and aggregating the shares.
+func (s *SetupService) Execute() error {
+
+	log.Printf("Node %s | started Execute with protocols %v \n", s.ID(), s.protocols)
+
+	for aggTask := range s.aggTasks {
+		s.ExecuteAggTask(&aggTask)
+	}
+
+	log.Printf("Node %s | execute returned\n", s.ID())
+	return nil
+}
+
+func (s *SetupService) LoadProtocolMap(session *pkg.Session, pm ProtocolMap) error {
+	taskCount := 0
+	for _, protoDesc := range pm {
+
+		var protID api.ProtocolDescriptor
+		var proto ProtocolInt
+		switch protoDesc.Type {
+		case api.ProtocolType_SKG:
+			protID = api.ProtocolDescriptor{Type: api.ProtocolType_SKG}
+			proto = &SKGProtocol{
+				protocol:      protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				Thresholdizer: drlwe.NewThresholdizer(*session.Params),
+			}
+		case api.ProtocolType_CKG:
+			protID = api.ProtocolDescriptor{Type: api.ProtocolType_CKG}
+			proto = &CKGProtocol{
+				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				CKGProtocol: *drlwe.NewCKGProtocol(*session.Params)}
+
+		case api.ProtocolType_RTG:
+			protID = api.ProtocolDescriptor{Type: api.ProtocolType_RTG}
+			proto = &RTGProtocol{
+				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				RTGProtocol: *drlwe.NewRTGProtocol(*session.Params),
+			}
+		case api.ProtocolType_RKG:
+			protID = api.ProtocolDescriptor{Type: api.ProtocolType_RKG}
+			proto = &RKGProtocol{
+				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				RKGProtocol: *drlwe.NewRKGProtocol(*session.Params)}
+
+		default:
+			log.Println("unknown type", protoDesc.Type, "was skipped")
+			continue
+		}
+
+		if err := proto.Init(protoDesc, session); err != nil {
+			return err
+		}
+
+		s.protocols[ProtocolID(protID.String())] = proto
+		if proto.Descriptor().Type == api.ProtocolType_SKG || proto.Descriptor().Aggregator == s.ID() {
+			id := ProtocolID(protID.String())
+			p := proto
+			aggTask := AggregateTask{proto, make([]FetchShareTasks, 0, len(p.Required(1)))}
+			for peer := range p.Required(1) {
+				task := FetchShareTasks{Protocol: proto, ShareRequest: ShareRequest{ProtocolID: id, From: s.ID(), To: peer, AggregateFor: []pkg.NodeID{peer}, Round: 1}}
+				aggTask.fetchTasks = append(aggTask.fetchTasks, task)
+			}
+			s.aggTasks <- aggTask
+			taskCount++
+
+			if proto.Descriptor().Type == api.ProtocolType_RKG {
+				aggTask := AggregateTask{proto, make([]FetchShareTasks, 0, len(p.Required(2)))}
+				for peer := range p.Required(2) {
+					task := FetchShareTasks{Protocol: proto, ShareRequest: ShareRequest{ProtocolID: id, From: s.ID(), To: peer, AggregateFor: []pkg.NodeID{peer}, Round: 2}}
+					aggTask.fetchTasks = append(aggTask.fetchTasks, task)
+				}
+				s.aggTasks <- aggTask
+				taskCount++
+			}
+		}
+	}
+
+	log.Printf("Node %s | has %d fetch tasks\n", s.ID(), taskCount)
+	close(s.aggTasks)
+
+	return nil
+}
+
+func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*api.Share, error) {
+	ictx := Context{ctx}
+	_, exists := s.GetSessionFromID(ictx.SessionID()) // TODO assumes a single session for now
+	if !exists {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
+	}
+
+	if req.ProtocolID == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid protocol id: %s", req.ProtocolID)
+	}
+
+	proto, exists := s.protocols[ProtocolID(req.ProtocolID.ProtocolID)]
+	if !exists {
+		return nil, status.Errorf(codes.Unknown, "unknown protocol: %s", ProtocolID(req.ProtocolID.ProtocolID))
+	}
+
+	protoDesc := proto.Descriptor()
+
+	sreq := ShareRequest{
+		ProtocolID: ProtocolID(req.ProtocolID.ProtocolID),
+		From:       pkg.NodeID(ictx.SenderID()),
+		To:         s.ID(),
+	}
+	if req.Round != nil {
+		sreq.Round = *req.Round
+	}
+	if req.Previous != nil {
+		sreq.Previous = req.Previous.Share
+	}
+	sreq.AggregateFor = make([]pkg.NodeID, len(req.AggregateFor))
+	for i, nodeId := range req.AggregateFor {
+		sreq.AggregateFor[i] = pkg.NodeID(nodeId.GetNodeId())
+	}
+
+	log.Printf("Node %s | got request from %s - GET [type: %s round: %d, previous: %v, aggregate_for: %v, no_data: %v]\n", s.ID(), ictx.SenderID(), protoDesc.Type, sreq.Round, sreq.Previous != nil, req.AggregateFor, req.GetNoData())
+
+	share, err := proto.GetShare(sreq)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	shareBytes, err := share.Share().MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	return &api.Share{ProtocolID: req.ProtocolID, Share: shareBytes, Round: req.Round}, nil
+}
+
+func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Void, error) {
+	ictx := Context{ctx}
+	_, exists := s.GetSessionFromID(ictx.SessionID())
+	if !exists {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
+	}
+
+	proto, exists := s.protocols[ProtocolID(share.ProtocolID.ProtocolID)]
+	if !exists {
+		return nil, status.Errorf(codes.Unknown, "unknown protocol: %s", share.ProtocolID.ProtocolID)
+	}
+
+	protoDesc := proto.Descriptor()
+
+	proptoShare, err := proto.GetShare(ShareRequest{AggregateFor: nil})
+	if err != nil {
+		return nil, err
+	}
+
+	proptoShare.Share().UnmarshalBinary(share.Share)
+	senderID := pkg.NodeID(ictx.SenderID())
+	proptoShare.AggregateFor().Add(senderID)
+
+	_, err = proto.PutShare(proptoShare)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, err.Error())
+	}
+
+	var round string
+	if share.Round != nil {
+		round = fmt.Sprintf(" round: %d", *share.Round)
+	}
+
+	log.Printf("%s - PUT [type: %s%s]\n", ictx.SenderID(), protoDesc.Type, round)
+
+	return &api.Void{}, nil
+}
+
+type Context struct {
+	c context.Context
+}
+
+func (c Context) SenderID() string {
+	md, hasIncomingContext := metadata.FromIncomingContext(c.c)
+	if hasIncomingContext && len(md.Get("node_id")) == 1 {
+		return md.Get("node_id")[0]
+	}
+	return ""
+}
+
+func (c Context) SessionID() pkg.SessionID {
+	md, hasIncomingContext := metadata.FromIncomingContext(c.c)
+	if hasIncomingContext && len(md.Get("session_id")) == 1 {
+		return pkg.SessionID(md.Get("session_id")[0])
+	}
+	return ""
+}
