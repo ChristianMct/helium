@@ -3,7 +3,7 @@ package setup
 import (
 	"context"
 	"fmt"
-	"lattigo-cloud/pkg/api"
+	"helium/pkg/api"
 	"log"
 	"sync"
 

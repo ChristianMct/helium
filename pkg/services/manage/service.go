@@ -1,9 +1,9 @@
 package manage
 
 import (
-	"lattigo-cloud/pkg/api"
-	"lattigo-cloud/pkg/node"
-	pkg "lattigo-cloud/pkg/session"
+	"helium/pkg/api"
+	"helium/pkg/node"
+	pkg "helium/pkg/session"
 	"log"
 	"sync"
 )

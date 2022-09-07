@@ -31,7 +31,7 @@ func NewManageServiceClient(cc grpc.ClientConnInterface) ManageServiceClient {
 
 func (c *manageServiceClient) SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error) {
 	out := new(HelloResponse)
-	err := c.cc.Invoke(ctx, "/lattigo_cloud_proto.ManageService/SayHello", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/helium_proto.ManageService/SayHello", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func _ManageService_SayHello_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/lattigo_cloud_proto.ManageService/SayHello",
+		FullMethod: "/helium_proto.ManageService/SayHello",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ManageServiceServer).SayHello(ctx, req.(*HelloRequest))
@@ -88,7 +88,7 @@ func _ManageService_SayHello_Handler(srv interface{}, ctx context.Context, dec f
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ManageService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "lattigo_cloud_proto.ManageService",
+	ServiceName: "helium_proto.ManageService",
 	HandlerType: (*ManageServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

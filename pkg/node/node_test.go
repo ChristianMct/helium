@@ -2,9 +2,9 @@ package node_test
 
 import (
 	"fmt"
-	"lattigo-cloud/pkg/node"
-	"lattigo-cloud/pkg/services/manage"
-	pkg "lattigo-cloud/pkg/session"
+	"helium/pkg/node"
+	"helium/pkg/services/manage"
+	pkg "helium/pkg/session"
 	"strconv"
 	"sync"
 	"testing"

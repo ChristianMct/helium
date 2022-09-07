@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-option go_package = "github.com/ldsec/lattigo-cloud/pkg/api";
+option go_package = "github.com/ldsec/helium/pkg/api";
 
 import "common.proto";
 
-package lattigo_cloud_proto;
+package helium_proto;
  
 /* ProtocolType is a enumerate type for identifying protocol types */
 enum ProtocolType {

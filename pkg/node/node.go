@@ -2,8 +2,8 @@ package node
 
 import (
 	"fmt"
-	pkg "lattigo-cloud/pkg/session"
-	"lattigo-cloud/pkg/utils"
+	pkg "helium/pkg/session"
+	"helium/pkg/utils"
 	"log"
 	"net"
 	"time"

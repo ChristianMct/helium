@@ -3,9 +3,9 @@ package setup
 import (
 	"context"
 	"fmt"
-	"lattigo-cloud/pkg/api"
-	"lattigo-cloud/pkg/node"
-	pkg "lattigo-cloud/pkg/session"
+	"helium/pkg/api"
+	"helium/pkg/node"
+	pkg "helium/pkg/session"
 	"log"
 
 	"github.com/tuneinsight/lattigo/v3/drlwe"

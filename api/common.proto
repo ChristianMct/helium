@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option go_package = "github.com/ldsec/lattigo-cloud/pkg/api";
+option go_package = "github.com/ldsec/helium/pkg/api";
 
-package lattigo_cloud_proto;
+package helium_proto;
 
 message ProtocolID {
     string ProtocolID = 1;

@@ -1,5 +1,4 @@
-module lattigo-cloud
-
+module helium
 go 1.18
 
 require (

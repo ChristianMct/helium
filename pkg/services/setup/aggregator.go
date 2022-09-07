@@ -3,8 +3,8 @@ package setup
 import (
 	"encoding"
 	"fmt"
-	pkg "lattigo-cloud/pkg/session"
-	"lattigo-cloud/pkg/utils"
+	pkg "helium/pkg/session"
+	"helium/pkg/utils"
 	"sync"
 )
 

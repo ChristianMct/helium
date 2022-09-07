@@ -35,7 +35,7 @@ func NewSetupServiceClient(cc grpc.ClientConnInterface) SetupServiceClient {
 
 func (c *setupServiceClient) GetShare(ctx context.Context, in *ShareRequest, opts ...grpc.CallOption) (*Share, error) {
 	out := new(Share)
-	err := c.cc.Invoke(ctx, "/lattigo_cloud_proto.SetupService/GetShare", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/helium_proto.SetupService/GetShare", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (c *setupServiceClient) GetShare(ctx context.Context, in *ShareRequest, opt
 
 func (c *setupServiceClient) PutShare(ctx context.Context, in *Share, opts ...grpc.CallOption) (*Void, error) {
 	out := new(Void)
-	err := c.cc.Invoke(ctx, "/lattigo_cloud_proto.SetupService/PutShare", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/helium_proto.SetupService/PutShare", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func _SetupService_GetShare_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/lattigo_cloud_proto.SetupService/GetShare",
+		FullMethod: "/helium_proto.SetupService/GetShare",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SetupServiceServer).GetShare(ctx, req.(*ShareRequest))
@@ -114,7 +114,7 @@ func _SetupService_PutShare_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/lattigo_cloud_proto.SetupService/PutShare",
+		FullMethod: "/helium_proto.SetupService/PutShare",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SetupServiceServer).PutShare(ctx, req.(*Share))
@@ -126,7 +126,7 @@ func _SetupService_PutShare_Handler(srv interface{}, ctx context.Context, dec fu
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var SetupService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "lattigo_cloud_proto.SetupService",
+	ServiceName: "helium_proto.SetupService",
 	HandlerType: (*SetupServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
