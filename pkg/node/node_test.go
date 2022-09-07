@@ -2,13 +2,14 @@ package node_test
 
 import (
 	"fmt"
-	"helium/pkg/node"
-	"helium/pkg/services/manage"
-	pkg "helium/pkg/session"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/services/manage"
+	pkg "github.com/ldsec/helium/pkg/session"
 )
 
 type TestConfig struct {

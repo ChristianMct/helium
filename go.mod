@@ -1,4 +1,5 @@
-module helium
+module github.com/ldsec/helium
+
 go 1.18
 
 require (

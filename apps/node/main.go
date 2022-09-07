@@ -4,14 +4,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"helium/pkg/node"
-	"helium/pkg/services/manage"
-	"helium/pkg/services/setup"
-	pkg "helium/pkg/session"
 	"io/ioutil"
 	"log"
 	"os"
 	"time"
+
+	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/services/manage"
+	"github.com/ldsec/helium/pkg/services/setup"
+	pkg "github.com/ldsec/helium/pkg/session"
 )
 
 const DefaultAddress = ":40000"

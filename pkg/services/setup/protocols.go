@@ -3,10 +3,11 @@ package setup
 import (
 	"encoding"
 	"fmt"
-	pkg "helium/pkg/session"
-	"helium/pkg/utils"
 	"log"
 	"strconv"
+
+	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/tuneinsight/lattigo/v3/drlwe"
 	"github.com/tuneinsight/lattigo/v3/rlwe"

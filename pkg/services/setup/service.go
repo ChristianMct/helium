@@ -3,10 +3,11 @@ package setup
 import (
 	"context"
 	"fmt"
-	"helium/pkg/api"
-	"helium/pkg/node"
-	pkg "helium/pkg/session"
 	"log"
+
+	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/node"
+	pkg "github.com/ldsec/helium/pkg/session"
 
 	"github.com/tuneinsight/lattigo/v3/drlwe"
 	"google.golang.org/grpc/codes"

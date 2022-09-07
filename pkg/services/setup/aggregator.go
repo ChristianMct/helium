@@ -3,9 +3,10 @@ package setup
 import (
 	"encoding"
 	"fmt"
-	pkg "helium/pkg/session"
-	"helium/pkg/utils"
 	"sync"
+
+	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/utils"
 )
 
 type ShareInt interface {

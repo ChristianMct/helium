@@ -1,11 +1,12 @@
 package manage
 
 import (
-	"helium/pkg/api"
-	"helium/pkg/node"
-	pkg "helium/pkg/session"
 	"log"
 	"sync"
+
+	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/node"
+	pkg "github.com/ldsec/helium/pkg/session"
 )
 
 type ManageService struct {

@@ -3,9 +3,10 @@ package setup
 import (
 	"context"
 	"fmt"
-	"helium/pkg/api"
 	"log"
 	"sync"
+
+	"github.com/ldsec/helium/pkg/api"
 
 	"google.golang.org/grpc/metadata"
 )

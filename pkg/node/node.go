@@ -2,11 +2,12 @@ package node
 
 import (
 	"fmt"
-	pkg "helium/pkg/session"
-	"helium/pkg/utils"
 	"log"
 	"net"
 	"time"
+
+	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/tuneinsight/lattigo/v3/drlwe"
 	"github.com/tuneinsight/lattigo/v3/rlwe"
@@ -83,9 +84,9 @@ func NewNode(config NodeConfig) (node *Node) {
 
 	if node.HasAddress() {
 		node.grpcServer = grpc.NewServer()
-		log.Printf("Node %s | started as full node at address %s\n", node.id, node.addr)
+		log.Printf("Node %s | started as full helium node at address %s\n", node.id, node.addr)
 	} else {
-		log.Printf("Node %s | started as light node\n", node.id)
+		log.Printf("Node %s | started as light helium node\n", node.id)
 	}
 
 	if config.SessionParameters != nil {
