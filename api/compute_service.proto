@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+option go_package = "github.com/ldsec/helium/pkg/api";
+
+import "common.proto";
+
+package helium_proto;
+
+message Ciphertext {
+    bytes ciphertext = 1;
+    CiphertextMetadata metadata = 2;
+}
+
+/* CiphertextType is a enumerate type for identifying ciphertext types */
+enum CiphertextType {
+    UNSPECIFIED_CT_TYPE = 0;
+    BFV = 1; 
+    BGV = 2; 
+    CKKS = 3;
+    RGSW = 4;
+}
+
+message CiphertextMetadata {
+    optional CiphertextID id = 1;
+    optional CiphertextType type = 2;
+}
+
+message CiphertextRequest {
+    CiphertextID id = 1;
+}
+
+service ComputeService {
+    rpc GetCiphertext(CiphertextRequest) returns (Ciphertext) {}
+
+    rpc PutCiphertext(Ciphertext) returns (CiphertextID) {}
+}

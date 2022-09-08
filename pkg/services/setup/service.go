@@ -8,10 +8,10 @@ import (
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/node"
 	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/tuneinsight/lattigo/v3/drlwe"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -21,11 +21,9 @@ type SetupService struct {
 
 	peers map[pkg.NodeID]api.SetupServiceClient
 
-	protocols map[ProtocolID]ProtocolInt
+	protocols map[pkg.ProtocolID]ProtocolInt
 	aggTasks  chan AggregateTask
 }
-
-type ProtocolID string
 
 type ProtocolDescriptor struct {
 	Type         api.ProtocolType
@@ -35,7 +33,7 @@ type ProtocolDescriptor struct {
 }
 
 type ShareRequest struct {
-	ProtocolID
+	pkg.ProtocolID
 	From         pkg.NodeID
 	To           pkg.NodeID
 	Round        uint64
@@ -53,7 +51,7 @@ type ProtocolMap []ProtocolDescriptor
 func NewSetupService(n *node.Node) (s *SetupService, err error) {
 	s = new(SetupService)
 	s.Node = n
-	s.protocols = make(map[ProtocolID]ProtocolInt)
+	s.protocols = make(map[pkg.ProtocolID]ProtocolInt)
 	s.aggTasks = make(chan AggregateTask, 1024)
 	s.peers = make(map[pkg.NodeID]api.SetupServiceClient)
 	if n.HasAddress() {
@@ -92,25 +90,25 @@ func (s *SetupService) LoadProtocolMap(session *pkg.Session, pm ProtocolMap) err
 		case api.ProtocolType_SKG:
 			protID = api.ProtocolDescriptor{Type: api.ProtocolType_SKG}
 			proto = &SKGProtocol{
-				protocol:      protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				protocol:      protocol{ProtocolDescriptor: protoDesc, ID: pkg.ProtocolID(protID.String())},
 				Thresholdizer: drlwe.NewThresholdizer(*session.Params),
 			}
 		case api.ProtocolType_CKG:
 			protID = api.ProtocolDescriptor{Type: api.ProtocolType_CKG}
 			proto = &CKGProtocol{
-				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: pkg.ProtocolID(protID.String())},
 				CKGProtocol: *drlwe.NewCKGProtocol(*session.Params)}
 
 		case api.ProtocolType_RTG:
 			protID = api.ProtocolDescriptor{Type: api.ProtocolType_RTG}
 			proto = &RTGProtocol{
-				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: pkg.ProtocolID(protID.String())},
 				RTGProtocol: *drlwe.NewRTGProtocol(*session.Params),
 			}
 		case api.ProtocolType_RKG:
 			protID = api.ProtocolDescriptor{Type: api.ProtocolType_RKG}
 			proto = &RKGProtocol{
-				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: ProtocolID(protID.String())},
+				protocol:    protocol{ProtocolDescriptor: protoDesc, ID: pkg.ProtocolID(protID.String())},
 				RKGProtocol: *drlwe.NewRKGProtocol(*session.Params)}
 
 		default:
@@ -122,9 +120,9 @@ func (s *SetupService) LoadProtocolMap(session *pkg.Session, pm ProtocolMap) err
 			return err
 		}
 
-		s.protocols[ProtocolID(protID.String())] = proto
+		s.protocols[pkg.ProtocolID(protID.String())] = proto
 		if proto.Descriptor().Type == api.ProtocolType_SKG || proto.Descriptor().Aggregator == s.ID() {
-			id := ProtocolID(protID.String())
+			id := pkg.ProtocolID(protID.String())
 			p := proto
 			aggTask := AggregateTask{proto, make([]FetchShareTasks, 0, len(p.Required(1)))}
 			for peer := range p.Required(1) {
@@ -153,7 +151,7 @@ func (s *SetupService) LoadProtocolMap(session *pkg.Session, pm ProtocolMap) err
 }
 
 func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*api.Share, error) {
-	ictx := Context{ctx}
+	ictx := utils.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID()) // TODO assumes a single session for now
 	if !exists {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
@@ -163,15 +161,15 @@ func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*ap
 		return nil, status.Errorf(codes.InvalidArgument, "invalid protocol id: %s", req.ProtocolID)
 	}
 
-	proto, exists := s.protocols[ProtocolID(req.ProtocolID.ProtocolID)]
+	proto, exists := s.protocols[pkg.ProtocolID(req.ProtocolID.ProtocolID)]
 	if !exists {
-		return nil, status.Errorf(codes.Unknown, "unknown protocol: %s", ProtocolID(req.ProtocolID.ProtocolID))
+		return nil, status.Errorf(codes.Unknown, "unknown protocol: %s", pkg.ProtocolID(req.ProtocolID.ProtocolID))
 	}
 
 	protoDesc := proto.Descriptor()
 
 	sreq := ShareRequest{
-		ProtocolID: ProtocolID(req.ProtocolID.ProtocolID),
+		ProtocolID: pkg.ProtocolID(req.ProtocolID.ProtocolID),
 		From:       pkg.NodeID(ictx.SenderID()),
 		To:         s.ID(),
 	}
@@ -202,13 +200,13 @@ func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*ap
 }
 
 func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Void, error) {
-	ictx := Context{ctx}
+	ictx := utils.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID())
 	if !exists {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
 	}
 
-	proto, exists := s.protocols[ProtocolID(share.ProtocolID.ProtocolID)]
+	proto, exists := s.protocols[pkg.ProtocolID(share.ProtocolID.ProtocolID)]
 	if !exists {
 		return nil, status.Errorf(codes.Unknown, "unknown protocol: %s", share.ProtocolID.ProtocolID)
 	}
@@ -237,24 +235,4 @@ func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Voi
 	log.Printf("%s - PUT [type: %s%s]\n", ictx.SenderID(), protoDesc.Type, round)
 
 	return &api.Void{}, nil
-}
-
-type Context struct {
-	c context.Context
-}
-
-func (c Context) SenderID() string {
-	md, hasIncomingContext := metadata.FromIncomingContext(c.c)
-	if hasIncomingContext && len(md.Get("node_id")) == 1 {
-		return md.Get("node_id")[0]
-	}
-	return ""
-}
-
-func (c Context) SessionID() pkg.SessionID {
-	md, hasIncomingContext := metadata.FromIncomingContext(c.c)
-	if hasIncomingContext && len(md.Get("session_id")) == 1 {
-		return pkg.SessionID(md.Get("session_id")[0])
-	}
-	return ""
 }

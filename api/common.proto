@@ -16,5 +16,9 @@ message NodeID {
     string node_id = 1;
 }
 
+message CiphertextID {
+    string ciphertext_id = 1;
+}
+
 message Void {
 }

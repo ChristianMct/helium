@@ -37,7 +37,7 @@ type ProtocolShare interface {
 type protocol struct {
 	ProtocolDescriptor
 
-	ID   ProtocolID
+	ID   pkg.ProtocolID
 	self pkg.NodeID
 
 	session *pkg.Session

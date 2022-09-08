@@ -14,7 +14,7 @@ import (
 
 type SessionID string
 
-type CiphertextID string
+type ProtocolID string
 
 type CircuitID string
 
@@ -28,6 +28,7 @@ func (na NodeAddress) String() string {
 
 type Session struct {
 	*drlwe.Combiner
+	*CiphertextStore
 
 	ID SessionID
 	//NodeAddress string
@@ -47,6 +48,7 @@ type Session struct {
 	*rlwe.PublicKey
 	*rlwe.RelinearizationKey
 	*rlwe.EvaluationKey
+
 	mutex sync.RWMutex
 }
 
@@ -61,7 +63,7 @@ func NewSessionStore() *SessionStore {
 	return ss
 }
 
-func NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID string) (sess *Session, err error) {
+func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID string) (sess *Session, err error) {
 
 	sess = new(Session)
 	sess.ID = SessionID(sessionID)
@@ -90,9 +92,11 @@ func NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, 
 	for _, pt := range shamirPts {
 		spts = append(spts, pt)
 	}
-	sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeId], spts, t)
 
 	sess.tskDone = *sync.NewCond(&sync.Mutex{})
+
+	sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeId], spts, t)
+	sess.CiphertextStore = NewCiphertextStore()
 
 	return sess, err
 }
@@ -103,7 +107,7 @@ func (s *SessionStore) NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKe
 		return nil, fmt.Errorf("session id already exists: %s", sessionID)
 	}
 
-	sess, err = NewRLWESession(params, sk, crsKey, nodeId, nodes, t, shamirPks, sessionID)
+	sess, err = NewSession(params, sk, crsKey, nodeId, nodes, t, shamirPks, sessionID)
 
 	s.sessions[sess.ID] = sess
 
