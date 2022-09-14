@@ -18,12 +18,18 @@ type ComputeService struct {
 	*node.Node
 	*api.UnimplementedComputeServiceServer
 
+	circuits map[pkg.CircuitID]pkg.LocalCircuit
+
 	peers map[pkg.NodeID]api.ComputeServiceClient
 }
 
 func NewComputeService(n *node.Node) (s *ComputeService, err error) {
 	s = new(ComputeService)
 	s.Node = n
+
+	s.circuits = make(map[pkg.CircuitID]pkg.LocalCircuit)
+
+	s.circuits["ComponentWiseProduct4P"] = pkg.ComponentWiseProduct4P
 
 	s.peers = make(map[pkg.NodeID]api.ComputeServiceClient)
 
