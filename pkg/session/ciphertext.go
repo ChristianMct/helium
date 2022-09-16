@@ -47,6 +47,10 @@ func NewCiphertextFromGRPC(apiCt *api.Ciphertext) (*Ciphertext, error) {
 	return &ct, nil
 }
 
+func (id CiphertextID) ToGRPC() api.CiphertextID {
+	return api.CiphertextID{CiphertextId: string(id)}
+}
+
 func (ct Ciphertext) ToGRPC() api.Ciphertext {
 	ctBytes, err := ct.MarshalBinary()
 	if err != nil {

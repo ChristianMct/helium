@@ -10,7 +10,9 @@ import (
 	"github.com/ldsec/helium/pkg/node"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
+	"github.com/tuneinsight/lattigo/v3/bfv"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -44,6 +46,74 @@ func (s *ComputeService) Connect() {
 	for peerID, peerConn := range s.Conns() {
 		s.peers[peerID] = api.NewComputeServiceClient(peerConn)
 	}
+}
+
+type CircuitDesc struct {
+	ID      pkg.CircuitID
+	Session pkg.SessionID
+}
+
+func (s *ComputeService) LoadCircuit(cd CircuitDesc) error {
+	// TODO populate session store with own inputs
+	return nil
+}
+
+func (s *ComputeService) Execute(cd CircuitDesc) error {
+
+	// Idea: full nodes will resolve compute all session and local ciphertext by either resolving the inputs or waiting for them.
+	// Light node isolate their inputs and send them to the know full node(s?)/delegates(s?)
+	c, exists := s.circuits[cd.ID]
+	if !exists {
+		return fmt.Errorf("circuit does not exist")
+	}
+
+	sess, exists := s.GetSessionFromID(cd.Session)
+	if !exists {
+		return fmt.Errorf("session does not exist")
+	}
+
+	in, out := make(chan pkg.Operand), make(chan pkg.Operand)
+
+	go c.Evaluate(nil, in, out)
+
+	for _, input := range c.Inputs() {
+		isLocal := input.NodeID() == s.ID()
+
+		if isLocal {
+			ct, exists := sess.Load(input.CiphertextID())
+			if !exists {
+				return fmt.Errorf("ciphertext %s does not exist locally", input.CiphertextID())
+			}
+			in <- pkg.Operand{URL: input.URL, Ciphertext: &bfv.Ciphertext{Ciphertext: &ct.Ciphertext}}
+			continue
+		}
+
+		peer, hasCli := s.peers[input.NodeID()]
+		if !hasCli {
+			continue
+		}
+
+		ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", string(s.ID())))
+		ctId := input.CiphertextID().ToGRPC()
+		resp, err := peer.GetCiphertext(ctx, &api.CiphertextRequest{Id: &ctId})
+		if err != nil {
+			return err
+		}
+
+		ct, err := pkg.NewCiphertextFromGRPC(resp)
+		if err != nil {
+			return err
+		}
+
+		in <- pkg.Operand{URL: input.URL, Ciphertext: &bfv.Ciphertext{Ciphertext: &ct.Ciphertext}}
+	}
+	close(in)
+
+	for res := range out {
+		sess.Store(pkg.Ciphertext{*res.Ciphertext.Ciphertext, pkg.CiphertextMetadata{ID: res.CiphertextID()}})
+	}
+
+	return nil
 }
 
 func (s *ComputeService) GetCiphertext(ctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
