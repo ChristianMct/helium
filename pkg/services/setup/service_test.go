@@ -38,7 +38,7 @@ var testSettings = []testSetting{
 }
 
 //TestCloudAssistedSetup tests the generation of the public key in push mode
-func TestCloudAssistedSetup(t *testing.T) {
+func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 	type cloud struct {
 		*node.Node
@@ -76,7 +76,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 					peerIds[i] = nid
 				}
 
-				sessParams := &node.SessionParameters{
+				sessParams := node.SessionParameters{
 					ID:         "test-session",
 					RLWEParams: literalParams,
 					Nodes:      peerIds,
@@ -89,7 +89,12 @@ func TestCloudAssistedSetup(t *testing.T) {
 				var err error
 
 				// initialise the cloud with given parameters and a session
-				clou := cloud{Node: node.NewNode(node.NodeConfig{ID: "cloud", Address: "local", Peers: peers, SessionParameters: sessParams})}
+				cloudNode, err := node.NewNode(node.NodeConfig{ID: "cloud", Address: "local", Peers: peers, SessionParameters: []node.SessionParameters{sessParams}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				clou := cloud{Node: cloudNode}
+
 				sess, ok := clou.GetSessionFromID(pkg.SessionID(sessParams.ID))
 				if !ok {
 					t.Fatal("session should exist")
@@ -307,29 +312,19 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				// initialise peers
-				peers := make(map[pkg.NodeID]pkg.NodeAddress)
-				peerIds := make([]pkg.NodeID, ts.N)
-				peerShamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
-				for i := range peerIds {
-					nid := pkg.NodeID(fmt.Sprint(i))
-					peers[nid] = "local"
-					peerIds[i] = nid
-					peerShamirPks[nid] = drlwe.ShamirPublicPoint(i)
+				var testConfig = node.LocalTestConfig{
+					FullNodes:  ts.N,
+					LightNodes: 0,
+					Session: &node.SessionParameters{
+						RLWEParams: literalParams,
+						T:          ts.T,
+					},
 				}
+				localtest := node.NewLocalTest(testConfig)
 
-				sessParams := &node.SessionParameters{
-					ID:         "test-session",
-					RLWEParams: literalParams,
-					T:          ts.T,
-					Nodes:      peerIds,
-					ShamirPks:  peerShamirPks,
-					CRSKey:     []byte{'l', 'a', 't', 't', 'i', 'g', '0'},
-				}
-
-				params, _ := rlwe.NewParametersFromLiteral(literalParams)
-
-				galEl := params.GaloisElementForRowRotation()
+				params := localtest.Params
+				peerIds := localtest.NodeIds()
+				galEl := localtest.Params.GaloisElementForRowRotation()
 
 				// define protocols to test
 				protocolMap := ProtocolMap{
@@ -344,32 +339,19 @@ func TestPeerToPeerSetup(t *testing.T) {
 					}, protocolMap...)
 				}
 
-				// initialise framework for key generation
-				ringQP := params.RingQP()
-
-				dialers := make(map[pkg.NodeID]node.Dialer)
-
 				var err error
 
 				nodes := make(map[pkg.NodeID]*peer, ts.N)
-
-				shamirPk := uint64(1)
-				skIdeal := rlwe.NewSecretKey(params)
 				// initialise nodes, sessions and load protocols
-				for i, id := range peers {
-					n := &peer{Node: node.NewNode(node.NodeConfig{ID: i, Address: id, Peers: peers, ShamirPublicKey: drlwe.ShamirPublicPoint(shamirPk), SessionParameters: sessParams})}
+				for _, node := range localtest.Nodes {
+					n := &peer{Node: node}
 
 					n.SetupService, err = NewSetupService(n.Node)
 					if err != nil {
 						t.Error(err)
 					}
-					n.dialer = startTestService(n.SetupService)
-					dialers[i] = n.dialer
-					if err != nil {
-						t.Fatal(err)
-					}
 
-					sess, exists := n.GetSessionFromID(pkg.SessionID(sessParams.ID))
+					sess, exists := n.GetSessionFromID("test-session")
 					if !exists {
 						t.Fatal("session should exists")
 					}
@@ -379,12 +361,10 @@ func TestPeerToPeerSetup(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					sk := sess.GetSecretKey()
-					ringQP.AddLvl(sk.Value.Q.Level(), sk.Value.P.Level(), sk.Value, skIdeal.Value, skIdeal.Value)
-
-					nodes[i] = n
-					shamirPk += 1
+					nodes[node.ID()] = n
 				}
+
+				localtest.Start()
 
 				// launch public key generation and check correctness
 				t.Run("FullSetup", func(t *testing.T) {
@@ -396,7 +376,6 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 						g.Go(
 							func() error {
-								node.Node.ConnectWithDialers(dialers)
 								node.SetupService.Connect()
 
 								return node.SetupService.Execute()
@@ -419,7 +398,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 					}
 
 					log2BoundPk := bits.Len64(uint64(ts.N) * params.NoiseBound() * uint64(params.N()))
-					require.True(t, rlwe.PublicKeyIsCorrect(pk, skIdeal, params, log2BoundPk))
+					require.True(t, rlwe.PublicKeyIsCorrect(pk, localtest.SkIdeal, params, log2BoundPk))
 
 					rlk := sess.RelinearizationKey
 					if rlk == nil {
@@ -429,7 +408,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 					levelQ, levelP := params.QCount()-1, params.PCount()-1
 					decompSize := params.DecompPw2(levelQ, levelP) * params.DecompRNS(levelQ, levelP)
 					log2BoundRlk := bits.Len64(uint64(params.N() * decompSize * (params.N()*3*int(params.NoiseBound()) + 2*3*int(params.NoiseBound()) + params.N()*3)))
-					require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], skIdeal, params, log2BoundRlk))
+					require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], localtest.SkIdeal, params, log2BoundRlk))
 
 					rtk, isGen := sess.EvaluationKey.Rtks.Keys[galEl]
 					if !isGen {
@@ -437,7 +416,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 					}
 
 					log2BoundRtk := bits.Len64(uint64(params.N() * len(rtk.Value) * len(rtk.Value[0]) * (params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) + 2*3*int(math.Floor(rlwe.DefaultSigma*6)) + params.N()*3)))
-					require.True(t, rlwe.RotationKeyIsCorrect(rtk, galEl, skIdeal, params, log2BoundRtk))
+					require.True(t, rlwe.RotationKeyIsCorrect(rtk, galEl, localtest.SkIdeal, params, log2BoundRtk))
 
 				})
 			})

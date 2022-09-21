@@ -23,7 +23,7 @@ func NewManageService(n *node.Node) (s *ManageService) {
 	s.peers = make(map[pkg.NodeID]api.ManageServiceClient)
 	if n.HasAddress() {
 		NewManageServiceServer(s)
-		s.Greets.Add(len(n.Peers()) - 1)
+		s.Greets.Add(len(n.Peers()))
 	}
 	return s
 }
@@ -38,8 +38,9 @@ func (s *ManageService) Connect() error {
 // GreetAll greets all the nodes peers
 func (node *ManageService) GreetAll() {
 	ctx := node.GetContext("test-session")
+	nodeID := node.ID()
 	for peerId, peer := range node.peers {
-		if peerId != node.ID() {
+		if peerId != nodeID {
 			log.Printf("Node %s | is greeting %s\n", node.ID(), peerId)
 			_, err := peer.SayHello(ctx, &api.HelloRequest{})
 			if err != nil {

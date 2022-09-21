@@ -16,6 +16,10 @@ func (c *LocalCircuit) Inputs() []Operand {
 	return c.inputs // TODO copy
 }
 
+func (c *LocalCircuit) Outputs() []Operand {
+	return c.outputs // TODO copy
+}
+
 // It seems that a central piece of the orchestration could be a good
 // URL scheme for locating/designating ciphertexts
 type URL url.URL
@@ -40,12 +44,20 @@ func (u *URL) IsSessionWide() bool {
 	return u.Host == ""
 }
 
-func (u *URL) CiphertextID() CiphertextID {
+func (u *URL) CiphertextBaseID() CiphertextID {
 	return CiphertextID(path.Base(u.Path))
+}
+
+func (u *URL) CiphertextID() CiphertextID {
+	return CiphertextID(u.String())
 }
 
 func (u *URL) NodeID() NodeID {
 	return NodeID(u.Host)
+}
+
+func (u *URL) String() string {
+	return (*url.URL)(u).String()
 }
 
 type Operand struct {

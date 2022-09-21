@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
 	"time"
 
@@ -56,7 +57,11 @@ func main() {
 		}
 	}
 
-	node := node.NewNode(nc)
+	node, err := node.NewNode(nc)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 
 	log.Printf("Node %s | loading services:\n", nc.ID)
 	manageService := manage.NewManageService(node)
@@ -70,7 +75,16 @@ func main() {
 	log.Println("\t- setup: OK")
 
 	if len(pm) > 0 {
-		sess, exists := node.GetSessionFromID(pkg.SessionID(nc.SessionParameters.ID))
+
+		// TODO assumes single-session nodes
+
+		if len(nc.SessionParameters) != 1 {
+			panic("multi-session nodes implemented")
+		}
+
+		sessId := nc.SessionParameters[0].ID
+
+		sess, exists := node.GetSessionFromID(pkg.SessionID(sessId))
 		if !exists {
 			log.Fatalf("Node %s | session was not created\n", nc.Address)
 		}
@@ -82,7 +96,13 @@ func main() {
 		log.Printf("Node %s | loaded the protocol map \n", nc.ID)
 	}
 
-	go node.StartListening()
+	lis, err := net.Listen("tcp", string(nc.Address))
+	if err != nil {
+		log.Printf("Node %s | failed to listen: %v\n", nc.Address, err)
+	}
+
+	go node.StartListening(lis)
+
 	<-time.After(time.Second)
 
 	node.Connect()

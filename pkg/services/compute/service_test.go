@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"log"
-	"net"
 	"testing"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -16,9 +14,7 @@ import (
 	"github.com/tuneinsight/lattigo/v3/bfv"
 	"github.com/tuneinsight/lattigo/v3/rlwe"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/test/bufconn"
 )
 
 var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109, rlwe.TestPN13QP218, rlwe.TestPN14QP438, rlwe.TestPN15QP880}
@@ -34,19 +30,10 @@ var testSettings = []testSetting{
 //TestCloudAssistedCompute tests the generation of the public key in push mode
 func TestCloudAssistedCompute(t *testing.T) {
 
-	type cloud struct {
-		*node.Node
-		*ComputeService
-	}
-
 	type client struct {
+		*ComputeService
 		api.ComputeServiceClient
 		bfv.Encryptor
-
-		id   string
-		addr string
-
-		sk *rlwe.SecretKey
 	}
 
 	for _, literalParams := range rangeParam {
@@ -62,65 +49,51 @@ func TestCloudAssistedCompute(t *testing.T) {
 					t.Skip("T != N not yet supported in cloud-assisted setting")
 				}
 
-				// initialise peers
-				peers := make(map[pkg.NodeID]pkg.NodeAddress)
-				peerIds := make([]pkg.NodeID, ts.N)
-				for i := range peerIds {
-					nid := pkg.NodeID(fmt.Sprint(i))
-					peers[nid] = ""
-					peerIds[i] = nid
+				var testConfig = node.LocalTestConfig{
+					FullNodes:  1,
+					LightNodes: 3,
+					Session: &node.SessionParameters{
+						RLWEParams: literalParams,
+						T:          ts.T,
+					},
+				}
+				localtest := node.NewLocalTest(testConfig)
+
+				clou, err := NewComputeService(localtest.FullNodes[0])
+				if err != nil {
+					t.Fatal(err)
 				}
 
-				sessParams := &node.SessionParameters{
-					ID:         "test-session",
-					RLWEParams: literalParams,
-					Nodes:      peerIds,
-					T:          ts.T,
-					CRSKey:     []byte{'l', 'a', 't', 't', 'i', 'g', '0'},
+				clients := make([]client, len(localtest.LightNodes))
+				for i := range localtest.LightNodes {
+					clients[i].ComputeService, err = NewComputeService(localtest.LightNodes[i])
+					if err != nil {
+						t.Fatal(err)
+					}
 				}
 
-				params, _ := rlwe.NewParametersFromLiteral(literalParams)
+				params := localtest.Params
 				bfvParams, _ := bfv.NewParameters(params, 65537)
 
-				var err error
-
 				// initialise the cloud with given parameters and a session
-				clou := cloud{Node: node.NewNode(node.NodeConfig{ID: "cloud", Address: "local", Peers: peers, SessionParameters: sessParams})}
-				_, ok := clou.GetSessionFromID(pkg.SessionID(sessParams.ID))
+				_, ok := clou.GetSessionFromID(pkg.SessionID("test-session"))
 				if !ok {
 					t.Fatal("session should exist")
 				}
 
-				clou.ComputeService, err = NewComputeService(clou.Node)
-				if err != nil {
-					t.Error(err)
-				}
-				dialer := startTestService(clou.ComputeService)
+				localtest.Start()
 
 				// initialise key generation
 				kg := rlwe.NewKeyGenerator(params)
-				ringQP := params.RingQP()
-				sk := rlwe.NewSecretKey(params)
-
-				// initialise clients
-				clients := make([]client, ts.N)
-				clientIDs := make([]pkg.NodeID, ts.N)
-				for i := range clients {
-					clients[i].id = fmt.Sprint(i)
-					clients[i].addr = fmt.Sprint(i)
-					clients[i].ComputeServiceClient = api.NewComputeServiceClient(getServiceClientConn(dialer))
-					clients[i].sk = kg.GenSecretKey()
-					ringQP.AddLvl(clients[i].sk.Value.Q.Level(), clients[i].sk.Value.P.Level(), clients[i].sk.Value, sk.Value, sk.Value)
-					clientIDs[i] = pkg.NodeID(fmt.Sprint(i))
-				}
-
+				sk := localtest.SkIdeal
 				pk := kg.GenPublicKey(sk)
 
 				for i := range clients {
+					clients[i].Connect()
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, pk)
+					clients[i].ComputeServiceClient = clients[i].peers[clou.ID()]
 				}
 
-				// Start public key generation
 				t.Run("Store+Load", func(t *testing.T) {
 
 					g := new(errgroup.Group)
@@ -134,21 +107,21 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 							bfvCt := c.EncryptZeroNew()
 
-							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", c.id))
+							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", string(c.ID())))
 
 							ctId := fmt.Sprintf("ct[%d]", ii)
 							msg := pkg.Ciphertext{Ciphertext: *bfvCt.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctId), Type: pkg.BFV}}.ToGRPC()
 
-							rid, rerr := c.PutCiphertext(ctx, &msg)
-							require.Nil(t, rerr)
+							rid, rerr := c.ComputeServiceClient.PutCiphertext(ctx, &msg)
+							require.Nil(t, rerr, rerr)
 							require.Equal(t, ctId, rid.CiphertextId)
 
 							req := &api.CiphertextRequest{Id: &api.CiphertextID{CiphertextId: ctId}}
-							resp, rerr := c.GetCiphertext(ctx, req)
-							require.Nil(t, rerr)
+							resp, rerr := c.ComputeServiceClient.GetCiphertext(ctx, req)
+							require.Nil(t, rerr, rerr)
 
 							rct, err := pkg.NewCiphertextFromGRPC(resp)
-							require.Nil(t, err)
+							require.Nil(t, err, rerr)
 							require.Equal(t, pkg.CiphertextID(ctId), rct.ID)
 							require.Equal(t, pkg.BFV, rct.Type)
 							require.True(t, rct.Ciphertext.Value[0].Equals(bfvCt.Value[0]) && rct.Ciphertext.Value[1].Equals(bfvCt.Value[1]))
@@ -164,39 +137,13 @@ func TestCloudAssistedCompute(t *testing.T) {
 					}
 
 				})
+				t.Run("EvalCircuit", func(t *testing.T) {
+
+				})
 			})
 		}
 	}
 
-}
-
-func startTestService(service interface{}) func(context.Context, string) (net.Conn, error) {
-	srv := grpc.NewServer(grpc.MaxRecvMsgSize(1024*1024*1024), grpc.MaxSendMsgSize(1024*1024*1024))
-	lis := bufconn.Listen(65 * 1024 * 1024)
-
-	switch s := service.(type) {
-	case *ComputeService:
-		api.RegisterComputeServiceServer(srv, s)
-	default:
-		log.Fatalf("invalid service type provided: %T", s)
-	}
-
-	go func() {
-		if err := srv.Serve(lis); err != nil {
-			log.Fatalf("failed to serve: %v", err)
-		}
-	}()
-
-	return func(context.Context, string) (net.Conn, error) { return lis.Dial() }
-}
-
-func getServiceClientConn(dialer func(context.Context, string) (net.Conn, error)) *grpc.ClientConn {
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024*1024), grpc.MaxCallSendMsgSize(1024*1024*1024)))
-	if err != nil {
-		log.Fatal(err)
-	}
-	return conn
 }
 
 func GetSha256Hex(b []byte, err error) string {

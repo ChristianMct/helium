@@ -2,6 +2,7 @@ package manage
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -31,14 +32,15 @@ ctx : context
 returns P2PResponse from node to the in P2PRequest from another node
 */
 func (mss *ManageServiceServer) SayHello(ctx context.Context, in *api.HelloRequest) (*api.HelloResponse, error) {
-	defer mss.Greets.Done()
 
 	ictx := node.Context{C: ctx}
+	log.Printf("Node %s | received greeting from %s\n", mss.ID(), ictx.SenderID())
 
 	if mss.ID() == pkg.NodeID(ictx.SenderID()) {
-		log.Fatal("should not great itself")
+		return nil, fmt.Errorf("node should not greet itself %s == %s", mss.ID(), pkg.NodeID(ictx.SenderID()))
 	}
 
-	log.Printf("Node %s | received greeting from %s\n", mss.ID(), ictx.SenderID())
+	mss.Greets.Done()
+
 	return &api.HelloResponse{}, nil
 }

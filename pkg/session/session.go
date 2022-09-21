@@ -63,7 +63,7 @@ func NewSessionStore() *SessionStore {
 	return ss
 }
 
-func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID string) (sess *Session, err error) {
+func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
 
 	sess = new(Session)
 	sess.ID = SessionID(sessionID)
@@ -101,7 +101,7 @@ func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, node
 	return sess, err
 }
 
-func (s *SessionStore) NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPks map[NodeID]drlwe.ShamirPublicPoint, sessionID string) (sess *Session, err error) {
+func (s *SessionStore) NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPks map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
 
 	if _, exists := s.sessions[SessionID(sessionID)]; exists {
 		return nil, fmt.Errorf("session id already exists: %s", sessionID)

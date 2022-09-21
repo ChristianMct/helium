@@ -2,7 +2,7 @@
     "ID": "node-b",
     "Address": ":40000",
     "Peers": {"node-a": "node-a:40000"},
-    "SessionParameters": {
+    "SessionParameters": [{
         "ID": "test-session",
         "RLWEParams": {
             "LogN":  12,
@@ -12,5 +12,5 @@
         },
         "Nodes": ["node-a", "node-b"],
         "CRSKey" : []
-    }
+    }]
 }

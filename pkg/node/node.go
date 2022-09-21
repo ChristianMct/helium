@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+const MaxMsgSize = 1024 * 1024 * 20
+
 type Dialer = func(c context.Context, s string) (net.Conn, error)
 
 type Context struct {
@@ -58,45 +60,43 @@ type Node struct {
 type NodeConfig struct {
 	ID                pkg.NodeID
 	Address           pkg.NodeAddress
-	ShamirPublicKey   drlwe.ShamirPublicPoint
 	Peers             map[pkg.NodeID]pkg.NodeAddress
-	SessionParameters *SessionParameters
+	SessionParameters []SessionParameters
 }
 
 // NewNode initialises a new node according to a given NodeConfig which provides the address and peers of this node
 // Also initialises other attributes such as the parameters, session store and the WaitGroup Greets
 // also initialises the peers of the node by calling initPeerNode()
-func NewNode(config NodeConfig) (node *Node) {
+func NewNode(config NodeConfig) (node *Node, err error) {
 	node = new(Node)
 
 	node.addr = config.Address
 	node.id = config.ID
 	node.sessions = pkg.NewSessionStore()
 
-	if _, isSelfInPeers := config.Peers[node.id]; !isSelfInPeers {
-		config.Peers[node.id] = node.addr
-	}
-
 	node.peers = make(map[pkg.NodeID]*Node, len(config.Peers))
 	for id, peerAddr := range config.Peers {
+		if id == node.id {
+			return nil, fmt.Errorf("node config should not include node as peer")
+		}
 		node.peers[id] = newPeerNode(id, peerAddr)
 	}
 
 	if node.HasAddress() {
-		node.grpcServer = grpc.NewServer()
+		node.grpcServer = grpc.NewServer(grpc.MaxRecvMsgSize(MaxMsgSize), grpc.MaxSendMsgSize(MaxMsgSize))
 		log.Printf("Node %s | started as full helium node at address %s\n", node.id, node.addr)
 	} else {
 		log.Printf("Node %s | started as light helium node\n", node.id)
 	}
 
-	if config.SessionParameters != nil {
-		_, err := node.CreateNewSession(*config.SessionParameters)
+	for _, sp := range config.SessionParameters {
+		_, err := node.CreateNewSession(sp)
 		if err != nil {
 			panic(err)
 		}
 	}
 
-	return node
+	return node, nil
 }
 
 func (n *Node) RegisterService(sd *grpc.ServiceDesc, ss interface{}) {
@@ -147,15 +147,10 @@ func newPeerNode(id pkg.NodeID, addr pkg.NodeAddress) (node *Node) {
 }
 
 // StartListening starts listening on the tcp port represented by the node address. It also initialises a new grpc Server which is registers to the node's corresponding grpc service servers. It then accepts incoming connections on the node's network listener.
-func (node *Node) StartListening() {
-	lis, err := net.Listen("tcp", node.addr.String())
-	if err != nil {
-		log.Printf("Node %s | failed to listen: %v\n", node.addr, err)
-	}
+func (node *Node) StartListening(lis net.Listener) {
 	if err := node.grpcServer.Serve(lis); err != nil {
 		log.Printf("Node %s | failed to serve: %v\n", node.addr, err)
 	}
-
 }
 
 func (node *Node) StopListening() {
@@ -170,10 +165,18 @@ func (node *Node) Connect() (err error) {
 
 func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) {
 	var conns int
-	for peerId, peer := range node.peers {
+	for _, peer := range node.peers {
 		dialer, has := dialers[peer.id]
-		if peerId != node.id && has {
-			peer.conn, err = grpc.Dial(string(peer.addr), grpc.WithContextDialer(dialer), grpc.WithInsecure(), grpc.WithBlock(), grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.DefaultConfig, MinConnectTimeout: 20 * time.Second}))
+		if peer.id != node.id && has && peer.HasAddress() {
+			peer.conn, err = grpc.Dial(string(peer.addr),
+				grpc.WithContextDialer(dialer),
+				grpc.WithInsecure(),
+				grpc.WithBlock(),
+				grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.DefaultConfig, MinConnectTimeout: 1 * time.Second}),
+				grpc.WithDefaultCallOptions(
+					grpc.MaxCallRecvMsgSize(MaxMsgSize),
+					grpc.MaxCallSendMsgSize(MaxMsgSize)),
+			)
 			if err != nil {
 				return fmt.Errorf("fail to dial: %v", err)
 			}
@@ -186,7 +189,7 @@ func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) 
 }
 
 type SessionParameters struct {
-	ID         string
+	ID         pkg.SessionID
 	RLWEParams rlwe.ParametersLiteral
 	T          int
 	Nodes      []pkg.NodeID
@@ -232,13 +235,4 @@ func (node *Node) GetContext(sessionID pkg.SessionID) context.Context {
 
 func (node *Node) GetSessionFromID(sessionID pkg.SessionID) (*pkg.Session, bool) {
 	return node.sessions.GetSessionFromID(sessionID)
-}
-
-func getAddrOfPeers(peers []*Node) (peerAddresses []string) {
-	peerAddresses = make([]string, len(peers))
-	for i, peer := range peers {
-		peerAddresses[i] = peer.addr.String()
-	}
-
-	return peerAddresses
 }
