@@ -8,7 +8,6 @@ import (
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/node"
 	pkg "github.com/ldsec/helium/pkg/session"
-	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/tuneinsight/lattigo/v3/drlwe"
 	"google.golang.org/grpc/codes"
@@ -151,7 +150,7 @@ func (s *SetupService) LoadProtocolMap(session *pkg.Session, pm ProtocolMap) err
 }
 
 func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*api.Share, error) {
-	ictx := utils.Context{Context: ctx}
+	ictx := pkg.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID()) // TODO assumes a single session for now
 	if !exists {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
@@ -200,7 +199,7 @@ func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*ap
 }
 
 func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Void, error) {
-	ictx := utils.Context{Context: ctx}
+	ictx := pkg.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID())
 	if !exists {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")

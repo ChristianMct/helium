@@ -1,11 +1,13 @@
 package pkg
 
 import (
+	"context"
 	"fmt"
 	"log"
 
 	"github.com/tuneinsight/lattigo/v3/rlwe"
 	"github.com/tuneinsight/lattigo/v3/utils"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/tuneinsight/lattigo/v3/drlwe"
 
@@ -21,6 +23,34 @@ type CircuitID string
 type NodeID string
 
 type NodeAddress string
+
+type Context struct {
+	context.Context
+}
+
+func (c Context) SenderID() string {
+	md, hasIncomingContext := metadata.FromIncomingContext(c)
+	if hasIncomingContext && len(md.Get("node_id")) == 1 {
+		return md.Get("node_id")[0]
+	}
+	return ""
+}
+
+func (c Context) SessionID() SessionID {
+	md, hasIncomingContext := metadata.FromIncomingContext(c)
+	if hasIncomingContext && len(md.Get("session_id")) == 1 {
+		return SessionID(md.Get("session_id")[0])
+	}
+	return ""
+}
+
+func (c Context) CircuitID() CircuitID {
+	md, hasIncomingContext := metadata.FromIncomingContext(c)
+	if hasIncomingContext && len(md.Get("circuit_id")) == 1 {
+		return CircuitID(md.Get("circuit_id")[0])
+	}
+	return ""
+}
 
 func (na NodeAddress) String() string {
 	return string(na)

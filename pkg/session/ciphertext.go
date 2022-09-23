@@ -47,17 +47,17 @@ func NewCiphertextFromGRPC(apiCt *api.Ciphertext) (*Ciphertext, error) {
 	return &ct, nil
 }
 
-func (id CiphertextID) ToGRPC() api.CiphertextID {
-	return api.CiphertextID{CiphertextId: string(id)}
+func (id CiphertextID) ToGRPC() *api.CiphertextID {
+	return &api.CiphertextID{CiphertextId: string(id)}
 }
 
-func (ct Ciphertext) ToGRPC() api.Ciphertext {
+func (ct Ciphertext) ToGRPC() *api.Ciphertext {
 	ctBytes, err := ct.MarshalBinary()
 	if err != nil {
 		panic(err)
 	}
 	typ := api.CiphertextType(ct.Type)
-	return api.Ciphertext{
+	return &api.Ciphertext{
 		Metadata:   &api.CiphertextMetadata{Id: &api.CiphertextID{CiphertextId: string(ct.ID)}, Type: &typ},
 		Ciphertext: ctBytes,
 	}

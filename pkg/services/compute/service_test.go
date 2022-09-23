@@ -51,7 +51,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 				var testConfig = node.LocalTestConfig{
 					FullNodes:  1,
-					LightNodes: 3,
+					LightNodes: 4,
 					Session: &node.SessionParameters{
 						RLWEParams: literalParams,
 						T:          ts.T,
@@ -63,6 +63,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				nodes := []*ComputeService{clou}
 
 				clients := make([]client, len(localtest.LightNodes))
 				for i := range localtest.LightNodes {
@@ -70,13 +71,14 @@ func TestCloudAssistedCompute(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					nodes = append(nodes, clients[i].ComputeService)
 				}
 
 				params := localtest.Params
 				bfvParams, _ := bfv.NewParameters(params, 65537)
 
 				// initialise the cloud with given parameters and a session
-				_, ok := clou.GetSessionFromID(pkg.SessionID("test-session"))
+				sess, ok := clou.GetSessionFromID(pkg.SessionID("test-session"))
 				if !ok {
 					t.Fatal("session should exist")
 				}
@@ -86,15 +88,21 @@ func TestCloudAssistedCompute(t *testing.T) {
 				// initialise key generation
 				kg := rlwe.NewKeyGenerator(params)
 				sk := localtest.SkIdeal
-				pk := kg.GenPublicKey(sk)
+				sess.PublicKey = kg.GenPublicKey(sk)
+				sess.Rlk = kg.GenRelinearizationKey(sk, 1)
+
+				decryptor := bfv.NewDecryptor(bfvParams, sk)
+				decoder := bfv.NewEncoder(bfvParams)
 
 				for i := range clients {
 					clients[i].Connect()
-					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, pk)
+					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, sess.PublicKey)
 					clients[i].ComputeServiceClient = clients[i].peers[clou.ID()]
 				}
 
 				t.Run("Store+Load", func(t *testing.T) {
+
+					t.Skip("skip")
 
 					g := new(errgroup.Group)
 
@@ -112,7 +120,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 							ctId := fmt.Sprintf("ct[%d]", ii)
 							msg := pkg.Ciphertext{Ciphertext: *bfvCt.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctId), Type: pkg.BFV}}.ToGRPC()
 
-							rid, rerr := c.ComputeServiceClient.PutCiphertext(ctx, &msg)
+							rid, rerr := c.ComputeServiceClient.PutCiphertext(ctx, msg)
 							require.Nil(t, rerr, rerr)
 							require.Equal(t, ctId, rid.CiphertextId)
 
@@ -137,7 +145,50 @@ func TestCloudAssistedCompute(t *testing.T) {
 					}
 
 				})
+
 				t.Run("EvalCircuit", func(t *testing.T) {
+
+					cDesc := CircuitDesc{CircuitName: "ComponentWiseProduct4P", CircuitID: "test-circuit-0", SessionID: "test-session"}
+
+					for _, node := range nodes {
+						err := node.LoadCircuit(cDesc)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					g := new(errgroup.Group)
+
+					var out []pkg.Operand
+
+					g.Go(func() error {
+						out, err = clou.Execute(cDesc)
+						if err != nil {
+							return fmt.Errorf("Node %s: %s", clou.ID(), err)
+						}
+						return nil
+					})
+
+					for _, client := range clients {
+						client := client
+						g.Go(func() error {
+							pt := decoder.EncodeNew([]uint64{1, 1, 1, 1, 1, 1}, bfvParams.MaxLevel())
+							ct := client.EncryptNew(pt)
+							_, err := client.Execute(cDesc, pkg.Operand{URL: pkg.NewURL("in-0"), Ciphertext: ct})
+							if err != nil {
+								return fmt.Errorf("client %s: %s", client.ID(), err)
+							}
+							return nil
+						})
+					}
+
+					err := g.Wait()
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					pt := decryptor.DecryptNew(out[0].Ciphertext)
+					fmt.Println(decoder.DecodeUintNew(pt)[:10])
 
 				})
 			})

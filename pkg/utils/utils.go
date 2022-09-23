@@ -1,33 +1,9 @@
 package utils
 
 import (
-	"context"
 	"crypto/sha256"
 	"fmt"
-
-	pkg "github.com/ldsec/helium/pkg/session"
-	"google.golang.org/grpc/metadata"
 )
-
-type Context struct {
-	context.Context
-}
-
-func (c Context) SenderID() string {
-	md, hasIncomingContext := metadata.FromIncomingContext(c)
-	if hasIncomingContext && len(md.Get("node_id")) == 1 {
-		return md.Get("node_id")[0]
-	}
-	return ""
-}
-
-func (c Context) SessionID() pkg.SessionID {
-	md, hasIncomingContext := metadata.FromIncomingContext(c)
-	if hasIncomingContext && len(md.Get("session_id")) == 1 {
-		return pkg.SessionID(md.Get("session_id")[0])
-	}
-	return ""
-}
 
 var Exists = struct{}{}
 
@@ -91,6 +67,14 @@ func (s Set[T]) Disjoint(other Set[T]) bool {
 		}
 	}
 	return true
+}
+
+func (s Set[T]) Elements() []T {
+	els := make([]T, 0, len(s))
+	for el := range s {
+		els = append(els, el)
+	}
+	return els
 }
 
 func (s Set[T]) Equals(other Set[T]) bool {
