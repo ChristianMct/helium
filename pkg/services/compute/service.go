@@ -43,7 +43,7 @@ func NewComputeService(n *node.Node) (s *ComputeService, err error) {
 	return s, nil
 }
 
-// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers). These connections are used to intialised the api.ComputeServiceClient instances of the nodes (stored in peers).
+// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers). These connections are used to initialise the api.ComputeServiceClient instances of the nodes (stored in peers).
 func (s *ComputeService) Connect() {
 	for peerID, peerConn := range s.Conns() {
 		s.peers[peerID] = api.NewComputeServiceClient(peerConn)
@@ -128,9 +128,11 @@ func (s *ComputeService) Execute(cd CircuitDesc, localOps ...pkg.Operand) ([]pkg
 					return nil, fmt.Errorf("input %s was not provided", in.String())
 				}
 
-				ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("node_id", string(s.ID()), "session_id", "test-session", "circuit_id", string(cid))) // TODO: assumes a single session named "test-session" :D
+				ctx := metadata.NewOutgoingContext(context.Background(),
+					metadata.Pairs("node_id", string(s.ID()), "session_id", "test-session", "circuit_id", string(cid))) // TODO: assumes a single session named "test-session" :D
 
-				ct := pkg.Ciphertext{Ciphertext: *op.Ciphertext.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: op.CiphertextBaseID()}}
+				ct := pkg.Ciphertext{Ciphertext: *op.Ciphertext.Ciphertext,
+					CiphertextMetadata: pkg.CiphertextMetadata{ID: op.CiphertextBaseID()}}
 
 				for peerId, peer := range s.peers {
 					_, err := peer.PutCiphertext(ctx, ct.ToGRPC())
