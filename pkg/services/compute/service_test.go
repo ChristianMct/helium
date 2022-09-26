@@ -27,6 +27,139 @@ var testSettings = []testSetting{
 	{N: 2},
 }
 
+var Prod = func(e bfv.Evaluator, in <-chan pkg.Operand, out chan<- pkg.Operand) error {
+
+	lvl2 := make(chan *bfv.Ciphertext, 2)
+
+	op0, op1 := <-in, <-in
+
+	go func() {
+		ev := e.ShallowCopy()
+		res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
+		ev.Relinearize(res, res)
+		fmt.Println("computed lvl 1,1")
+		lvl2 <- res
+	}()
+
+	op2, op3 := <-in, <-in
+
+	go func() {
+		ev := e.ShallowCopy()
+		res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
+		ev.Relinearize(res, res)
+		fmt.Println("computed lvl 1,2")
+		lvl2 <- res
+	}()
+
+	res1, res2 := <-lvl2, <-lvl2
+	res := e.MulNew(res1, res2)
+	e.Relinearize(res, res)
+	fmt.Println("computed lvl 0")
+	out <- pkg.Operand{OperandLabel: "/out-0", Ciphertext: res}
+	close(out)
+	return nil
+}
+
+var cDesc = CircuitDesc{CircuitName: "ComponentWiseProduct4P", CircuitID: "test-circuit-0", SessionID: "test-session"}
+
+func TestPeerToPeerCompute(t *testing.T) {
+
+	for _, literalParams := range rangeParam {
+		for _, ts := range testSettings {
+
+			if ts.T == 0 {
+				ts.T = ts.N
+			}
+
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+
+				var testConfig = node.LocalTestConfig{
+					FullNodes: 4,
+					Session: &node.SessionParameters{
+						RLWEParams: literalParams,
+						T:          ts.T,
+					},
+				}
+
+				var cDef = pkg.LocalCircuitDef{
+					Name:     "ComponentWiseProduct4P",
+					Inputs:   []pkg.OperandLabel{"//full-0/in-0", "//full-1/in-0", "//full-2/in-0", "//full-3/in-0"},
+					Outputs:  []pkg.OperandLabel{"/out-0"},
+					Evaluate: Prod,
+				}
+
+				localtest := node.NewLocalTest(testConfig)
+
+				params := localtest.Params
+				bfvParams, _ := bfv.NewParameters(params, 65537)
+				// initialise key generation
+				kg := rlwe.NewKeyGenerator(params)
+				sk := localtest.SkIdeal
+				cpk := kg.GenPublicKey(sk)
+				rlk := kg.GenRelinearizationKey(sk, 1)
+
+				var err error
+				nodes := make([]*ComputeService, len(localtest.Nodes))
+				for i := range localtest.Nodes {
+					nodes[i], err = NewComputeService(localtest.Nodes[i])
+					if err != nil {
+						t.Fatal(err)
+					}
+					sess, exists := nodes[i].GetSessionFromID("test-session")
+					if !exists {
+						t.Fatal("session should exist")
+					}
+					sess.PublicKey = cpk
+					sess.Rlk = rlk
+				}
+
+				encryptor := bfv.NewEncryptor(bfvParams, cpk)
+				decoder := bfv.NewEncoder(bfvParams)
+
+				inputs := make(map[pkg.NodeID]pkg.Operand)
+				for _, node := range nodes {
+					pt := decoder.EncodeNew([]uint64{1, 1, 1, 1, 1, 1}, bfvParams.MaxLevel())
+					ct := encryptor.EncryptNew(pt)
+					inputs[node.ID()] = pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/in-0", node.ID())), Ciphertext: ct}
+				}
+
+				localtest.Start()
+
+				for _, node := range nodes {
+					err := node.RegisterCircuit(cDef)
+					if err != nil {
+						t.Fatal(err)
+					}
+					err = node.LoadCircuit(cDesc)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				g := new(errgroup.Group)
+				for _, node := range nodes {
+					node := node
+					g.Go(func() error {
+						node.Connect()
+						out, err := node.Execute(cDesc, inputs[node.ID()])
+						if err != nil {
+							return fmt.Errorf("node %s: %s", node.ID(), err)
+						}
+						pt := bfv.NewDecryptor(bfvParams, sk).DecryptNew(out[0].Ciphertext)
+						fmt.Println(bfv.NewEncoder(bfvParams).DecodeUintNew(pt)[:10])
+						return nil
+					})
+				}
+
+				err = g.Wait()
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
 //TestCloudAssistedCompute tests the generation of the public key in push mode
 func TestCloudAssistedCompute(t *testing.T) {
 
@@ -57,6 +190,14 @@ func TestCloudAssistedCompute(t *testing.T) {
 						T:          ts.T,
 					},
 				}
+
+				var cDef = pkg.LocalCircuitDef{
+					Name:     "ComponentWiseProduct4P",
+					Inputs:   []pkg.OperandLabel{"//light-0/in-0", "//light-1/in-0", "//light-2/in-0", "//light-3/in-0"},
+					Outputs:  []pkg.OperandLabel{"/out-0"},
+					Evaluate: Prod,
+				}
+
 				localtest := node.NewLocalTest(testConfig)
 
 				clou, err := NewComputeService(localtest.FullNodes[0])
@@ -99,6 +240,54 @@ func TestCloudAssistedCompute(t *testing.T) {
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, sess.PublicKey)
 					clients[i].ComputeServiceClient = clients[i].peers[clou.ID()]
 				}
+
+				t.Run("EvalCircuit", func(t *testing.T) {
+
+					for _, node := range nodes {
+						err := node.RegisterCircuit(cDef)
+						if err != nil {
+							t.Fatal(err)
+						}
+						err = node.LoadCircuit(cDesc)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+
+					g := new(errgroup.Group)
+
+					var out []pkg.Operand
+
+					g.Go(func() error {
+						out, err = clou.Execute(cDesc)
+						if err != nil {
+							return fmt.Errorf("Node %s: %s", clou.ID(), err)
+						}
+						return nil
+					})
+
+					for _, client := range clients {
+						client := client
+						g.Go(func() error {
+							pt := decoder.EncodeNew([]uint64{1, 1, 1, 1, 1, 1}, bfvParams.MaxLevel())
+							ct := client.EncryptNew(pt)
+							_, err := client.Execute(cDesc, pkg.Operand{OperandLabel: "in-0", Ciphertext: ct})
+							if err != nil {
+								return fmt.Errorf("client %s: %s", client.ID(), err)
+							}
+							return nil
+						})
+					}
+
+					err := g.Wait()
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					pt := decryptor.DecryptNew(out[0].Ciphertext)
+					fmt.Println(decoder.DecodeUintNew(pt)[:10])
+
+				})
 
 				t.Run("Store+Load", func(t *testing.T) {
 
@@ -145,53 +334,8 @@ func TestCloudAssistedCompute(t *testing.T) {
 					}
 
 				})
-
-				t.Run("EvalCircuit", func(t *testing.T) {
-
-					cDesc := CircuitDesc{CircuitName: "ComponentWiseProduct4P", CircuitID: "test-circuit-0", SessionID: "test-session"}
-
-					for _, node := range nodes {
-						err := node.LoadCircuit(cDesc)
-						if err != nil {
-							t.Fatal(err)
-						}
-					}
-
-					g := new(errgroup.Group)
-
-					var out []pkg.Operand
-
-					g.Go(func() error {
-						out, err = clou.Execute(cDesc)
-						if err != nil {
-							return fmt.Errorf("Node %s: %s", clou.ID(), err)
-						}
-						return nil
-					})
-
-					for _, client := range clients {
-						client := client
-						g.Go(func() error {
-							pt := decoder.EncodeNew([]uint64{1, 1, 1, 1, 1, 1}, bfvParams.MaxLevel())
-							ct := client.EncryptNew(pt)
-							_, err := client.Execute(cDesc, pkg.Operand{URL: pkg.NewURL("in-0"), Ciphertext: ct})
-							if err != nil {
-								return fmt.Errorf("client %s: %s", client.ID(), err)
-							}
-							return nil
-						})
-					}
-
-					err := g.Wait()
-					if err != nil {
-						t.Fatal(err)
-					}
-
-					pt := decryptor.DecryptNew(out[0].Ciphertext)
-					fmt.Println(decoder.DecodeUintNew(pt)[:10])
-
-				})
 			})
+
 		}
 	}
 
