@@ -32,8 +32,6 @@ type testSetting struct {
 	T int // T - parties in the access structure
 }
 
-var CRSkey = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
-
 var testSettings = []testSetting{
 	{N: 2},
 	{N: 3},
@@ -49,12 +47,11 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 	}
 
 	type client struct {
-		api.SetupServiceClient
+		*node.Node
+		//api.SetupServiceClient
+		*SetupService
 
-		id   string
-		addr string
-
-		sk *rlwe.SecretKey
+		sk *rlwe.SecretKey // ultimately remove this @adrian
 	}
 
 	for _, literalParams := range rangeParam {
@@ -74,10 +71,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 					HelperNodes: 1, // the cloud
 					LightNodes:  ts.N,
 					Session: &node.SessionParameters{
-						ID:         "test-session",
 						RLWEParams: literalParams,
 						T:          ts.T,
-						CRSKey:     CRSkey,
 					},
 				}
 				localTest := node.NewLocalTest(testConfig)
@@ -89,48 +84,22 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 				cloudID := localTest.HelperNodes[0].ID()
 				// define protocols to test
 				protocolMap := ProtocolMap{
-					ProtocolDescriptor{Type: api.ProtocolType_CKG, Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)}, Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
+					ProtocolDescriptor{Type: api.ProtocolType_CKG, Aggregator: cloudID,
+						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
+					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
+						Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
+					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,
+						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
 				}
-
-				//peerIds := localTest.NodeIds()
-
-				// initialise peers
-				//peers := make(map[pkg.NodeID]pkg.NodeAddress)
-
-				//peerIds := make([]pkg.NodeID, ts.N)
-				//for i := range peerIds {
-				//	nid := pkg.NodeID(fmt.Sprint(i))
-				//	peers[nid] = ""
-				//	peerIds[i] = nid
-				//}
-
-				//sessParams := node.SessionParameters{
-				//	ID:         "test-session",
-				//	RLWEParams: literalParams,
-				//	Nodes:      peerIds,
-				//	T:          ts.T,
-				//	CRSKey:     []byte{'l', 'a', 't', 't', 'i', 'g', '0'},
-				//}
-
-				//params, _ := rlwe.NewParametersFromLiteral(literalParams)
 
 				var err error
 
-				// initialise the cloud with given parameters and a session
-				//cloudNode, err := node.NewNode(node.NodeConfig{ID: "cloud", Address: "local", Peers: peers, SessionParameters: []node.SessionParameters{sessParams}})
-				//if err != nil {
-				//	t.Fatal(err)
-				//}
-
-				fmt.Printf("light nodes: %v\n", localTest.LightNodes[0])
-				fmt.Printf("helper node: %v\n", localTest.HelperNodes[0])
+				//fmt.Printf("light nodes: %v\n", localTest.LightNodes[0])
+				//fmt.Printf("helper node: %v\n", localTest.HelperNodes[0])
 
 				clou := cloud{Node: localTest.HelperNodes[0]}
-				fmt.Printf("clou: %v\n", clou.Node.ID())
+				//fmt.Printf("clou: %v\n", clou.Node.ID())
 
-				//require.Fail(t, "fixme")
 				sess, ok := clou.GetSessionFromID("test-session")
 				if !ok {
 					t.Fatal("session should exist")
@@ -141,8 +110,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 					t.Error(err)
 				}
 				dialer := startTestService(clou.SetupService)
-				//
-				//// initialise key generation
+
+				// initialise key generation
 				kg := rlwe.NewKeyGenerator(params)
 				ringQP := params.RingQP()
 				sk := rlwe.NewSecretKey(params)
@@ -150,15 +119,32 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 				// initialise clients
 
 				clients := make([]client, ts.N)
-				//clientIDs := make([]pkg.NodeID, ts.N)
+				sessionNodes := localTest.SessionNodes()
 				clientIDs := peerIds[:ts.N]
 				for i := range clients {
-					clients[i].id = string(clientIDs[i])
-					//clients[i].addr = fmt.Sprint(i)
-					clients[i].SetupServiceClient = api.NewSetupServiceClient(getServiceClientConn(dialer))
+					clients[i].Node = sessionNodes[i]
+					//clients[i].SetupServiceClient = api.NewSetupServiceClient(getServiceClientConn(dialer))
+					clients[i].SetupService, err = NewSetupService(clients[i].Node)
+					if err != nil {
+						t.Fatal(err)
+					}
+					// not sure about this - the light nodes need to have the cloud as a peer
+					// but I think it leads to
+					clients[i].SetupService.peers = map[pkg.NodeID]api.SetupServiceClient{
+						cloudID: api.NewSetupServiceClient(getServiceClientConn(dialer)),
+					}
+
+					// idea: first get rid of the need to generate keys, let node CreateNewSession handle that. @adrian
 					clients[i].sk = kg.GenSecretKey()
+
+					// once that works, can replace .sk with the value from the session.
+					//sess_light, exists := clients[i].GetSessionFromID("test-session")
+					//if !exists {
+					//	t.Fatal("session should exists")
+					//}
+					//sk = sess_light.GetSecretKey()
+
 					ringQP.AddLvl(clients[i].sk.Value.Q.Level(), clients[i].sk.Value.P.Level(), clients[i].sk.Value, sk.Value, sk.Value)
-					//clientIDs[i] = pkg.NodeID(fmt.Sprint(i))
 				}
 
 				err = clou.SetupService.LoadProtocolMap(sess, protocolMap)
@@ -168,7 +154,7 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 				// Start public key generation
 				t.Run("FullSetup", func(t *testing.T) {
-					crs, err := utils.NewKeyedPRNG(CRSkey)
+					crs, err := utils.NewKeyedPRNG([]byte{'l', 'a', 't', 't', 'i', 'g', '0'})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -187,7 +173,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 						g.Go(func() error {
 
-							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", c.id))
+							ctx := metadata.NewOutgoingContext(context.Background(),
+								metadata.Pairs("session_id", "test-session", "node_id", string(c.Node.ID())))
 
 							// Lunches a series of request to check for protocolMap completion
 							reqs := new(errgroup.Group)
@@ -197,7 +184,9 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 								for i, nodeId := range proto.Participants {
 									participants[i] = &api.NodeID{NodeId: string(nodeId)}
 								}
-								sReq := &api.ShareRequest{ProtocolID: &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Type}).String()}, AggregateFor: participants, NoData: &truep}
+								sReq := &api.ShareRequest{ProtocolID: &api.ProtocolID{
+									ProtocolID: (&api.ProtocolDescriptor{Type: proto.Type}).String()},
+									AggregateFor: participants, NoData: &truep}
 								if proto.Type == api.ProtocolType_RKG {
 									two := uint64(2)
 									sReq.Round = &two
