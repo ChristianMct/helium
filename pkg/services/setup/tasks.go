@@ -104,7 +104,9 @@ func (s *SetupService) ExecuteAggTask(agt *AggregateTask) error {
 				if err != nil {
 					panic(err)
 				}
-				shares <- share
+				if share != nil {
+					shares <- share
+				}
 			}
 			wg.Done()
 		}()

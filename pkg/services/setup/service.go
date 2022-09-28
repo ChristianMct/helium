@@ -71,8 +71,16 @@ func (s *SetupService) Execute() error {
 
 	log.Printf("Node %s | started Execute with protocols %v \n", s.ID(), s.protocols)
 
+	// fetches the shares of all full nodes
 	for aggTask := range s.aggTasks {
 		s.ExecuteAggTask(&aggTask)
+	}
+
+	// waits for all aggregated shares to be ready
+	for _, proto := range s.protocols {
+		if proto.Descriptor().Aggregator == s.ID() {
+			proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants})
+		}
 	}
 
 	log.Printf("Node %s | execute returned\n", s.ID())
@@ -153,7 +161,7 @@ func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*ap
 	ictx := pkg.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID()) // TODO assumes a single session for now
 	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid session id \"%s\"", ictx.SessionID())
 	}
 
 	if req.ProtocolID == nil {
@@ -202,7 +210,7 @@ func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Voi
 	ictx := pkg.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID())
 	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid session id \"%s\"", ictx.SessionID())
 	}
 
 	proto, exists := s.protocols[pkg.ProtocolID(share.ProtocolID.ProtocolID)]

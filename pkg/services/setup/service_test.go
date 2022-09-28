@@ -16,12 +16,9 @@ import (
 	pkg "github.com/ldsec/helium/pkg/session"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v3/drlwe"
 	"github.com/tuneinsight/lattigo/v3/rlwe"
-	"github.com/tuneinsight/lattigo/v3/utils"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -48,10 +45,7 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 	type client struct {
 		*node.Node
-		//api.SetupServiceClient
 		*SetupService
-
-		sk *rlwe.SecretKey // ultimately remove this @adrian
 	}
 
 	for _, literalParams := range rangeParam {
@@ -88,8 +82,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
 					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
 						Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,
-						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
+					//ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,					This one is a bit more tricky because it has two rounds.
+					//	Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},							Have a first go without it
 				}
 
 				var err error
@@ -100,180 +94,64 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 				clou := cloud{Node: localTest.HelperNodes[0]}
 				//fmt.Printf("clou: %v\n", clou.Node.ID())
 
-				sess, ok := clou.GetSessionFromID("test-session")
-				if !ok {
-					t.Fatal("session should exist")
-				}
-
 				clou.SetupService, err = NewSetupService(clou.Node)
 				if err != nil {
 					t.Error(err)
 				}
-				dialer := startTestService(clou.SetupService)
 
-				// initialise key generation
-				kg := rlwe.NewKeyGenerator(params)
-				ringQP := params.RingQP()
-				sk := rlwe.NewSecretKey(params)
+				sk := localTest.SkIdeal
 
 				// initialise clients
-
+				allNodes := []*SetupService{clou.SetupService}
 				clients := make([]client, ts.N)
 				sessionNodes := localTest.SessionNodes()
-				clientIDs := peerIds[:ts.N]
 				for i := range clients {
 					clients[i].Node = sessionNodes[i]
-					//clients[i].SetupServiceClient = api.NewSetupServiceClient(getServiceClientConn(dialer))
 					clients[i].SetupService, err = NewSetupService(clients[i].Node)
 					if err != nil {
 						t.Fatal(err)
 					}
-					// not sure about this - the light nodes need to have the cloud as a peer
-					// but I think it leads to
-					clients[i].SetupService.peers = map[pkg.NodeID]api.SetupServiceClient{
-						cloudID: api.NewSetupServiceClient(getServiceClientConn(dialer)),
-					}
-
-					// idea: first get rid of the need to generate keys, let node CreateNewSession handle that. @adrian
-					clients[i].sk = kg.GenSecretKey()
-
-					// once that works, can replace .sk with the value from the session.
-					//sess_light, exists := clients[i].GetSessionFromID("test-session")
-					//if !exists {
-					//	t.Fatal("session should exists")
-					//}
-					//sk = sess_light.GetSecretKey()
-
-					ringQP.AddLvl(clients[i].sk.Value.Q.Level(), clients[i].sk.Value.P.Level(), clients[i].sk.Value, sk.Value, sk.Value)
+					allNodes = append(allNodes, clients[i].SetupService)
 				}
 
-				err = clou.SetupService.LoadProtocolMap(sess, protocolMap)
-				if err != nil {
-					t.Error(err)
+				// loads the protocolmap at all nodes
+				for _, node := range allNodes {
+					sess, ok := clou.GetSessionFromID("test-session")
+					if !ok {
+						t.Fatal("session should exist")
+					}
+					err = node.LoadProtocolMap(sess, protocolMap)
+					if err != nil {
+						t.Error(err)
+					}
 				}
 
 				// Start public key generation
 				t.Run("FullSetup", func(t *testing.T) {
-					crs, err := utils.NewKeyedPRNG([]byte{'l', 'a', 't', 't', 'i', 'g', '0'})
-					if err != nil {
-						t.Fatal(err)
-					}
-					ckgProt := drlwe.NewCKGProtocol(params)
-					rkgProt := drlwe.NewRKGProtocol(params)
-					rtgProt := drlwe.NewRTGProtocol(params)
-					ckgCRP := ckgProt.SampleCRP(crs)
-					rtgCRP := rtgProt.SampleCRP(crs)
-					rkgCRP := rkgProt.SampleCRP(crs)
 
 					g := new(errgroup.Group)
 
-					// Allocate, generate and share (put) CKG Shares of each client
-					for i := range clients[:ts.N] {
+					// runs the cloud
+					g.Go(func() error {
+						clou.SetupService.Connect() // this takes care of populating the Peers map of the SetupService (will be empty since the cloud has no full-node peer)
+						err := clou.Execute()       // this should run the full node logic (waiting for aggregating the shares, already implemented in current code)
+						if err != nil {
+							err = fmt.Errorf("cloud error: %s", err)
+						}
+						return err
+					})
+
+					// runs the clients
+					for i := range clients {
 						c := clients[i]
-
 						g.Go(func() error {
-
-							ctx := metadata.NewOutgoingContext(context.Background(),
-								metadata.Pairs("session_id", "test-session", "node_id", string(c.Node.ID())))
-
-							// Lunches a series of request to check for protocolMap completion
-							reqs := new(errgroup.Group)
-							for _, proto := range protocolMap {
-								truep := true
-								participants := make([]*api.NodeID, len(proto.Participants))
-								for i, nodeId := range proto.Participants {
-									participants[i] = &api.NodeID{NodeId: string(nodeId)}
-								}
-								sReq := &api.ShareRequest{ProtocolID: &api.ProtocolID{
-									ProtocolID: (&api.ProtocolDescriptor{Type: proto.Type}).String()},
-									AggregateFor: participants, NoData: &truep}
-								if proto.Type == api.ProtocolType_RKG {
-									two := uint64(2)
-									sReq.Round = &two
-								}
-								reqs.Go(func() error {
-									_, err := c.GetShare(ctx, sReq)
-									//fmt.Println("ret", sReq.ProtocolID, "for", c.addr)
-									if err != nil {
-										return err
-									}
-									return nil
-								})
-							}
-
-							ckgProt := drlwe.NewCKGProtocol(params)
-							rkgProt := drlwe.NewRKGProtocol(params)
-							rtgProt := drlwe.NewRTGProtocol(params)
-
-							// CKG Protocol
-
-							ckgShare := ckgProt.AllocateShare()
-							ckgProt.GenShare(c.sk, ckgCRP, ckgShare)
-							ckgShareb, err := ckgShare.MarshalBinary()
+							c.SetupService.Connect() // this takes care of populating the Peers map of the SetupService (should contain the cloud as the only full-node peer)
+							err := c.Execute()       // this should run the light-node logic (figure out what protocol need to run and send the corresponding shares to the cloud, not yet implemented)
 							if err != nil {
-								return err
+								err = fmt.Errorf("client error: %s", err)
 							}
-							protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: api.ProtocolType_CKG}).String()}
-							_, err = c.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: ckgShareb})
-							if err != nil {
-								return err
-							}
-
-							// RTG Protocol
-
-							rtgShare := rtgProt.AllocateShare()
-							rtgProt.GenShare(c.sk, galEl, rtgCRP, rtgShare)
-							rtgShareb, err := rtgShare.MarshalBinary()
-							if err != nil {
-								return err
-							}
-							protoID = &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: api.ProtocolType_RTG}).String()}
-							_, err = c.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: rtgShareb})
-							if err != nil {
-								return err
-							}
-
-							// RKG Protocol
-
-							rkgEphSK, rkgShareR1, rkgShareR2 := rkgProt.AllocateShare()
-							rkgProt.GenShareRoundOne(c.sk, rkgCRP, rkgEphSK, rkgShareR1)
-							rkgShareb, err := rkgShareR1.MarshalBinary()
-							if err != nil {
-								return err
-							}
-							protoID = &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: api.ProtocolType_RKG}).String()}
-							var one uint64 = 1
-							_, err = c.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: rkgShareb, Round: &one})
-							if err != nil {
-								return err
-							}
-							participants := make([]*api.NodeID, len(clientIDs))
-							for i, nodeId := range clientIDs {
-								participants[i] = &api.NodeID{NodeId: string(nodeId)}
-							}
-							aggShareR1m, err := c.GetShare(ctx, &api.ShareRequest{ProtocolID: protoID, Round: &one, AggregateFor: participants})
-							if err != nil {
-								return err
-							}
-							var aggShareR1 drlwe.RKGShare
-							err = aggShareR1.UnmarshalBinary(aggShareR1m.Share)
-							if err != nil {
-								return err
-							}
-							rkgProt.GenShareRoundTwo(rkgEphSK, c.sk, &aggShareR1, rkgShareR2)
-							rkgShareb, err = rkgShareR2.MarshalBinary()
-							if err != nil {
-								return err
-							}
-							var two uint64 = 2
-							_, err = c.PutShare(ctx, &api.Share{ProtocolID: protoID, Round: &two, Share: rkgShareb})
-							if err != nil {
-								return err
-							}
-
-							return reqs.Wait()
+							return err
 						})
-
 					}
 
 					err = g.Wait()
@@ -281,6 +159,10 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 						t.Fatal(err)
 					}
 
+					sess, ok := clou.GetSessionFromID("test-session")
+					if !ok {
+						t.Fatal("session should exist")
+					}
 					checkKeyGenProt(t, sess, params, galEl, sk, ts.N)
 				})
 			})
