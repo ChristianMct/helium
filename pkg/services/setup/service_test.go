@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"log"
 	"math"
 	"math/bits"
 	"math/rand"
@@ -18,8 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v3/rlwe"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/test/bufconn"
 )
 
 var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109, rlwe.TestPN13QP218 /*, rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
@@ -48,8 +45,9 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 		*SetupService
 	}
 
-	for _, literalParams := range rangeParam {
-		for _, ts := range testSettings {
+	// todo: remove after testing
+	for _, literalParams := range rangeParam[:1] {
+		for _, ts := range testSettings[:1] {
 
 			if ts.T == 0 {
 				ts.T = ts.N // N-out-of-N scenario
@@ -82,17 +80,13 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
 					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
 						Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					//ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,					This one is a bit more tricky because it has two rounds.
+					// ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,					This one is a bit more tricky because it has two rounds.
 					//	Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},							Have a first go without it
 				}
 
 				var err error
 
-				//fmt.Printf("light nodes: %v\n", localTest.LightNodes[0])
-				//fmt.Printf("helper node: %v\n", localTest.HelperNodes[0])
-
 				clou := cloud{Node: localTest.HelperNodes[0]}
-				//fmt.Printf("clou: %v\n", clou.Node.ID())
 
 				clou.SetupService, err = NewSetupService(clou.Node)
 				if err != nil {
@@ -282,26 +276,6 @@ func TestPeerToPeerSetup(t *testing.T) {
 	}
 }
 
-func startTestService(service interface{}) func(context.Context, string) (net.Conn, error) {
-	srv := grpc.NewServer(grpc.MaxRecvMsgSize(1024*1024*1024), grpc.MaxSendMsgSize(1024*1024*1024))
-	lis := bufconn.Listen(65 * 1024 * 1024)
-
-	switch s := service.(type) {
-	case *SetupService:
-		api.RegisterSetupServiceServer(srv, s)
-	default:
-		log.Fatalf("invalid service type provided: %T", s)
-	}
-
-	go func() {
-		if err := srv.Serve(lis); err != nil {
-			log.Fatalf("failed to serve: %v", err)
-		}
-	}()
-
-	return func(context.Context, string) (net.Conn, error) { return lis.Dial() }
-}
-
 func getRandomClientSet(t int, nodes []pkg.NodeID) []pkg.NodeID {
 	cid := make([]pkg.NodeID, len(nodes))
 	copy(cid, nodes)
@@ -309,15 +283,6 @@ func getRandomClientSet(t int, nodes []pkg.NodeID) []pkg.NodeID {
 		cid[i], cid[j] = cid[j], cid[i]
 	})
 	return cid[:t]
-}
-
-func getServiceClientConn(dialer func(context.Context, string) (net.Conn, error)) *grpc.ClientConn {
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "", grpc.WithInsecure(), grpc.WithContextDialer(dialer), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024*1024), grpc.MaxCallSendMsgSize(1024*1024*1024)))
-	if err != nil {
-		log.Fatal(err)
-	}
-	return conn
 }
 
 func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, galEl uint64, sk *rlwe.SecretKey, N int) {

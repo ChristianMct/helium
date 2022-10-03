@@ -80,6 +80,28 @@ func (s *SetupService) Execute() error {
 	for _, proto := range s.protocols {
 		if proto.Descriptor().Aggregator == s.ID() {
 			proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants})
+		} else if !s.Node.HasAddress() {
+			selfID := s.Node.ID()
+
+			share, err := proto.GetShare(ShareRequest{
+				AggregateFor: []pkg.NodeID{selfID},
+			})
+
+			if err != nil {
+				fmt.Printf("get share: %v\n", err)
+				return err
+			}
+			fmt.Printf("my share %v is %v\n", selfID, share)
+
+			// send share to the aggregator - in this case the cloud
+			putShare, err := proto.PutShare(share)
+			if err != nil {
+				fmt.Printf("%v had error: %v\n", selfID, err)
+				return err
+			}
+			if !putShare {
+				return fmt.Errorf("%s failed to put share\n", selfID)
+			}
 		}
 	}
 
