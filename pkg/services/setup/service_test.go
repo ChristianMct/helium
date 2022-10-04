@@ -110,7 +110,7 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 				// loads the protocolmap at all nodes
 				for _, node := range allNodes {
-					sess, ok := clou.GetSessionFromID("test-session")
+					sess, ok := node.GetSessionFromID("test-session")
 					if !ok {
 						t.Fatal("session should exist")
 					}
@@ -127,6 +127,7 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 					// runs the cloud
 					g.Go(func() error {
+						// TODO: cloud has light-1 and light-0 as its peers actually...
 						clou.SetupService.Connect() // this takes care of populating the Peers map of the SetupService (will be empty since the cloud has no full-node peer)
 						err := clou.Execute()       // this should run the full node logic (waiting for aggregating the shares, already implemented in current code)
 						if err != nil {

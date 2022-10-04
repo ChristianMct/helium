@@ -62,6 +62,7 @@ func NewSetupService(n *node.Node) (s *SetupService, err error) {
 // Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers). These connections are used to intialised the api.SetupServiceClient instances of the nodes (stored in peers).
 func (s *SetupService) Connect() {
 	for peerID, peerConn := range s.Conns() {
+		// todo: check behaviour for light nodes
 		s.peers[peerID] = api.NewSetupServiceClient(peerConn)
 	}
 }
@@ -73,34 +74,41 @@ func (s *SetupService) Execute() error {
 
 	// fetches the shares of all full nodes
 	for aggTask := range s.aggTasks {
-		s.ExecuteAggTask(&aggTask)
+		err := s.ExecuteAggTask(&aggTask)
+		if err != nil {
+			log.Printf("Node %s | failed to execute agg tast: %v\n", s.ID(), err)
+			return err
+		}
 	}
+
+	selfID := s.Node.ID()
 
 	// waits for all aggregated shares to be ready
 	for _, proto := range s.protocols {
 		if proto.Descriptor().Aggregator == s.ID() {
-			proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants})
-		} else if !s.Node.HasAddress() {
-			selfID := s.Node.ID()
-
-			share, err := proto.GetShare(ShareRequest{
-				AggregateFor: []pkg.NodeID{selfID},
-			})
-
+			_, err := proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants})
 			if err != nil {
-				fmt.Printf("get share: %v\n", err)
+				log.Printf("%s get share: node %s -- %v\n", proto.Descriptor().Type, selfID, err)
 				return err
 			}
-			fmt.Printf("my share %v is %v\n", selfID, share)
+		} else if !s.Node.HasAddress() {
+
+			share, err := proto.GetShare(ShareRequest{AggregateFor: []pkg.NodeID{selfID}})
+
+			if err != nil {
+				log.Printf("Node %s | [%s] failed to get share: %v\n", selfID, proto.Descriptor().Type, err)
+				return err
+			}
+			log.Printf("Node %s | [%s] my share is %v\n", selfID, proto.Descriptor().Type, share)
 
 			// send share to the aggregator - in this case the cloud
 			putShare, err := proto.PutShare(share)
 			if err != nil {
-				fmt.Printf("%v had error: %v\n", selfID, err)
+				log.Printf("Node %s | [%s] failed to put share: %v\n", selfID, proto.Descriptor().Type, err)
 				return err
 			}
 			if !putShare {
-				return fmt.Errorf("%s failed to put share\n", selfID)
+				log.Printf("Node %s | [%s] put share hasn't completed\n", selfID, proto.Descriptor().Type)
 			}
 		}
 	}

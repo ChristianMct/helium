@@ -161,6 +161,8 @@ func (ckgp *CKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err 
 
 	if pd.Aggregator == ckgp.self {
 		ckgp.AggregatorOf = NewAggregatorOf[*drlwe.CKGShare](participants, ckgp.AllocateShare(), &ckgp.CKGProtocol)
+	} else {
+		ckgp.AggregatorOf = NewAggregatorOf[*drlwe.CKGShare](utils.NewSet([]pkg.NodeID{ckgp.self}), ckgp.AllocateShare(), &ckgp.CKGProtocol)
 	}
 
 	return err
@@ -204,12 +206,20 @@ func (ckgp *CKGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("invalid share type")
 	}
+
+	if ckgp.AggregatorOf == nil {
+		return false, fmt.Errorf("no aggregator")
+	}
 	complete, err := ckgp.AggregatorOf.PutShare(ckgShare)
+
 	if err != nil {
 		return false, err
 	}
 	if complete {
-		ckgp.done(ckgp.session)
+		err := ckgp.done(ckgp.session)
+		if err != nil {
+			return false, fmt.Errorf("failed to complete protocol: %v", err)
+		}
 	}
 	return complete, nil
 }
@@ -250,6 +260,8 @@ func (rtgp *RTGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err 
 
 	if pd.Aggregator == rtgp.self {
 		rtgp.AggregatorOf = NewAggregatorOf[*drlwe.RTGShare](participants, rtgp.AllocateShare(), &rtgp.RTGProtocol)
+	} else {
+		rtgp.AggregatorOf = NewAggregatorOf[*drlwe.RTGShare](utils.NewSet([]pkg.NodeID{rtgp.self}), rtgp.AllocateShare(), &rtgp.RTGProtocol)
 	}
 
 	return err
@@ -294,12 +306,20 @@ func (rtgp *RTGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("invalid share type")
 	}
+
+	if rtgp.AggregatorOf == nil {
+		return false, fmt.Errorf("missing aggregator")
+	}
+
 	complete, err := rtgp.AggregatorOf.PutShare(rtgShare)
 	if err != nil {
 		return false, err
 	}
 	if complete {
-		rtgp.done()
+		err := rtgp.done()
+		if err != nil {
+			return false, fmt.Errorf("failed to complete protocol: %v", err)
+		}
 	}
 	return complete, nil
 }
