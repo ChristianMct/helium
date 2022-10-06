@@ -161,8 +161,6 @@ func (ckgp *CKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err 
 
 	if pd.Aggregator == ckgp.self {
 		ckgp.AggregatorOf = NewAggregatorOf[*drlwe.CKGShare](participants, ckgp.AllocateShare(), &ckgp.CKGProtocol)
-	} else {
-		ckgp.AggregatorOf = NewAggregatorOf[*drlwe.CKGShare](utils.NewSet([]pkg.NodeID{ckgp.self}), ckgp.AllocateShare(), &ckgp.CKGProtocol)
 	}
 
 	return err
@@ -260,8 +258,6 @@ func (rtgp *RTGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err 
 
 	if pd.Aggregator == rtgp.self {
 		rtgp.AggregatorOf = NewAggregatorOf[*drlwe.RTGShare](participants, rtgp.AllocateShare(), &rtgp.RTGProtocol)
-	} else {
-		rtgp.AggregatorOf = NewAggregatorOf[*drlwe.RTGShare](utils.NewSet([]pkg.NodeID{rtgp.self}), rtgp.AllocateShare(), &rtgp.RTGProtocol)
 	}
 
 	return err

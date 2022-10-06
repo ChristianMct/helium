@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/metadata"
 	"log"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -62,7 +63,6 @@ func NewSetupService(n *node.Node) (s *SetupService, err error) {
 // Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers). These connections are used to intialised the api.SetupServiceClient instances of the nodes (stored in peers).
 func (s *SetupService) Connect() {
 	for peerID, peerConn := range s.Conns() {
-		// todo: check behaviour for light nodes
 		s.peers[peerID] = api.NewSetupServiceClient(peerConn)
 	}
 }
@@ -102,14 +102,33 @@ func (s *SetupService) Execute() error {
 			log.Printf("Node %s | [%s] my share is %v\n", selfID, proto.Descriptor().Type, share)
 
 			// send share to the aggregator - in this case the cloud
-			putShare, err := proto.PutShare(share)
+
+			// get cloud instance
+			helper, err := s.Node.HelperPeer()
 			if err != nil {
-				log.Printf("Node %s | [%s] failed to put share: %v\n", selfID, proto.Descriptor().Type, err)
+				log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
+			}
+
+			protType := api.ProtocolType_value[proto.Descriptor().Type.String()]
+			fmt.Printf("running protocol %d\n", protType)
+
+			//pConn := s.Peers()[helper.ID()]
+			ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
+			scon := s.peers[helper.ID()]
+			//protoId := proto.Descriptor().Type.String()
+
+			//protoID := &api.ProtocolID{ProtocolID: string(protType)}
+
+			protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Descriptor().Type}).String()}
+			apiShare, err := share.Share().MarshalBinary()
+			if err != nil {
 				return err
 			}
-			if !putShare {
-				log.Printf("Node %s | [%s] put share hasn't completed\n", selfID, proto.Descriptor().Type)
+			putShare, err := scon.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare})
+			if err != nil {
+				return err
 			}
+			fmt.Printf("put share: %v", putShare)
 		}
 	}
 

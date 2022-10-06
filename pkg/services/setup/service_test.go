@@ -120,6 +120,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 					}
 				}
 
+				localTest.Start()
+
 				// Start public key generation
 				t.Run("FullSetup", func(t *testing.T) {
 

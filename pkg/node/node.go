@@ -138,6 +138,19 @@ func (n Node) HasAddress() bool {
 	return n.addr != ""
 }
 
+func (n Node) HelperPeer() (*Node, error) {
+	if n.HasAddress() {
+		return nil, fmt.Errorf("full node doesn't have helper peers")
+	}
+
+	for _, node := range n.peers {
+		if node.HasAddress() {
+			return node, nil
+		}
+	}
+	return nil, fmt.Errorf("no helper peer")
+}
+
 // newPeerNode initialises a peer node with a given address
 func newPeerNode(id pkg.NodeID, addr pkg.NodeAddress) (node *Node) {
 	node = new(Node)
