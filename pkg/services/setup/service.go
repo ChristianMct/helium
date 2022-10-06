@@ -89,7 +89,7 @@ func (s *SetupService) Execute() error {
 			_, err := proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants})
 			if err != nil {
 				log.Printf("%s get share: node %s -- %v\n", proto.Descriptor().Type, selfID, err)
-				return err
+				//return err
 			}
 		} else if !s.Node.HasAddress() {
 
@@ -109,26 +109,22 @@ func (s *SetupService) Execute() error {
 				log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
 			}
 
-			protType := api.ProtocolType_value[proto.Descriptor().Type.String()]
-			fmt.Printf("running protocol %d\n", protType)
-
-			//pConn := s.Peers()[helper.ID()]
-			ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
-			scon := s.peers[helper.ID()]
-			//protoId := proto.Descriptor().Type.String()
-
-			//protoID := &api.ProtocolID{ProtocolID: string(protType)}
+			// todo - encapsulate this logic
+			ctx := metadata.NewOutgoingContext(context.Background(),
+				metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
+			cloudConn := s.peers[helper.ID()] // todo: distinction between node.peers and node.Peers()
 
 			protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Descriptor().Type}).String()}
 			apiShare, err := share.Share().MarshalBinary()
 			if err != nil {
 				return err
 			}
-			putShare, err := scon.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare})
+			putShare, err := cloudConn.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare})
 			if err != nil {
 				return err
 			}
-			fmt.Printf("put share: %v", putShare)
+			log.Printf("Node %s | [%s] put share %v", selfID, proto.Descriptor().Type, putShare)
+
 		}
 	}
 
