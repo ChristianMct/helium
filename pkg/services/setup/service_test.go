@@ -46,8 +46,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 	}
 
 	// todo: remove after testing
-	for _, literalParams := range rangeParam[:1] {
-		for _, ts := range testSettings[:1] {
+	for _, literalParams := range rangeParam {
+		for _, ts := range testSettings {
 
 			if ts.T == 0 {
 				ts.T = ts.N // N-out-of-N scenario
@@ -80,8 +80,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
 					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
 						Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					// ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,					This one is a bit more tricky because it has two rounds.
-					//	Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},							Have a first go without it
+					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID, //This one is a bit more tricky because it has two rounds.
+						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])}, //	Have a first go without it
 				}
 
 				var err error
@@ -129,7 +129,6 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 					// runs the cloud
 					g.Go(func() error {
-						// TODO: cloud has light-1 and light-0 as its peers actually...
 						clou.SetupService.Connect() // this takes care of populating the Peers map of the SetupService (will be empty since the cloud has no full-node peer)
 						err := clou.Execute()       // this should run the full node logic (waiting for aggregating the shares, already implemented in current code)
 						if err != nil {
@@ -266,7 +265,6 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 					sess, _ := node0.GetSessionFromID("test-session")
 
-					//pk := sess.PublicKey
 					// todo: not sure exactly what error is checked here?
 					if err != nil {
 						t.Fatal(err)

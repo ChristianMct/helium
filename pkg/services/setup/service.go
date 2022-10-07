@@ -88,43 +88,129 @@ func (s *SetupService) Execute() error {
 		if proto.Descriptor().Aggregator == s.ID() {
 			_, err := proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants})
 			if err != nil {
-				log.Printf("%s get share: node %s -- %v\n", proto.Descriptor().Type, selfID, err)
+				log.Printf("Node %s | [%s]: get share error -- %v\n", selfID, proto.Descriptor().Type, err)
 				//return err
 			}
 		} else if !s.Node.HasAddress() {
+			// temporary till RKG works
+			if proto.Descriptor().Type != api.ProtocolType_RKG {
+				share, err := proto.GetShare(ShareRequest{AggregateFor: []pkg.NodeID{selfID}})
 
-			share, err := proto.GetShare(ShareRequest{AggregateFor: []pkg.NodeID{selfID}})
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to get share: %v\n", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+				log.Printf("Node %s | [%s] my share is %v\n", selfID, proto.Descriptor().Type, share)
 
-			if err != nil {
-				log.Printf("Node %s | [%s] failed to get share: %v\n", selfID, proto.Descriptor().Type, err)
-				return err
+				// send share to the aggregator - in this case the cloud
+
+				// get cloud instance
+				helper, err := s.Node.HelperPeer()
+				if err != nil {
+					log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
+				}
+
+				// todo - encapsulate this logic
+				ctx := metadata.NewOutgoingContext(context.Background(),
+					metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
+				cloudConn := s.peers[helper.ID()] // todo: distinction between node.peers and node.Peers()
+
+				protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Descriptor().Type}).String()}
+				apiShare, err := share.Share().MarshalBinary()
+				if err != nil {
+					return err
+				}
+
+				_, err = cloudConn.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare})
+				if err != nil {
+					return err
+				}
+				//log.Printf("Node %s | [%s] put share %v", selfID, proto.Descriptor().Type, putShare)
+			} else {
+				//return fmt.Errorf("we panick here\n")
+				//proto.Required(1)
+				share, err := proto.GetShare(ShareRequest{AggregateFor: []pkg.NodeID{selfID}, Round: uint64(1)})
+
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to get share: %v\n", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+				log.Printf("Node %s | [%s] my share is %v\n", selfID, proto.Descriptor().Type, share)
+
+				// send share to the aggregator - in this case the cloud
+
+				// get cloud instance
+				helper, err := s.Node.HelperPeer()
+				if err != nil {
+					log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
+				}
+
+				// todo - encapsulate this logic
+				ctx := metadata.NewOutgoingContext(context.Background(),
+					metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
+				cloudConn := s.peers[helper.ID()] // todo: distinction between node.peers and node.Peers()
+
+				protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Descriptor().Type}).String()}
+				apiShare, err := share.Share().MarshalBinary()
+				if err != nil {
+					return err
+				}
+
+				var one uint64 = 1
+				_, err = cloudConn.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare, Round: &one})
+				if err != nil {
+					return err
+				}
+
+				var two uint64 = 2
+				log.Printf("starting round %d", two)
+				//aggShareR1m, err := c.GetShare(ctx, &api.ShareRequest{ProtocolID: protoID, Round: &one, AggregateFor: participants})
+
+				participants := make([]*api.NodeID, len(proto.Descriptor().Participants))
+				for i, nodeId := range proto.Descriptor().Participants {
+					participants[i] = &api.NodeID{NodeId: string(nodeId)}
+				}
+
+				// R2: get agg share
+				aggR1, err := cloudConn.GetShare(ctx, &api.ShareRequest{ProtocolID: protoID, Round: &one, AggregateFor: participants})
+				//aggR1, err := proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants, Round: uint64(1)})
+				if err != nil {
+					log.Printf("Node %s | [%s] agg share error: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+				log.Printf("agg share: %v", len(aggR1.Share))
+
+				var aggShareR1 drlwe.RKGShare
+				err = aggShareR1.UnmarshalBinary(aggR1.Share)
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to unmarshal share: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+
+				apiShare, err = aggShareR1.MarshalBinary()
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to marshall share 2: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+
+				share2, err := proto.GetShare(ShareRequest{AggregateFor: []pkg.NodeID{selfID}, Round: two, Previous: apiShare})
+				if err != nil {
+					log.Printf("Node %s | [%s] get share 2: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+				log.Printf("share 2: %v", share2)
+
+				apiShare, err = share2.Share().MarshalBinary()
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to marshall share: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+
+				_, err = cloudConn.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare, Round: &two})
+				if err != nil {
+					return err
+				}
 			}
-			log.Printf("Node %s | [%s] my share is %v\n", selfID, proto.Descriptor().Type, share)
-
-			// send share to the aggregator - in this case the cloud
-
-			// get cloud instance
-			helper, err := s.Node.HelperPeer()
-			if err != nil {
-				log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
-			}
-
-			// todo - encapsulate this logic
-			ctx := metadata.NewOutgoingContext(context.Background(),
-				metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
-			cloudConn := s.peers[helper.ID()] // todo: distinction between node.peers and node.Peers()
-
-			protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Descriptor().Type}).String()}
-			apiShare, err := share.Share().MarshalBinary()
-			if err != nil {
-				return err
-			}
-			putShare, err := cloudConn.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare})
-			if err != nil {
-				return err
-			}
-			log.Printf("Node %s | [%s] put share %v", selfID, proto.Descriptor().Type, putShare)
-
 		}
 	}
 
