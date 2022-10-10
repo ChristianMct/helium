@@ -32,20 +32,25 @@ var testSettings = []testSetting{
 	{N: 3, T: 2},
 }
 
+type peer struct {
+	*node.Node
+	*SetupService
+
+	dialer func(context.Context, string) (net.Conn, error)
+}
+
+type cloud struct {
+	*node.Node
+	*SetupService
+}
+
+type client struct {
+	*node.Node
+	*SetupService
+}
+
 // TestCloudAssistedSetup tests the generation of the public key in push mode
-func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
-
-	type cloud struct {
-		*node.Node
-		*SetupService
-	}
-
-	type client struct {
-		*node.Node
-		*SetupService
-	}
-
-	// todo: remove after testing
+func TestCloudAssistedSetup(t *testing.T) {
 	for _, literalParams := range rangeParam {
 		for _, ts := range testSettings {
 
@@ -80,8 +85,8 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
 					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
 						Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID, //This one is a bit more tricky because it has two rounds.
-						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])}, //	Have a first go without it
+					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,
+						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
 				}
 
 				var err error
@@ -108,13 +113,13 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 					allNodes = append(allNodes, clients[i].SetupService)
 				}
 
-				// loads the protocolmap at all nodes
-				for _, node := range allNodes {
-					sess, ok := node.GetSessionFromID("test-session")
+				// loads the protocolMap at all nodes
+				for _, n := range allNodes {
+					sess, ok := n.GetSessionFromID("test-session")
 					if !ok {
 						t.Fatal("session should exist")
 					}
-					err = node.LoadProtocolMap(sess, protocolMap)
+					err = n.LoadProtocolMap(sess, protocolMap)
 					if err != nil {
 						t.Error(err)
 					}
@@ -129,10 +134,13 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 					// runs the cloud
 					g.Go(func() error {
-						clou.SetupService.Connect() // this takes care of populating the Peers map of the SetupService (will be empty since the cloud has no full-node peer)
-						err := clou.Execute()       // this should run the full node logic (waiting for aggregating the shares, already implemented in current code)
+						// this takes care of populating the Peers map of the SetupService
+						// (will be empty since the cloud has no full-n peer)
+						clou.SetupService.Connect()
+						// this should run the full n logic
+						err := clou.Execute()
 						if err != nil {
-							err = fmt.Errorf("cloud error: %s", err)
+							err = fmt.Errorf("cloud (%s) error: %w", clou.ID(), err)
 						}
 						return err
 					})
@@ -141,10 +149,10 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 					for i := range clients {
 						c := clients[i]
 						g.Go(func() error {
-							c.SetupService.Connect() // this takes care of populating the Peers map of the SetupService (should contain the cloud as the only full-node peer)
-							err := c.Execute()       // this should run the light-node logic (figure out what protocol need to run and send the corresponding shares to the cloud, not yet implemented)
+							c.SetupService.Connect()
+							err := c.Execute()
 							if err != nil {
-								err = fmt.Errorf("client error: %s", err)
+								err = fmt.Errorf("client (%s) error: %w", c.ID(), err)
 							}
 							return err
 						})
@@ -169,18 +177,11 @@ func TestCloudAssistedSetup(t *testing.T) { // TODO: refactor to use light nodes
 
 func TestPeerToPeerSetup(t *testing.T) {
 
-	type peer struct {
-		*node.Node
-		*SetupService
-
-		dialer func(context.Context, string) (net.Conn, error)
-	}
-
 	for _, literalParams := range rangeParam {
 		for _, ts := range testSettings {
 
 			if ts.T == 0 {
-				ts.T = ts.N
+				ts.T = ts.N // N-out-of-N scenario
 			}
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
@@ -193,11 +194,11 @@ func TestPeerToPeerSetup(t *testing.T) {
 						T:          ts.T,
 					},
 				}
-				localtest := node.NewLocalTest(testConfig)
+				localTest := node.NewLocalTest(testConfig)
 
-				params := localtest.Params
-				peerIds := localtest.NodeIds()
-				galEl := localtest.Params.GaloisElementForRowRotation()
+				params := localTest.Params
+				peerIds := localTest.NodeIds()
+				galEl := localTest.Params.GaloisElementForRowRotation()
 
 				// define protocols to test
 				protocolMap := ProtocolMap{
@@ -216,8 +217,8 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 				nodes := make(map[pkg.NodeID]*peer, ts.N)
 				// initialise nodes, sessions and load protocols
-				for _, node := range localtest.Nodes {
-					n := &peer{Node: node}
+				for _, n := range localTest.Nodes {
+					n := &peer{Node: n}
 
 					n.SetupService, err = NewSetupService(n.Node)
 					if err != nil {
@@ -234,10 +235,10 @@ func TestPeerToPeerSetup(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					nodes[node.ID()] = n
+					nodes[n.ID()] = n
 				}
 
-				localtest.Start()
+				localTest.Start()
 
 				// launch public key generation and check correctness
 				t.Run("FullSetup", func(t *testing.T) {
@@ -265,12 +266,11 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 					sess, _ := node0.GetSessionFromID("test-session")
 
-					// todo: not sure exactly what error is checked here?
 					if err != nil {
 						t.Fatal(err)
 					}
 
-					checkKeyGenProt(t, sess, params, galEl, localtest.SkIdeal, ts.N)
+					checkKeyGenProt(t, sess, params, galEl, localTest.SkIdeal, ts.N)
 				})
 			})
 		}
@@ -286,6 +286,7 @@ func getRandomClientSet(t int, nodes []pkg.NodeID) []pkg.NodeID {
 	return cid[:t]
 }
 
+// Based on the session information, check if the protocol was performed correctly
 func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, galEl uint64, sk *rlwe.SecretKey, N int) {
 	pk := sess.PublicKey
 
