@@ -1,29 +1,60 @@
 package pkg
 
 import (
-	"fmt"
 	"net/url"
 	"path"
+	"sync"
 
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v3/bfv"
 )
 
 type Circuit interface {
-	InputsLabels() []URL
-	OutputsLabels() []URL
-	InputsChannel() chan<- Operand
-	OutputsChannel() <-chan Operand
+	InputsLabels() []OperandLabel
+	OutputsLabels() []OperandLabel
+	Inputs() chan<- Operand
+	Outputs() <-chan Operand
 	Expects(Operand) bool
 	Expected() []Operand
 	Evaluate() error
+}
+
+type FutureOperand struct {
+	m        sync.Mutex
+	op       *Operand
+	awaiters []chan Operand
+}
+
+func (fop *FutureOperand) Await() <-chan Operand {
+	fop.m.Lock()
+	defer fop.m.Unlock()
+
+	c := make(chan Operand, 1)
+	if fop.op != nil {
+		c <- *fop.op
+	} else {
+		fop.awaiters = append(fop.awaiters, c)
+	}
+	return c
+}
+
+func (fop *FutureOperand) Done(op Operand) {
+	fop.m.Lock()
+	defer fop.m.Unlock()
+	if fop.op != nil {
+		panic("Done called multiple times")
+	}
+	fop.op = &op
+	for _, aw := range fop.awaiters {
+		aw <- op // TODO copy ?
+	}
 }
 
 type LocalCircuit struct {
 	LocalCircuitDef
 	input     chan Operand
 	output    chan Operand
-	expected  utils.Set[URL]
+	expected  utils.Set[OperandLabel]
 	evaluator bfv.Evaluator
 	f         func(e bfv.Evaluator, in <-chan Operand, out chan<- Operand) error
 }
@@ -39,23 +70,23 @@ func NewLocalCircuit(cDef LocalCircuitDef, ev bfv.Evaluator) *LocalCircuit {
 	return c
 }
 
-func (lc *LocalCircuit) InputsChannel() chan<- Operand {
+func (lc *LocalCircuit) Inputs() chan<- Operand {
 	return lc.input
 }
 
-func (lc *LocalCircuit) OutputsChannel() <-chan Operand {
+func (lc *LocalCircuit) Outputs() <-chan Operand {
 	return lc.output
 }
 
 func (lc *LocalCircuit) Expects(op Operand) bool {
-	return lc.expected.Contains(*op.URL)
+	return lc.expected.Contains(op.OperandLabel)
 }
 
 func (lc *LocalCircuit) Expected() []Operand {
 	els := make([]Operand, 0, len(lc.expected))
 	for el := range lc.expected {
 		el := el
-		els = append(els, Operand{URL: &el})
+		els = append(els, Operand{OperandLabel: el})
 	}
 	return els
 
@@ -65,17 +96,24 @@ func (lc *LocalCircuit) Evaluate() error {
 	return lc.f(lc.evaluator, lc.input, lc.output)
 }
 
+type OperandLabel string
+
 type LocalCircuitDef struct {
-	Inputs, Outputs []URL
+	Name            string
+	Inputs, Outputs []OperandLabel
 	Evaluate        func(eval bfv.Evaluator, in <-chan Operand, out chan<- Operand) error
 }
 
-func (lcd *LocalCircuitDef) InputsLabels() []URL {
-	return lcd.Inputs // todo copy
+func (lcd *LocalCircuitDef) InputsLabels() []OperandLabel {
+	ils := make([]OperandLabel, len(lcd.Inputs))
+	copy(ils, lcd.Inputs)
+	return ils
 }
 
-func (lcd *LocalCircuitDef) OutputsLabels() []URL {
-	return lcd.Outputs // todo copy
+func (lcd *LocalCircuitDef) OutputsLabels() []OperandLabel {
+	ols := make([]OperandLabel, len(lcd.Outputs))
+	copy(ols, lcd.Outputs)
+	return ols
 }
 
 // It seems that a central piece of the orchestration could be a good
@@ -118,46 +156,7 @@ func (u *URL) String() string {
 	return (*url.URL)(u).String()
 }
 
-type OperandLabel string
-
 type Operand struct {
-	*URL
+	OperandLabel
 	*bfv.Ciphertext
-}
-
-var ComponentWiseProduct4P = LocalCircuitDef{
-	Inputs:  []URL{*NewURL("//light-0/in-0"), *NewURL("//light-1/in-0"), *NewURL("//light-2/in-0"), *NewURL("//light-3/in-0")},
-	Outputs: []URL{*NewURL("/out-0")},
-	Evaluate: func(e bfv.Evaluator, in <-chan Operand, out chan<- Operand) error {
-
-		lvl2 := make(chan *bfv.Ciphertext, 2)
-
-		op0, op1 := <-in, <-in
-
-		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
-			ev.Relinearize(res, res)
-			fmt.Println("computed lvl 1,1")
-			lvl2 <- res
-		}()
-
-		op2, op3 := <-in, <-in
-
-		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
-			ev.Relinearize(res, res)
-			fmt.Println("computed lvl 1,2")
-			lvl2 <- res
-		}()
-
-		res1, res2 := <-lvl2, <-lvl2
-		res := e.MulNew(res1, res2)
-		e.Relinearize(res, res)
-		fmt.Println("computed lvl 0")
-		out <- Operand{URL: NewURL("/out-0"), Ciphertext: res}
-		close(out)
-		return nil
-	},
 }
