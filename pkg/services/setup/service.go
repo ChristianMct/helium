@@ -103,7 +103,7 @@ func (s *SetupService) Execute() error {
 			// send share to the aggregator - in this case the cloud
 
 			// get cloud instance
-			helper, err := s.Node.HelperPeer()
+			helper, err := s.Node.GetPeer(proto.Descriptor().Aggregator)
 			if err != nil {
 				log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
 			}
