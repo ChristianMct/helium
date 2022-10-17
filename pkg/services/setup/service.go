@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/metadata"
 	"log"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -71,8 +72,109 @@ func (s *SetupService) Execute() error {
 
 	log.Printf("Node %s | started Execute with protocols %v \n", s.ID(), s.protocols)
 
+	// fetches the shares of all full nodes
 	for aggTask := range s.aggTasks {
-		s.ExecuteAggTask(&aggTask)
+		err := s.ExecuteAggTask(&aggTask)
+		if err != nil {
+			log.Printf("Node %s | failed to execute agg tast: %v\n", s.ID(), err)
+			return err
+		}
+	}
+
+	selfID := s.Node.ID()
+
+	// waits for all aggregated shares to be ready
+	for _, proto := range s.protocols {
+		if proto.Descriptor().Aggregator == s.ID() {
+			_, err := proto.GetShare(ShareRequest{AggregateFor: proto.Descriptor().Participants})
+			if err != nil {
+				log.Printf("Node %s | [%s]: get share error -- %v\n", selfID, proto.Descriptor().Type, err)
+			}
+		} else if !s.Node.HasAddress() {
+			// temporary till RKG works
+			share, err := proto.GetShare(ShareRequest{AggregateFor: []pkg.NodeID{selfID}, Round: uint64(1)})
+
+			if err != nil {
+				log.Printf("Node %s | [%s] failed to get share: %v\n", selfID, proto.Descriptor().Type, err)
+				return err
+			}
+			log.Printf("Node %s | [%s] my share is %v\n", selfID, proto.Descriptor().Type, share)
+
+			// send share to the aggregator - in this case the cloud
+
+			// get cloud instance
+			helper, err := s.Node.GetPeer(proto.Descriptor().Aggregator)
+			if err != nil {
+				log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
+			}
+
+			// todo - encapsulate this logic
+			ctx := metadata.NewOutgoingContext(context.Background(),
+				metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
+			cloudConn := s.peers[helper.ID()] // todo: distinction between node.peers and node.Peers()
+
+			protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Descriptor().Type}).String()}
+			apiShare, err := share.Share().MarshalBinary()
+			if err != nil {
+				return err
+			}
+
+			var one uint64 = 1
+			var two uint64 = 2
+
+			_, err = cloudConn.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare, Round: &one})
+			if err != nil {
+				return err
+			}
+
+			if proto.Descriptor().Type == api.ProtocolType_RKG {
+				log.Printf("starting round %d", two)
+
+				participants := make([]*api.NodeID, len(proto.Descriptor().Participants))
+				for i, nodeID := range proto.Descriptor().Participants {
+					participants[i] = &api.NodeID{NodeId: string(nodeID)}
+				}
+
+				// R2: get agg share
+				aggR1, err := cloudConn.GetShare(ctx, &api.ShareRequest{ProtocolID: protoID, Round: &one, AggregateFor: participants})
+				if err != nil {
+					log.Printf("Node %s | [%s] agg share error: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+				log.Printf("agg share: %v", len(aggR1.Share))
+
+				var aggShareR1 drlwe.RKGShare
+				err = aggShareR1.UnmarshalBinary(aggR1.Share)
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to unmarshal share: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+
+				apiShare, err = aggShareR1.MarshalBinary()
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to marshall share 2: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+
+				share2, err := proto.GetShare(ShareRequest{AggregateFor: []pkg.NodeID{selfID}, Round: two, Previous: apiShare})
+				if err != nil {
+					log.Printf("Node %s | [%s] get share 2: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+				log.Printf("share 2: %v", share2)
+
+				apiShare, err = share2.Share().MarshalBinary()
+				if err != nil {
+					log.Printf("Node %s | [%s] failed to marshall share: %v", selfID, proto.Descriptor().Type, err)
+					return err
+				}
+
+				_, err = cloudConn.PutShare(ctx, &api.Share{ProtocolID: protoID, Share: apiShare, Round: &two})
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	log.Printf("Node %s | execute returned\n", s.ID())
@@ -153,7 +255,7 @@ func (s *SetupService) GetShare(ctx context.Context, req *api.ShareRequest) (*ap
 	ictx := pkg.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID()) // TODO assumes a single session for now
 	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid session id \"%s\"", ictx.SessionID())
 	}
 
 	if req.ProtocolID == nil {
@@ -202,7 +304,7 @@ func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Voi
 	ictx := pkg.Context{Context: ctx}
 	_, exists := s.GetSessionFromID(ictx.SessionID())
 	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
+		return nil, status.Errorf(codes.InvalidArgument, "invalid session id \"%s\"", ictx.SessionID())
 	}
 
 	proto, exists := s.protocols[pkg.ProtocolID(share.ProtocolID.ProtocolID)]

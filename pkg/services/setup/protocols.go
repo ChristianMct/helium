@@ -204,12 +204,20 @@ func (ckgp *CKGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("invalid share type")
 	}
+
+	if ckgp.AggregatorOf == nil {
+		return false, fmt.Errorf("no aggregator")
+	}
 	complete, err := ckgp.AggregatorOf.PutShare(ckgShare)
+
 	if err != nil {
 		return false, err
 	}
 	if complete {
-		ckgp.done(ckgp.session)
+		err := ckgp.done(ckgp.session)
+		if err != nil {
+			return false, fmt.Errorf("failed to complete protocol: %v", err)
+		}
 	}
 	return complete, nil
 }
@@ -294,12 +302,20 @@ func (rtgp *RTGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("invalid share type")
 	}
+
+	if rtgp.AggregatorOf == nil {
+		return false, fmt.Errorf("missing aggregator")
+	}
+
 	complete, err := rtgp.AggregatorOf.PutShare(rtgShare)
 	if err != nil {
 		return false, err
 	}
 	if complete {
-		rtgp.done()
+		err := rtgp.done()
+		if err != nil {
+			return false, fmt.Errorf("failed to complete protocol: %v", err)
+		}
 	}
 	return complete, nil
 }
