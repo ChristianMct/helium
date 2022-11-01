@@ -66,7 +66,7 @@ type NodeConfig struct {
 
 // NewNode initialises a new node according to a given NodeConfig which provides the address and peers of this node
 // Also initialises other attributes such as the parameters, session store and the WaitGroup Greets
-// also initialises the peers of the node by calling initPeerNode()
+// also initialises the peers of the node by calling initPeerNode().
 func NewNode(config NodeConfig) (node *Node, err error) {
 	node = new(Node)
 
@@ -103,6 +103,7 @@ func (n *Node) RegisterService(sd *grpc.ServiceDesc, ss interface{}) {
 	n.grpcServer.RegisterService(sd, ss)
 }
 
+// Peers returns a map of (NodeID, *Node) containing each peer of Node n.
 func (n Node) Peers() map[pkg.NodeID]*Node {
 	return n.peers
 }
@@ -139,7 +140,7 @@ func (n Node) HasAddress() bool {
 }
 
 func (n Node) GetPeer(peerId pkg.NodeID) (*Node, error) {
-	peer := n.peers[peerId]
+	peer := n.peers[peerId] // not concurrency-safe - not sure if that's a problem
 	if peer != nil {
 		return peer, nil
 	}
@@ -167,23 +168,29 @@ func newPeerNode(id pkg.NodeID, addr pkg.NodeAddress) (node *Node) {
 	return node
 }
 
-// StartListening starts listening on the tcp port represented by the node address. It also initialises a new grpc Server which is registers to the node's corresponding grpc service servers. It then accepts incoming connections on the node's network listener.
+// StartListening starts listening on the tcp port represented by the node address.
+// It also initialises a new grpc Server which is registers to the node's corresponding grpc service servers.
+// It then accepts incoming connections on the node's network listener.
 func (node *Node) StartListening(lis net.Listener) {
 	if err := node.grpcServer.Serve(lis); err != nil {
 		log.Printf("Node %s | failed to serve: %v\n", node.addr, err)
 	}
 }
 
+// StopListening stops the tcp connection gracefully. It blocks until all pending grpc requests are handled and
+// does not accept new ones.
 func (node *Node) StopListening() {
 	node.grpcServer.GracefulStop()
 	log.Printf("Node %s | has shut down\n", node.id)
 }
 
-// Connect creates Clients and Dials for each peer i of the Node n and stores them in node.peer[i].client
+// Connect creates Clients and Dials for each peer i of the Node n and stores them in node.peer[i].client.
 func (node *Node) Connect() (err error) {
 	return node.ConnectWithDialers(node.Dialers())
 }
 
+// ConnectWithDialers will, given a map m of Dialers, establish a grpc connection to each peer of Node n present
+// in m.
 func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) {
 	var conns int
 	for _, peer := range node.peers {
@@ -199,7 +206,7 @@ func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) 
 					grpc.MaxCallSendMsgSize(MaxMsgSize)),
 			)
 			if err != nil {
-				return fmt.Errorf("fail to dial: %v", err)
+				return fmt.Errorf("fail to dial: %w", err)
 			}
 			conns++
 		}
@@ -220,8 +227,8 @@ type SessionParameters struct {
 
 // CreateNewSession takes an int id and creates a new rlwe session with this node and its peers and a sessionID constructed using the given id.
 func (node *Node) CreateNewSession(sessParams SessionParameters) (sess *pkg.Session, err error) {
-	//sessionID = "p2p" + node.addr + "." + fmt.Sprint(id)
-	//peerAddr := getAddrOfPeers(node.peers)
+	// sessionID = "p2p" + node.addr + "." + fmt.Sprint(id)
+	// peerAddr := getAddrOfPeers(node.peers)
 
 	fheParams, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams)
 	if err != nil {

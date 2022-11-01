@@ -1,12 +1,12 @@
 # Helium
 
 Helium is a versatile secure multiparty computation framework based on multiparty homomorphic encryption (MHE). 
-It uses the [Lattigo library](https://github.com/tuneinsight/lattigo) library for the M(HE) operation and [gRPC](https://grpc.io/) for its service and network layer.
+It uses the [Lattigo library](https://github.com/tuneinsight/lattigo) for the M(HE) operation and [gRPC](https://grpc.io/) for its service and network layer.
 
 ## MHE-based MPC
 
 The framework enables a group of N parties to compute a joint function of their private inputs under encryption and to release the result to a designated receiver.
-Helium currently supports the MHE scheme and associated MPC protocol described in the paper ["Multiparty Homomorphic Encryption from Ring-Learning-With-Errors"](https://eprint.iacr.org/2020/304.pdf) along with its extension to t-out-of-N-threshold encryption described in [""](). These schemes provide security against passive attackers that can corrupt up to t-1 of the input parties and can operate in various system models such as peer-to-peer, cloud-assisted or hybrid architecture.
+Helium currently supports the MHE scheme and associated MPC protocol described in the paper ["Multiparty Homomorphic Encryption from Ring-Learning-With-Errors"](https://eprint.iacr.org/2020/304.pdf) along with its extension to t-out-of-N-threshold encryption described in ["An Efficient Threshold Access-Structure for RLWE-Based Multiparty Homomorphic Encryption"](https://eprint.iacr.org/2022/780.pdf). These schemes provide security against passive attackers that can corrupt up to t-1 of the input parties and can operate in various system models such as peer-to-peer, cloud-assisted or hybrid architecture.
 
 The protocol consists in 2 main phases, the **Setup** phase and the **Computation** phase, as illustrated in the diagram below. 
 The Setup phase is independent of the inputs and can be performed "offline".
@@ -51,9 +51,9 @@ Hence, nodes can be both client and server for other nodes, and the framework fu
 
 ### Services
 Helium provide the following services:
-* [SetupService](#setupservice): handles the Setup phase of the MHE-MPC protocol.
-* [ComputeService](#computingservice): handles the computation phase the MHE-MPC protocol. (WIP)
-* [ManageService](#): handles interactions that are not related to the MHE-MPC protocol
+* [SetupService](/pkg/services/setup/service.go): handles the Setup phase of the MHE-MPC protocol.
+* [ComputeService](/pkg/services/compute/service.go): handles the computation phase the MHE-MPC protocol. (WIP)
+* [ManageService](/pkg/services/manage/service.go): handles interactions that are not related to the MHE-MPC protocol
 
 ### Sessions
 Transversal to all the services is the notion of session (`session.Session`). A session is the context for the computation and represents the persistent state of the parties in the MHE-based MPC protocol.
@@ -73,7 +73,7 @@ This means that at least one full node is required in the system.
 Nodes interact with full nodes by actively querying them for their inputs in the protocol (using GET-like API endpoints),
 and with light-nodes by passively waiting for them to provide their inputs (using PUT-like API endpoints). 
 
-**Internal vs External**. An Helium node is internal when it is part of the access-structure for the session's secret-key and is external otherwise.
+**Internal vs External**. A Helium node is internal when it is part of the access-structure for the session's secret-key and is external otherwise.
 External parties can assist a set of internal parties in the execution of the MHE-MPC protocol by aggregating their public shares and evaluating homomorphic circuits over their inputs.
 
 #### Cloud-assisted setting

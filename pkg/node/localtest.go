@@ -74,6 +74,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 	return test
 }
 
+// genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
 func genNodeConfigs(config LocalTestConfig) []NodeConfig {
 
 	ncs := make([]NodeConfig, 0, config.FullNodes+config.HelperNodes+config.LightNodes)
@@ -151,7 +152,11 @@ func (lc LocalTest) Start() {
 		node := node
 		wg.Add(1)
 		go func() {
-			node.ConnectWithDialers(ds)
+			err := node.ConnectWithDialers(ds)
+			if err != nil {
+				log.Printf("node %s failed to connect: %v", node.ID(), err)
+				return
+			}
 			wg.Done()
 		}()
 	}

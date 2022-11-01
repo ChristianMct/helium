@@ -46,7 +46,8 @@ func NewComputeService(n *node.Node) (s *ComputeService, err error) {
 	return s, nil
 }
 
-// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers). These connections are used to initialise the api.ComputeServiceClient instances of the nodes (stored in peers).
+// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers).
+// These connections are used to initialise the api.ComputeServiceClient instances of the nodes (stored in peers).
 func (s *ComputeService) Connect() {
 	for peerID, peerConn := range s.Conns() {
 		s.peers[peerID] = api.NewComputeServiceClient(peerConn)

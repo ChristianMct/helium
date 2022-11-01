@@ -2,7 +2,6 @@ package setup
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"math"
 	"math/bits"
@@ -315,8 +314,4 @@ func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, ga
 			(params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
 				2*3*int(math.Floor(rlwe.DefaultSigma*6)) + params.N()*3)))
 	require.True(t, rlwe.RotationKeyIsCorrect(rtk, galEl, sk, params, log2BoundRtk))
-}
-
-func GetSha256Hex(b []byte, err error) string {
-	return fmt.Sprintf("%x", sha256.Sum256(b))
 }

@@ -60,14 +60,16 @@ func NewSetupService(n *node.Node) (s *SetupService, err error) {
 	return s, nil
 }
 
-// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers). These connections are used to intialised the api.SetupServiceClient instances of the nodes (stored in peers).
+// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers).
+// These connections are used to intialised the api.SetupServiceClient instances of the nodes (stored in peers).
 func (s *SetupService) Connect() {
 	for peerID, peerConn := range s.Conns() {
 		s.peers[peerID] = api.NewSetupServiceClient(peerConn)
 	}
 }
 
-// Execute executes the ProtocolFetchShareTasks of s. These tasks consist in retrieving the share from each peer in the protocol and aggregating the shares.
+// Execute executes the ProtocolFetchShareTasks of s. These tasks consist in retrieving the share from each peer in the
+// protocol and aggregating the shares.
 func (s *SetupService) Execute() error {
 
 	log.Printf("Node %s | started Execute with protocols %v \n", s.ID(), s.protocols)
@@ -111,7 +113,10 @@ func (s *SetupService) Execute() error {
 			// todo - encapsulate this logic
 			ctx := metadata.NewOutgoingContext(context.Background(),
 				metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
-			cloudConn := s.peers[helper.ID()] // todo: distinction between node.peers and node.Peers()
+			cloudConn, err := s.PeerConn(helper.ID())
+			if err != nil {
+				log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Descriptor().Type, err)
+			}
 
 			protoID := &api.ProtocolID{ProtocolID: (&api.ProtocolDescriptor{Type: proto.Descriptor().Type}).String()}
 			apiShare, err := share.Share().MarshalBinary()
@@ -128,7 +133,7 @@ func (s *SetupService) Execute() error {
 			}
 
 			if proto.Descriptor().Type == api.ProtocolType_RKG {
-				log.Printf("starting round %d", two)
+				log.Printf("Node %s | [%s] starting round %d", selfID, proto.Descriptor().Type, two)
 
 				participants := make([]*api.NodeID, len(proto.Descriptor().Participants))
 				for i, nodeID := range proto.Descriptor().Participants {
@@ -319,7 +324,11 @@ func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Voi
 		return nil, err
 	}
 
-	proptoShare.Share().UnmarshalBinary(share.Share)
+	err = proptoShare.Share().UnmarshalBinary(share.Share)
+	if err != nil {
+		log.Printf("failed to unmarshall share: %v", err)
+		return nil, err
+	}
 	senderID := pkg.NodeID(ictx.SenderID())
 	proptoShare.AggregateFor().Add(senderID)
 
@@ -336,4 +345,12 @@ func (s *SetupService) PutShare(ctx context.Context, share *api.Share) (*api.Voi
 	log.Printf("%s - PUT [type: %s%s]\n", ictx.SenderID(), protoDesc.Type, round)
 
 	return &api.Void{}, nil
+}
+
+func (s *SetupService) PeerConn(id pkg.NodeID) (api.SetupServiceClient, error) {
+	c := s.peers[id]
+	if c != nil {
+		return c, nil
+	}
+	return nil, fmt.Errorf("peer not found %s", id)
 }

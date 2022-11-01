@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -105,8 +105,14 @@ func main() {
 
 	<-time.After(time.Second)
 
-	node.Connect()
-	manageService.Connect()
+	err = node.Connect()
+	if err != nil {
+		log.Printf("Node %s | connection error: %s", nc.Address, err)
+	}
+	err = manageService.Connect()
+	if err != nil {
+		log.Printf("Node %s | manage service conn error: %s", nc.Address, err)
+	}
 	setupService.Connect()
 
 	manageService.GreetAll()
@@ -124,17 +130,17 @@ func main() {
 func UnmarshalFromFile(filename string, s interface{}) error {
 	confFile, err := os.Open(filename)
 	if err != nil {
-		return fmt.Errorf("could not open file: %s", err)
+		return fmt.Errorf("could not open file: %w", err)
 	}
 
-	cb, err := ioutil.ReadAll(confFile)
+	cb, err := io.ReadAll(confFile)
 	if err != nil {
-		return fmt.Errorf("could not read file: %s", err)
+		return fmt.Errorf("could not read file: %w", err)
 	}
 
 	err = json.Unmarshal(cb, s)
 	if err != nil {
-		return fmt.Errorf("could not parse the file: %s", err)
+		return fmt.Errorf("could not parse the file: %w", err)
 	}
 
 	return nil

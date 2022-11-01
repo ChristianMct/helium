@@ -68,7 +68,11 @@ type SKGProtocol struct {
 }
 
 func (skgp *SKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
-	skgp.protocol.Init(session)
+	err = skgp.protocol.Init(session)
+	if err != nil {
+		log.Printf("failed to init proto: %v", err)
+		return err
+	}
 
 	skgp.Thresholdizer = drlwe.NewThresholdizer(*session.Params)
 
@@ -91,7 +95,7 @@ func (skgp *SKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err 
 		return err
 	}
 
-	return
+	return err
 }
 
 func (skgp *SKGProtocol) Required(round int) (nodeIds utils.Set[pkg.NodeID]) {
@@ -153,7 +157,11 @@ type CKGProtocol struct {
 }
 
 func (ckgp *CKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
-	ckgp.protocol.Init(session)
+	err = ckgp.protocol.Init(session)
+	if err != nil {
+		log.Printf("failed to init proto: %v", err)
+		return err
+	}
 
 	crp := ckgp.SampleCRP(session.CRS)
 	ckgp.crp = &crp
@@ -216,7 +224,7 @@ func (ckgp *CKGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 	if complete {
 		err := ckgp.done(ckgp.session)
 		if err != nil {
-			return false, fmt.Errorf("failed to complete protocol: %v", err)
+			return false, fmt.Errorf("failed to complete protocol: %w", err)
 		}
 	}
 	return complete, nil
@@ -241,7 +249,11 @@ type RTGProtocol struct {
 }
 
 func (rtgp *RTGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
-	rtgp.protocol.Init(session)
+	err = rtgp.protocol.Init(session)
+	if err != nil {
+		log.Printf("failed to init proto: %v", err)
+		return err
+	}
 
 	if _, hasArg := rtgp.Args["GalEl"]; !hasArg {
 		return fmt.Errorf("should provide argument: GalEl")
@@ -249,7 +261,7 @@ func (rtgp *RTGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err 
 
 	rtgp.galEl, err = strconv.ParseUint(rtgp.Args["GalEl"], 10, 64)
 	if err != nil {
-		return fmt.Errorf("invalid galois element: %s", err)
+		return fmt.Errorf("invalid galois element: %w", err)
 	}
 
 	crp := rtgp.SampleCRP(session.CRS)
@@ -314,7 +326,7 @@ func (rtgp *RTGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 	if complete {
 		err := rtgp.done()
 		if err != nil {
-			return false, fmt.Errorf("failed to complete protocol: %v", err)
+			return false, fmt.Errorf("failed to complete protocol: %w", err)
 		}
 	}
 	return complete, nil
@@ -342,7 +354,11 @@ type RKGProtocol struct {
 }
 
 func (rkgp *RKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
-	rkgp.protocol.Init(session)
+	err = rkgp.protocol.Init(session)
+	if err != nil {
+		log.Printf("failed to init proto: %v", err)
+		return err
+	}
 
 	crp := rkgp.SampleCRP(session.CRS)
 	rkgp.crp = &crp
@@ -397,10 +413,14 @@ func (rkgp *RKGProtocol) GetShare(req ShareRequest) (share AggregatedShareInt, e
 			}
 			rkgp.RlkEphemSk, rkgp.shareR1, rkgp.shareR2 = rkgp.AllocateShare()
 			rkgp.GenShareRoundOne(sk, *rkgp.crp, rkgp.RlkEphemSk, rkgp.shareR1)
-			share, err = &AggregatedShare[*drlwe.RKGShare]{s: rkgp.shareR1, aggregateFor: utils.NewSingletonSet(rkgp.self)}, nil
+			share = &AggregatedShare[*drlwe.RKGShare]{s: rkgp.shareR1, aggregateFor: utils.NewSingletonSet(rkgp.self)}
 		case req.Round == 2 && req.Previous != nil:
 			var prevShare drlwe.RKGShare
-			prevShare.UnmarshalBinary(req.Previous)
+			err := prevShare.UnmarshalBinary(req.Previous)
+			if err != nil {
+				log.Printf("failed to unmarshal binary: %v", err)
+				return nil, err
+			}
 
 			sk, err := rkgp.session.SecretKeyForGroup(rkgp.Participants)
 			if err != nil {
@@ -436,7 +456,7 @@ func (rkgp *RKGProtocol) GetShare(req ShareRequest) (share AggregatedShareInt, e
 }
 
 func (rkgp *RKGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
-	//rkgp.replies <- ProtocolFetchShareTaskResult{share: share, ProtocolFetchShareTasks: ProtocolFetchShareTasks{ShareRequest: ShareRequest{To: senderID}}}
+	// rkgp.replies <- ProtocolFetchShareTaskResult{share: share, ProtocolFetchShareTasks: ProtocolFetchShareTasks{ShareRequest: ShareRequest{To: senderID}}}
 
 	agg := rkgp.aggR1
 	if rkgp.aggR1.Complete() {
@@ -464,7 +484,10 @@ func (rkgp *RKGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 				rkgp.GenShareRoundTwo(rkgp.RlkEphemSk, sk, rkgp.aggR1.aggShare, rkgp.shareR2)
 			}
 		} else {
-			rkgp.done(rkgp.session)
+			err := rkgp.done(rkgp.session)
+			if err != nil {
+				return false, fmt.Errorf("failed to complete protocol: %w", err)
+			}
 		}
 
 	}
@@ -473,8 +496,10 @@ func (rkgp *RKGProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 }
 
 func (rkgp *RKGProtocol) done(session *pkg.Session) error {
-	log.Printf("Node %s | RKG DONE\n", rkgp.self)
-	rkgp.session.RelinearizationKey = rlwe.NewRelinKey(*rkgp.session.Params, 2)
+	// todo: do we need the session param?
+	log.Printf("Node %s | RKG DONE | Session %s\n", rkgp.self, session.ID)
+	const maxRelinDegree = 2
+	rkgp.session.RelinearizationKey = rlwe.NewRelinKey(*rkgp.session.Params, maxRelinDegree)
 	rkgp.GenRelinearizationKey(rkgp.aggR1.aggShare, rkgp.aggR2.aggShare, rkgp.session.RelinearizationKey)
-	return nil
+	return nil // todo: do we expect to have error checking or should `done` just not return an error?
 }

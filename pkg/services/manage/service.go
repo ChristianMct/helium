@@ -28,25 +28,25 @@ func NewManageService(n *node.Node) (s *ManageService) {
 	return s
 }
 
-func (s *ManageService) Connect() error {
-	for peerID, peerConn := range s.Conns() {
-		s.peers[peerID] = api.NewManageServiceClient(peerConn)
+func (node *ManageService) Connect() error {
+	for peerID, peerConn := range node.Conns() {
+		node.peers[peerID] = api.NewManageServiceClient(peerConn)
 	}
 	return nil
 }
 
-// GreetAll greets all the nodes peers
+// GreetAll greets all the nodes peers.
 func (node *ManageService) GreetAll() {
 	ctx := node.GetContext("test-session")
 	nodeID := node.ID()
-	for peerId, peer := range node.peers {
-		if peerId != nodeID {
-			log.Printf("Node %s | is greeting %s\n", node.ID(), peerId)
+	for peerID, peer := range node.peers {
+		if peerID != nodeID {
+			log.Printf("Node %s | is greeting %s\n", node.ID(), peerID)
 			_, err := peer.SayHello(ctx, &api.HelloRequest{})
 			if err != nil {
 				log.Printf("Node %s | could not greet: %v\n", node.ID(), err)
 			}
-			log.Printf("Node %s | received greeting response from %s\n", node.ID(), peerId)
+			log.Printf("Node %s | received greeting response from %s\n", node.ID(), peerID)
 		}
 	}
 }
