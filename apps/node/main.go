@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/manage"
 	"github.com/ldsec/helium/pkg/services/setup"
 	pkg "github.com/ldsec/helium/pkg/session"
@@ -48,7 +49,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	var pm []setup.ProtocolDescriptor
+	var pm []protocols.Descriptor
 	//var pm2 []string
 	if *protocolMapFile != "" {
 		if err = UnmarshalFromFile(*protocolMapFile, &pm); err != nil {

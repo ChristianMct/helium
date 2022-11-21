@@ -3,6 +3,8 @@ package utils
 import (
 	"crypto/sha256"
 	"fmt"
+
+	"github.com/tuneinsight/lattigo/v3/rlwe"
 )
 
 var Exists = struct{}{}
@@ -104,4 +106,11 @@ func Must(bs []byte, err error) []byte {
 
 func GetSha256Hex(b []byte, err error) string {
 	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+
+func PrintDebugCiphertext(ct rlwe.Ciphertext) string {
+	if ct.Value == nil {
+		return "nil"
+	}
+	return GetSha256Hex(ct.MarshalBinary())
 }

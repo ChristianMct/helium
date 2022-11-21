@@ -136,7 +136,7 @@ func (lc LocalTest) Start() {
 	ds := make(map[pkg.NodeID]Dialer)
 	for _, node := range lc.Nodes {
 		node := node
-		if node.HasAddress() {
+		if node.IsFullNode() {
 			lis := bufconn.Listen(buffConBufferSize)
 			go func() {
 				if err := node.grpcServer.Serve(lis); err != nil {

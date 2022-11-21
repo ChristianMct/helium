@@ -21,7 +21,7 @@ func NewManageService(n *node.Node) (s *ManageService) {
 	s = new(ManageService)
 	s.Node = n
 	s.peers = make(map[pkg.NodeID]api.ManageServiceClient)
-	if n.HasAddress() {
+	if n.IsFullNode() {
 		NewManageServiceServer(s)
 		s.Greets.Add(len(n.Peers()))
 	}

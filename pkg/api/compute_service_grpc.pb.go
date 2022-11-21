@@ -20,6 +20,11 @@ const _ = grpc.SupportPackageIsVersion7
 type ComputeServiceClient interface {
 	GetCiphertext(ctx context.Context, in *CiphertextRequest, opts ...grpc.CallOption) (*Ciphertext, error)
 	PutCiphertext(ctx context.Context, in *Ciphertext, opts ...grpc.CallOption) (*CiphertextID, error)
+	// GetShare is used to get the share of the callee in the protocol described in the ShareRequest.
+	GetShare(ctx context.Context, in *ShareRequest, opts ...grpc.CallOption) (*Share, error)
+	// PutShare is used to push the caller's share in the protocol described by the Share.ProtocolDesc
+	//field to the callee.
+	PutShare(ctx context.Context, in *Share, opts ...grpc.CallOption) (*Void, error)
 }
 
 type computeServiceClient struct {
@@ -48,12 +53,35 @@ func (c *computeServiceClient) PutCiphertext(ctx context.Context, in *Ciphertext
 	return out, nil
 }
 
+func (c *computeServiceClient) GetShare(ctx context.Context, in *ShareRequest, opts ...grpc.CallOption) (*Share, error) {
+	out := new(Share)
+	err := c.cc.Invoke(ctx, "/helium_proto.ComputeService/GetShare", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *computeServiceClient) PutShare(ctx context.Context, in *Share, opts ...grpc.CallOption) (*Void, error) {
+	out := new(Void)
+	err := c.cc.Invoke(ctx, "/helium_proto.ComputeService/PutShare", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ComputeServiceServer is the server API for ComputeService service.
 // All implementations must embed UnimplementedComputeServiceServer
 // for forward compatibility
 type ComputeServiceServer interface {
 	GetCiphertext(context.Context, *CiphertextRequest) (*Ciphertext, error)
 	PutCiphertext(context.Context, *Ciphertext) (*CiphertextID, error)
+	// GetShare is used to get the share of the callee in the protocol described in the ShareRequest.
+	GetShare(context.Context, *ShareRequest) (*Share, error)
+	// PutShare is used to push the caller's share in the protocol described by the Share.ProtocolDesc
+	//field to the callee.
+	PutShare(context.Context, *Share) (*Void, error)
 	mustEmbedUnimplementedComputeServiceServer()
 }
 
@@ -66,6 +94,12 @@ func (UnimplementedComputeServiceServer) GetCiphertext(context.Context, *Ciphert
 }
 func (UnimplementedComputeServiceServer) PutCiphertext(context.Context, *Ciphertext) (*CiphertextID, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PutCiphertext not implemented")
+}
+func (UnimplementedComputeServiceServer) GetShare(context.Context, *ShareRequest) (*Share, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetShare not implemented")
+}
+func (UnimplementedComputeServiceServer) PutShare(context.Context, *Share) (*Void, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutShare not implemented")
 }
 func (UnimplementedComputeServiceServer) mustEmbedUnimplementedComputeServiceServer() {}
 
@@ -116,6 +150,42 @@ func _ComputeService_PutCiphertext_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ComputeService_GetShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ShareRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ComputeServiceServer).GetShare(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/helium_proto.ComputeService/GetShare",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ComputeServiceServer).GetShare(ctx, req.(*ShareRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ComputeService_PutShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Share)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ComputeServiceServer).PutShare(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/helium_proto.ComputeService/PutShare",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ComputeServiceServer).PutShare(ctx, req.(*Share))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ComputeService_ServiceDesc is the grpc.ServiceDesc for ComputeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -130,6 +200,14 @@ var ComputeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PutCiphertext",
 			Handler:    _ComputeService_PutCiphertext_Handler,
+		},
+		{
+			MethodName: "GetShare",
+			Handler:    _ComputeService_GetShare_Handler,
+		},
+		{
+			MethodName: "PutShare",
+			Handler:    _ComputeService_PutShare_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -1,4 +1,4 @@
-package setup
+package protocols
 
 import (
 	"encoding"
@@ -19,7 +19,7 @@ type AggregatedShareInt interface {
 	AggregateFor() utils.Set[pkg.NodeID]
 }
 
-type AggregatedShare[S ProtocolShare] struct {
+type AggregatedShare[S Share] struct {
 	s            S
 	aggregateFor utils.Set[pkg.NodeID]
 }
@@ -32,11 +32,11 @@ func (s *AggregatedShare[S]) AggregateFor() utils.Set[pkg.NodeID] {
 	return s.aggregateFor
 }
 
-type ProtocolAggregator[S ProtocolShare] interface {
+type ProtocolAggregator[S Share] interface {
 	AggregateShares(S, S, S)
 }
 
-type AggregatorOf[S ProtocolShare] struct {
+type AggregatorOf[S Share] struct {
 	sync.RWMutex
 	sync.Cond
 	ProtocolAggregator[S]
@@ -45,7 +45,7 @@ type AggregatorOf[S ProtocolShare] struct {
 	expected, aggregated utils.Set[pkg.NodeID]
 }
 
-func NewAggregatorOf[S ProtocolShare](expected utils.Set[pkg.NodeID], buff S, aggObj ProtocolAggregator[S]) *AggregatorOf[S] {
+func NewAggregatorOf[S Share](expected utils.Set[pkg.NodeID], buff S, aggObj ProtocolAggregator[S]) *AggregatorOf[S] {
 	agg := new(AggregatorOf[S])
 	agg.Cond = *sync.NewCond(&agg.RWMutex)
 	agg.expected, agg.aggregated = expected.Copy(), utils.NewEmptySet[pkg.NodeID]()

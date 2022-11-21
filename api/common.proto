@@ -22,3 +22,40 @@ message CiphertextID {
 
 message Void {
 }
+
+/* ProtocolType is a enumerate type for identifying protocol types */
+enum ProtocolType {
+    UNSPECIFIED = 0;
+    SKG = 1; /* secret-key generation */
+    CKG = 2; /* public encryption-key generation */
+    RKG = 3; /* public relinearization-key generation */
+    RTG = 4; /* public rotation-key generation */
+    CKS = 5; /* collective switching to collective secret-key */
+    PCKS = 6; /* collective switching to known public-key */
+}
+
+/* ProtocolDescriptor is a message type to describe a protocol by its type 
+and arguments. It should be sufficient for parties to instantiate a protocol
+within a given session */
+message ProtocolDescriptor {
+    ProtocolType Type = 1;
+    map<string, string> Args = 3;
+}
+
+/* ShareRequest represents a request for a party's share in the protocol 
+defined by its ProtocolDesc field. */
+message ShareRequest {
+    ProtocolID ProtocolID = 1;
+    optional uint64 Round = 2;
+    optional Share Previous = 3;
+    repeated NodeID AggregateFor = 4;
+    optional bool NoData = 5;
+}
+
+/* Share represents a party's share in the protocol described by its ProtocolDesc
+field. */
+message Share {
+    ProtocolID ProtocolID = 1;
+    optional uint64 Round = 2;
+    bytes share = 3;
+}

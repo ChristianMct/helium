@@ -82,7 +82,7 @@ func NewNode(config NodeConfig) (node *Node, err error) {
 		node.peers[id] = newPeerNode(id, peerAddr)
 	}
 
-	if node.HasAddress() {
+	if node.IsFullNode() {
 		node.grpcServer = grpc.NewServer(grpc.MaxRecvMsgSize(MaxMsgSize), grpc.MaxSendMsgSize(MaxMsgSize))
 		log.Printf("Node %s | started as full helium node at address %s\n", node.id, node.addr)
 	} else {
@@ -216,6 +216,10 @@ func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) 
 	return nil
 }
 
+func (node *Node) IsFullNode() bool {
+	return node.HasAddress()
+}
+
 type SessionParameters struct {
 	ID         pkg.SessionID
 	RLWEParams rlwe.ParametersLiteral
@@ -251,7 +255,7 @@ func (node *Node) CreateNewSession(sessParams SessionParameters) (sess *pkg.Sess
 		return sess, err
 	}
 
-	log.Printf("Node %s | created rlwe session with id: %s and nodes: %s \n", node.id, sess.ID, sess.Nodes)
+	//	log.Printf("Node %s | created rlwe session with id: %s and nodes: %s \n", node.id, sess.ID, sess.Nodes)
 
 	return sess, nil
 }
@@ -263,4 +267,17 @@ func (node *Node) GetContext(sessionID pkg.SessionID) context.Context {
 
 func (node *Node) GetSessionFromID(sessionID pkg.SessionID) (*pkg.Session, bool) {
 	return node.sessions.GetSessionFromID(sessionID)
+}
+
+func (node *Node) GetSessionFromContext(ctx context.Context) (*pkg.Session, bool) {
+	sessId, has := pkg.SessionIdFromContext(ctx)
+	if !has {
+		return nil, false
+	}
+	return node.GetSessionFromID(sessId)
+}
+
+func (node *Node) GetSessionFromIncomingContext(ctx context.Context) (*pkg.Session, bool) {
+	sessId := pkg.SessionIDFromIncomingContext(ctx)
+	return node.GetSessionFromID(sessId)
 }

@@ -7,22 +7,23 @@ import (
 	"sync"
 
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/protocols"
 
 	"google.golang.org/grpc/metadata"
 )
 
 type FetchShareTasks struct {
-	Protocol ProtocolInt
-	ShareRequest
+	Protocol protocols.Interface
+	protocols.ShareRequest
 }
 
-func (s *SetupService) Executes(fst *FetchShareTasks) (AggregatedShareInt, error) {
+func (s *SetupService) Executes(fst *FetchShareTasks) (protocols.AggregatedShareInt, error) {
 	log.Printf("Node %s | executing task: %s \n", s.ID(), fst)
 
 	isLocal := fst.To == s.ID()
 	cli, hasCli := s.peers[fst.To]
 
-	var share AggregatedShareInt
+	var share protocols.AggregatedShareInt
 	var err error
 	switch {
 	case isLocal: // task is local
@@ -36,7 +37,7 @@ func (s *SetupService) Executes(fst *FetchShareTasks) (AggregatedShareInt, error
 		// retrieve the previous share from the task if necessary
 		var prevShare *api.Share
 		if fst.Round > 1 {
-			aggShareRoundOne, err := fst.Protocol.GetShare(ShareRequest{ProtocolID: fst.ProtocolID, Round: 1, AggregateFor: fst.Protocol.Descriptor().Participants})
+			aggShareRoundOne, err := fst.Protocol.GetShare(protocols.ShareRequest{ProtocolID: fst.ProtocolID, Round: 1, AggregateFor: fst.Protocol.Desc().Participants})
 			if err != nil {
 				log.Panic(err)
 			}
@@ -61,7 +62,7 @@ func (s *SetupService) Executes(fst *FetchShareTasks) (AggregatedShareInt, error
 			panic(err)
 		}
 
-		share, err = fst.Protocol.GetShare(ShareRequest{AggregateFor: nil}) // Creates an allocated share
+		share, err = fst.Protocol.GetShare(protocols.ShareRequest{AggregateFor: nil}) // Creates an allocated share
 		if err != nil {
 			return nil, err
 		}
@@ -84,7 +85,7 @@ func (pft FetchShareTasks) String() string {
 }
 
 type AggregateTask struct {
-	Protocol   ProtocolInt
+	Protocol   protocols.Interface
 	fetchTasks []FetchShareTasks
 }
 
@@ -94,7 +95,7 @@ func (s *SetupService) ExecuteAggTask(agt *AggregateTask) error {
 
 	var wg sync.WaitGroup
 	tasks := make(chan FetchShareTasks, len(agt.fetchTasks))
-	shares := make(chan AggregatedShareInt)
+	shares := make(chan protocols.AggregatedShareInt)
 
 	for i := 1; i <= numFetchWorkers; i++ {
 		wg.Add(1)

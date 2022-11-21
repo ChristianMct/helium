@@ -24,32 +24,86 @@ type NodeID string
 
 type NodeAddress string
 
-type Context struct {
-	context.Context
+type ctxKey string
+
+var (
+	ctxSessionID ctxKey = "session_id"
+	ctxCircuitID ctxKey = "circuit_id"
+)
+
+func NewContext(sessId *SessionID, circId *CircuitID) context.Context {
+	ctx := context.Background()
+	if sessId != nil {
+		ctx = context.WithValue(ctx, ctxSessionID, *sessId)
+	}
+	if circId != nil {
+		ctx = AppendCircuitID(ctx, *circId)
+	}
+	return ctx
 }
 
-func (c Context) SenderID() string {
-	md, hasIncomingContext := metadata.FromIncomingContext(c)
-	if hasIncomingContext && len(md.Get("node_id")) == 1 {
-		return md.Get("node_id")[0]
+func NewOutgoingContext(senderId *NodeID, sessId *SessionID, circId *CircuitID) context.Context {
+	md := metadata.New(nil)
+	if senderId != nil {
+		md.Append("sender_id", string(*senderId))
 	}
-	return ""
+	if sessId != nil {
+		md.Append(string(ctxSessionID), string(*sessId))
+	}
+	if circId != nil {
+		md.Append(string(ctxCircuitID), string(*circId))
+	}
+	return metadata.NewOutgoingContext(context.Background(), md)
 }
 
-func (c Context) SessionID() SessionID {
-	md, hasIncomingContext := metadata.FromIncomingContext(c)
-	if hasIncomingContext && len(md.Get("session_id")) == 1 {
-		return SessionID(md.Get("session_id")[0])
+func GetOutgoingContext(ctx context.Context, senderId NodeID) context.Context {
+	md := metadata.New(nil)
+	md.Append("sender_id", string(senderId))
+	if sessId, hasSessId := SessionIdFromContext(ctx); hasSessId {
+		md.Append(string(ctxSessionID), string(sessId))
 	}
-	return ""
+	if circId, hasCircId := CircuitIDFromContext(ctx); hasCircId {
+		md.Append(string(ctxCircuitID), string(circId))
+	}
+	return metadata.NewOutgoingContext(ctx, md)
 }
 
-func (c Context) CircuitID() CircuitID {
-	md, hasIncomingContext := metadata.FromIncomingContext(c)
-	if hasIncomingContext && len(md.Get("circuit_id")) == 1 {
-		return CircuitID(md.Get("circuit_id")[0])
+func AppendCircuitID(ctx context.Context, circId CircuitID) context.Context {
+	return context.WithValue(ctx, ctxCircuitID, circId)
+}
+
+func ValueFromIncomingContext(ctx context.Context, key string) string {
+	md, hasMd := metadata.FromIncomingContext(ctx)
+	if !hasMd {
+		return ""
 	}
-	return ""
+	id := md.Get(key)
+	if len(id) < 1 {
+		return ""
+	}
+	return id[0]
+}
+
+func SenderIDFromIncomingContext(ctx context.Context) NodeID {
+	return NodeID(ValueFromIncomingContext(ctx, "sender_id"))
+}
+
+func SessionIDFromIncomingContext(ctx context.Context) SessionID {
+	return SessionID(ValueFromIncomingContext(ctx, string(ctxSessionID)))
+}
+
+func CircuitIDFromIncomingContext(ctx context.Context) CircuitID {
+	return CircuitID(ValueFromIncomingContext(ctx, string(ctxCircuitID)))
+}
+
+func SessionIdFromContext(ctx context.Context) (SessionID, bool) {
+	sessId, ok := ctx.Value(ctxSessionID).(SessionID)
+	return sessId, ok
+}
+
+func CircuitIDFromContext(ctx context.Context) (CircuitID, bool) {
+	circId, isValid := ctx.Value(ctxCircuitID).(CircuitID)
+	return circId, isValid
 }
 
 func (na NodeAddress) String() string {
@@ -65,6 +119,8 @@ type Session struct {
 	NodeID NodeID
 	Nodes  []NodeID
 
+	NodesPk map[NodeID]rlwe.PublicKey
+
 	T       int
 	SPKS    map[NodeID]drlwe.ShamirPublicPoint
 	tsk     *drlwe.ShamirSecretShare
@@ -74,7 +130,7 @@ type Session struct {
 	CRS    drlwe.CRS
 	Params *rlwe.Parameters
 
-	sk *rlwe.SecretKey
+	Sk *rlwe.SecretKey
 	*rlwe.PublicKey
 	*rlwe.RelinearizationKey
 	*rlwe.EvaluationKey
@@ -101,9 +157,11 @@ func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, node
 	sess.NodeID = NodeID(nodeId)
 	sess.Nodes = nodes
 
+	sess.NodesPk = map[NodeID]rlwe.PublicKey{}
+
 	sess.Params = params
 
-	sess.sk = sk
+	sess.Sk = sk
 	sess.EvaluationKey = &rlwe.EvaluationKey{Rlk: rlwe.NewRelinKey(*params, 1), Rtks: rlwe.NewRotationKeySet(*params, []uint64{})}
 	sess.RelinearizationKey = sess.EvaluationKey.Rlk
 	sess.CRSKey = crsKey
@@ -171,16 +229,16 @@ func (s *Session) SetTSK(tsk *drlwe.ShamirSecretShare) {
 }
 
 func (s *Session) GetSecretKey() *rlwe.SecretKey {
-	return s.sk
+	return s.Sk
 }
 
 func (s *Session) SecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err error) {
 	switch {
 	case len(parties) == len(s.Nodes):
-		if s.sk == nil {
+		if s.Sk == nil {
 			return nil, fmt.Errorf("party has no secret-key in the session")
 		}
-		return s.sk, nil
+		return s.Sk, nil
 	case len(parties) >= s.T:
 		s.tskDone.L.Lock() // TODO might be overkill as condition is irreversible
 		for s.tsk == nil {
@@ -197,6 +255,18 @@ func (s *Session) SecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err e
 	default:
 		return nil, fmt.Errorf("not enough participants to reconstruct")
 	}
+}
+
+func (s *Session) RegisterPkForNode(nid NodeID, pk rlwe.PublicKey) {
+	if _, exists := s.NodesPk[nid]; exists {
+		panic("pk for node already registered")
+	}
+	s.NodesPk[nid] = pk
+}
+
+func (s *Session) GetPkForNode(nid NodeID) (pk rlwe.PublicKey, exists bool) {
+	pk, exists = s.NodesPk[nid]
+	return
 }
 
 func getParamsFromString(stringParams string) (rlwe.Parameters, error) {

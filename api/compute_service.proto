@@ -33,4 +33,11 @@ service ComputeService {
     rpc GetCiphertext(CiphertextRequest) returns (Ciphertext) {}
 
     rpc PutCiphertext(Ciphertext) returns (CiphertextID) {}
+
+    /* GetShare is used to get the share of the callee in the protocol described in the ShareRequest. */
+    rpc GetShare (ShareRequest) returns (Share) {} 
+    
+    /* PutShare is used to push the caller's share in the protocol described by the Share.ProtocolDesc
+    field to the callee. */
+    rpc PutShare (Share) returns (Void) {}
 }

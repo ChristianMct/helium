@@ -1,4 +1,4 @@
-package setup
+package protocols
 
 import (
 	"encoding"
@@ -6,38 +6,51 @@ import (
 	"log"
 	"strconv"
 
+	"github.com/ldsec/helium/pkg/api"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
-
 	"github.com/tuneinsight/lattigo/v3/drlwe"
 	"github.com/tuneinsight/lattigo/v3/rlwe"
 )
 
-// func (s *Share[S]) MarshalBinary() (data []byte, err error) {
-// 	share := s.s
-// 	data, err = share.MarshalBinary()
-// 	return
-// }
+type Descriptor struct {
+	Type         api.ProtocolType
+	Args         map[string]string
+	Aggregator   pkg.NodeID
+	Participants []pkg.NodeID
+}
 
-type ProtocolInt interface {
-	Descriptor() ProtocolDescriptor
-	Init(pd ProtocolDescriptor, session *pkg.Session) error
+type ShareRequest struct {
+	pkg.ProtocolID
+	From         pkg.NodeID
+	To           pkg.NodeID
+	Round        uint64
+	Previous     []byte
+	AggregateFor []pkg.NodeID
+	NoData       bool
+}
+
+func (s ShareRequest) String() string {
+	return fmt.Sprintf("ShareRequest[protocol_id: %s from: %s to: %s has_previous: %v]", s.ProtocolID, s.From, s.To, len(s.Previous) > 0)
+}
+
+type Interface interface {
+	Desc() Descriptor
+	Init(pd Descriptor, session *pkg.Session) error
 	Rounds() int
 	Required(round int) utils.Set[pkg.NodeID]
 	GetShare(ShareRequest) (AggregatedShareInt, error)
 	PutShare(AggregatedShareInt) (bool, error)
 }
 
-type ProtocolShare interface {
-	*drlwe.ShamirSecretShare | *drlwe.CKGShare | *drlwe.RKGShare | *drlwe.RTGShare
+type Share interface {
+	*drlwe.ShamirSecretShare | *drlwe.CKGShare | *drlwe.RKGShare | *drlwe.RTGShare | *drlwe.CKSShare | *drlwe.PCKSShare
 	encoding.BinaryMarshaler
 	encoding.BinaryUnmarshaler
 }
 
 type protocol struct {
-	ProtocolDescriptor
-
-	ID   pkg.ProtocolID
+	Descriptor
 	self pkg.NodeID
 
 	session *pkg.Session
@@ -50,12 +63,46 @@ func (p *protocol) Init(session *pkg.Session) error {
 	return nil
 }
 
-func (p *protocol) Descriptor() ProtocolDescriptor {
-	return p.ProtocolDescriptor // TODO copy
+func (p *protocol) Desc() Descriptor {
+	return p.Descriptor // TODO copy
 }
 
 func (p *protocol) Rounds() int {
 	return 1
+}
+
+func New(protoDesc Descriptor, session *pkg.Session) (Interface, error) {
+	var proto Interface
+	switch protoDesc.Type {
+	case api.ProtocolType_SKG:
+		proto = &SKGProtocol{
+			protocol:      protocol{Descriptor: protoDesc},
+			Thresholdizer: drlwe.NewThresholdizer(*session.Params),
+		}
+	case api.ProtocolType_CKG:
+		proto = &CKGProtocol{
+			protocol:    protocol{Descriptor: protoDesc},
+			CKGProtocol: *drlwe.NewCKGProtocol(*session.Params)}
+
+	case api.ProtocolType_RTG:
+		proto = &RTGProtocol{
+			protocol:    protocol{Descriptor: protoDesc},
+			RTGProtocol: *drlwe.NewRTGProtocol(*session.Params),
+		}
+	case api.ProtocolType_RKG:
+		proto = &RKGProtocol{
+			protocol:    protocol{Descriptor: protoDesc},
+			RKGProtocol: *drlwe.NewRKGProtocol(*session.Params)}
+
+	default:
+		return nil, fmt.Errorf("unknown type %s was skipped", protoDesc.Type)
+	}
+
+	if err := proto.Init(protoDesc, session); err != nil {
+		return nil, err
+	}
+
+	return proto, nil
 }
 
 type SKGProtocol struct {
@@ -67,7 +114,7 @@ type SKGProtocol struct {
 	*AggregatorOf[*drlwe.ShamirSecretShare]
 }
 
-func (skgp *SKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
+func (skgp *SKGProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
 	err = skgp.protocol.Init(session)
 	if err != nil {
 		log.Printf("failed to init proto: %v", err)
@@ -156,7 +203,7 @@ type CKGProtocol struct {
 	share *drlwe.CKGShare
 }
 
-func (ckgp *CKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
+func (ckgp *CKGProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
 	err = ckgp.protocol.Init(session)
 	if err != nil {
 		log.Printf("failed to init proto: %v", err)
@@ -248,7 +295,7 @@ type RTGProtocol struct {
 	rotkey *rlwe.RotationKeySet
 }
 
-func (rtgp *RTGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
+func (rtgp *RTGProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
 	err = rtgp.protocol.Init(session)
 	if err != nil {
 		log.Printf("failed to init proto: %v", err)
@@ -353,7 +400,7 @@ type RKGProtocol struct {
 	aggR1, aggR2 *AggregatorOf[*drlwe.RKGShare]
 }
 
-func (rkgp *RKGProtocol) Init(pd ProtocolDescriptor, session *pkg.Session) (err error) {
+func (rkgp *RKGProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
 	err = rkgp.protocol.Init(session)
 	if err != nil {
 		log.Printf("failed to init proto: %v", err)
@@ -502,4 +549,239 @@ func (rkgp *RKGProtocol) done(session *pkg.Session) error {
 	rkgp.session.RelinearizationKey = rlwe.NewRelinKey(*rkgp.session.Params, maxRelinDegree)
 	rkgp.GenRelinearizationKey(rkgp.aggR1.aggShare, rkgp.aggR2.aggShare, rkgp.session.RelinearizationKey)
 	return nil // todo: do we expect to have error checking or should `done` just not return an error?
+}
+
+type CKSProtocol struct {
+	protocol
+	drlwe.CKSProtocol
+	*AggregatorOf[*drlwe.CKSShare]
+
+	// from instanciation
+	lvl    int
+	target pkg.NodeID
+	share  *drlwe.CKSShare
+
+	zero *rlwe.SecretKey
+
+	// runtime
+	opIn        *pkg.Operand
+	c1in, c1out chan pkg.Operand
+}
+
+func NewCKSProtocol(sess *pkg.Session, target pkg.NodeID, lvl int, smudging float64) *CKSProtocol {
+	return &CKSProtocol{
+		protocol:    protocol{},
+		target:      target,
+		lvl:         lvl,
+		zero:        rlwe.NewSecretKey(*sess.Params),
+		CKSProtocol: *drlwe.NewCKSProtocol(*sess.Params, smudging)}
+}
+
+func (cksp *CKSProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
+	cksp.protocol.Descriptor = pd
+	cksp.protocol.Init(session) // TODO should Init take the pd as input ?
+
+	participants := utils.NewSet(pd.Participants)
+	if participants.Contains(cksp.target) { // Target of CKS protocol do not provide a share
+		participants.Remove(cksp.target)
+	}
+
+	if pd.Aggregator == cksp.self {
+		cksp.AggregatorOf = NewAggregatorOf[*drlwe.CKSShare](participants, cksp.AllocateShare(cksp.lvl), &cksp.CKSProtocol)
+	}
+
+	if cksp.target != cksp.self {
+		cksp.share = cksp.AllocateShare(cksp.lvl)
+	}
+
+	cksp.c1in = make(chan pkg.Operand, 1)
+	cksp.c1out = make(chan pkg.Operand, 1)
+	return err
+}
+
+func (cksp *CKSProtocol) Required(round int) (nodeIds utils.Set[pkg.NodeID]) {
+	nodeIds = utils.NewEmptySet[pkg.NodeID]()
+	if round == 1 {
+		for peer := range cksp.expected {
+			if !cksp.aggregated.Contains(peer) {
+				nodeIds.Add(peer)
+			}
+		}
+	}
+	return nodeIds
+}
+
+func (cksp *CKSProtocol) GetShare(req ShareRequest) (share AggregatedShareInt, err error) {
+
+	switch {
+	case len(req.AggregateFor) == 0:
+		return &AggregatedShare[*drlwe.CKSShare]{s: cksp.AllocateShare(cksp.lvl), aggregateFor: utils.NewEmptySet[pkg.NodeID]()}, nil
+	case len(req.AggregateFor) == 1 && req.AggregateFor[0] == cksp.self:
+		sk, err := cksp.session.SecretKeyForGroup(cksp.Participants)
+		if err != nil {
+			return nil, err
+		}
+		if cksp.opIn == nil {
+			op := <-cksp.c1in
+			cksp.opIn = &op
+		}
+
+		cksp.GenShare(sk, cksp.zero, cksp.opIn.Value[1], cksp.share)
+		return &AggregatedShare[*drlwe.CKSShare]{s: cksp.share, aggregateFor: utils.NewSingletonSet(cksp.self)}, nil
+	default:
+		if cksp.AggregatorOf == nil || !cksp.AggregatorOf.expected.Equals(utils.NewSet(req.AggregateFor)) {
+			return nil, fmt.Errorf("no such aggregator")
+		}
+		return cksp.AggregatorOf.GetShare(), nil
+	}
+}
+
+func (cksp *CKSProtocol) PutShare(share AggregatedShareInt) (bool, error) {
+	ckgShare, ok := share.(*AggregatedShare[*drlwe.CKSShare])
+	if !ok {
+		return false, fmt.Errorf("invalid share type")
+	}
+	complete, err := cksp.AggregatorOf.PutShare(ckgShare)
+	if err != nil {
+		return false, err
+	}
+	if complete {
+		if cksp.opIn == nil {
+			op := <-cksp.c1in
+			cksp.opIn = &op
+		}
+		ctOut := cksp.opIn.CopyNew()
+		cksp.CKSProtocol.KeySwitch(cksp.opIn.Ciphertext.Ciphertext, cksp.aggShare, ctOut.Ciphertext)
+		cksp.c1out <- pkg.Operand{OperandLabel: "TODO", Ciphertext: ctOut}
+	}
+	return complete, nil
+}
+
+func (cksp *CKSProtocol) Inputs() chan<- pkg.Operand {
+	return cksp.c1in
+}
+
+func (cksp *CKSProtocol) Outputs() <-chan pkg.Operand {
+	return cksp.c1out
+}
+
+func (cksp *CKSProtocol) Target() pkg.NodeID {
+	return cksp.target
+}
+
+type PCKSProtocol struct {
+	protocol
+	drlwe.PCKSProtocol
+	*AggregatorOf[*drlwe.PCKSShare]
+
+	// from instanciation
+	lvl    int
+	target pkg.NodeID
+	share  *drlwe.PCKSShare
+
+	targetPk *rlwe.PublicKey
+
+	// runtime
+	opIn        *pkg.Operand
+	c1in, c1out chan pkg.Operand
+}
+
+func NewPCKSProtocol(sess *pkg.Session, target pkg.NodeID, lvl int, smudging float64) *PCKSProtocol {
+	targetPk, exists := sess.GetPkForNode(target)
+	if !exists {
+		panic(fmt.Errorf("no pk known for target \"%s\"", target))
+	}
+	return &PCKSProtocol{
+		protocol:     protocol{},
+		target:       target,
+		lvl:          lvl,
+		targetPk:     &targetPk,
+		PCKSProtocol: *drlwe.NewPCKSProtocol(*sess.Params, smudging)}
+}
+
+func (cksp *PCKSProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
+	cksp.protocol.Descriptor = pd
+	cksp.protocol.Init(session) // TODO should Init take the pd as input ?
+
+	participants := utils.NewSet(pd.Participants)
+
+	if pd.Aggregator == cksp.self {
+		cksp.AggregatorOf = NewAggregatorOf[*drlwe.PCKSShare](participants, cksp.AllocateShare(cksp.lvl), &cksp.PCKSProtocol)
+	}
+
+	cksp.share = cksp.AllocateShare(cksp.lvl)
+
+	cksp.c1in = make(chan pkg.Operand, 1)
+	cksp.c1out = make(chan pkg.Operand, 1)
+	return err
+}
+
+func (pcksp *PCKSProtocol) Required(round int) (nodeIds utils.Set[pkg.NodeID]) {
+	nodeIds = utils.NewEmptySet[pkg.NodeID]()
+	if round == 1 {
+		for peer := range pcksp.expected {
+			if !pcksp.aggregated.Contains(peer) {
+				nodeIds.Add(peer)
+			}
+		}
+	}
+	return nodeIds
+}
+
+func (pcksp *PCKSProtocol) GetShare(req ShareRequest) (share AggregatedShareInt, err error) {
+
+	switch {
+	case len(req.AggregateFor) == 0:
+		return &AggregatedShare[*drlwe.PCKSShare]{s: pcksp.AllocateShare(pcksp.lvl), aggregateFor: utils.NewEmptySet[pkg.NodeID]()}, nil
+	case len(req.AggregateFor) == 1 && req.AggregateFor[0] == pcksp.self:
+		sk, err := pcksp.session.SecretKeyForGroup(pcksp.Participants)
+		if err != nil {
+			return nil, err
+		}
+		if pcksp.opIn == nil {
+			op := <-pcksp.c1in
+			pcksp.opIn = &op
+		}
+
+		pcksp.GenShare(sk, pcksp.targetPk, pcksp.opIn.Value[1], pcksp.share)
+		return &AggregatedShare[*drlwe.PCKSShare]{s: pcksp.share, aggregateFor: utils.NewSingletonSet(pcksp.self)}, nil
+	default:
+		if pcksp.AggregatorOf == nil || !pcksp.AggregatorOf.expected.Equals(utils.NewSet(req.AggregateFor)) {
+			return nil, fmt.Errorf("no such aggregator")
+		}
+		return pcksp.AggregatorOf.GetShare(), nil
+	}
+}
+
+func (pcksp *PCKSProtocol) PutShare(share AggregatedShareInt) (bool, error) {
+	ckgShare, ok := share.(*AggregatedShare[*drlwe.PCKSShare])
+	if !ok {
+		return false, fmt.Errorf("invalid share type")
+	}
+	complete, err := pcksp.AggregatorOf.PutShare(ckgShare)
+	if err != nil {
+		return false, err
+	}
+	if complete {
+		if pcksp.opIn == nil {
+			op := <-pcksp.c1in
+			pcksp.opIn = &op
+		}
+		ctOut := pcksp.opIn.CopyNew()
+		pcksp.PCKSProtocol.KeySwitch(pcksp.opIn.Ciphertext.Ciphertext, pcksp.aggShare, ctOut.Ciphertext)
+		pcksp.c1out <- pkg.Operand{OperandLabel: "TODO", Ciphertext: ctOut}
+	}
+	return complete, nil
+}
+
+func (pcksp *PCKSProtocol) Inputs() chan<- pkg.Operand {
+	return pcksp.c1in
+}
+
+func (pcksp *PCKSProtocol) Outputs() <-chan pkg.Operand {
+	return pcksp.c1out
+}
+
+func (pcksp *PCKSProtocol) Target() pkg.NodeID {
+	return pcksp.target
 }

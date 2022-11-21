@@ -11,6 +11,7 @@ import (
 
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
 
 	"github.com/stretchr/testify/require"
@@ -80,11 +81,11 @@ func TestCloudAssistedSetup(t *testing.T) {
 				cloudID := localTest.HelperNodes[0].ID()
 				// define protocols to test
 				protocolMap := ProtocolMap{
-					ProtocolDescriptor{Type: api.ProtocolType_CKG, Aggregator: cloudID,
+					protocols.Descriptor{Type: api.ProtocolType_CKG, Aggregator: cloudID,
 						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
+					protocols.Descriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
 						Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,
+					protocols.Descriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,
 						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
 				}
 
@@ -201,14 +202,14 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 				// define protocols to test
 				protocolMap := ProtocolMap{
-					ProtocolDescriptor{Type: api.ProtocolType_CKG, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
-					ProtocolDescriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)}, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
-					ProtocolDescriptor{Type: api.ProtocolType_RKG, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
+					protocols.Descriptor{Type: api.ProtocolType_CKG, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
+					protocols.Descriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)}, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
+					protocols.Descriptor{Type: api.ProtocolType_RKG, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
 				}
 
 				if ts.T < ts.N {
 					protocolMap = append(ProtocolMap{
-						ProtocolDescriptor{Type: api.ProtocolType_SKG, Participants: peerIds},
+						protocols.Descriptor{Type: api.ProtocolType_SKG, Participants: peerIds},
 					}, protocolMap...)
 				}
 
