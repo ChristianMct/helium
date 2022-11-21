@@ -93,7 +93,7 @@ func (s *SetupService) Execute() error {
 
 			// todo - encapsulate this logic
 			ctx := metadata.NewOutgoingContext(context.Background(),
-				metadata.Pairs("session_id", "test-session", "node_id", string(selfID)))
+				metadata.Pairs("session_id", "test-session", "sender_id", string(selfID)))
 			cloudConn, err := s.PeerConn(helper.ID())
 			if err != nil {
 				log.Printf("Node %s | [%s] peer error: %v", selfID, proto.Desc().Type, err)

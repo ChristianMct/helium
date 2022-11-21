@@ -33,7 +33,7 @@ func (s *SetupService) Executes(fst *FetchShareTasks) (protocols.AggregatedShare
 		}
 	case hasCli: // task is remote and peer is connected
 
-		ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", string(s.ID()))) // TODO: assumes a single session named "test-session" :D
+		ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "sender_id", string(s.ID()))) // TODO: assumes a single session named "test-session" :D
 		// retrieve the previous share from the task if necessary
 		var prevShare *api.Share
 		if fst.Round > 1 {

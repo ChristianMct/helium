@@ -101,7 +101,7 @@ func TestCloudDataTransfers(t *testing.T) {
 
 							bfvCt := c.EncryptZeroNew()
 
-							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "node_id", string(c.ID())))
+							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "sender_id", string(c.ID())))
 
 							ctId := fmt.Sprintf("ct[%d]", ii)
 							msg := pkg.Ciphertext{Ciphertext: *bfvCt.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctId), Type: pkg.BFV}}.ToGRPC()
