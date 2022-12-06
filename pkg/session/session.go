@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/tuneinsight/lattigo/v3/rlwe"
-	"github.com/tuneinsight/lattigo/v3/utils"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v4/utils"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/tuneinsight/lattigo/v3/drlwe"
+	"github.com/tuneinsight/lattigo/v4/drlwe"
 
 	"sync"
 )
@@ -162,7 +162,7 @@ func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, node
 	sess.Params = params
 
 	sess.Sk = sk
-	sess.EvaluationKey = &rlwe.EvaluationKey{Rlk: rlwe.NewRelinKey(*params, 1), Rtks: rlwe.NewRotationKeySet(*params, []uint64{})}
+	sess.EvaluationKey = &rlwe.EvaluationKey{Rlk: rlwe.NewRelinearizationKey(*params, 1), Rtks: rlwe.NewRotationKeySet(*params, []uint64{})}
 	sess.RelinearizationKey = sess.EvaluationKey.Rlk
 	sess.CRSKey = crsKey
 	prng, err := utils.NewKeyedPRNG(sess.CRSKey)

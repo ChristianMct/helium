@@ -6,15 +6,14 @@ import (
 	"sync"
 
 	"github.com/ldsec/helium/pkg/api"
-	"github.com/tuneinsight/lattigo/v3/bfv"
-	"github.com/tuneinsight/lattigo/v3/rlwe"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
 type OperandLabel string
 
 type Operand struct {
 	OperandLabel
-	*bfv.Ciphertext
+	*rlwe.Ciphertext
 }
 
 type CiphertextType int

@@ -11,7 +11,7 @@ import (
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
-	"github.com/tuneinsight/lattigo/v3/drlwe"
+	"github.com/tuneinsight/lattigo/v4/drlwe"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

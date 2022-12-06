@@ -2,18 +2,19 @@ package compute
 
 import (
 	"fmt"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"testing"
 
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v3/bfv"
+	"github.com/tuneinsight/lattigo/v4/bfv"
 )
 
 var ProdCKS Circuit = func(e EvaluationContext) error {
 
 	inputSet := utils.NewSet([]pkg.OperandLabel{"//node-0/in-0", "//node-1/in-0", "//node-2/in-0", "//node-3/in-0"})
 
-	lvl2 := make(chan *bfv.Ciphertext, 2)
+	lvl2 := make(chan *rlwe.Ciphertext, 2)
 
 	ops := make(chan pkg.Operand, 4)
 	for opl := range inputSet {

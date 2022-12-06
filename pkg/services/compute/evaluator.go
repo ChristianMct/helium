@@ -10,8 +10,8 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v3/bfv"
-	"github.com/tuneinsight/lattigo/v3/rlwe"
+	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -133,7 +133,7 @@ func (de *delegatedEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
 		panic(status.Errorf(codes.InvalidArgument, "invalid ciphertext: %s", err))
 	}
 
-	return pkg.Operand{OperandLabel: opl, Ciphertext: &bfv.Ciphertext{Ciphertext: &ct.Ciphertext}}
+	return pkg.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}
 }
 
 func (de *delegatedEvaluatorContext) Output(op pkg.Operand) {
@@ -263,7 +263,7 @@ func (de *delegatedEvaluatorContext) CircuitDescription() CircuitDescription {
 func (de *delegatedEvaluatorContext) sendLocalInputs(ctx context.Context, outOps chan pkg.Operand) error {
 	for op := range outOps {
 		log.Printf("Node %s | sending input to %s: %s\n", de.sess.NodeID, de.delegateId, op.OperandLabel)
-		ct := pkg.Ciphertext{Ciphertext: *op.Ciphertext.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(op.OperandLabel)}}
+		ct := pkg.Ciphertext{Ciphertext: *op.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(op.OperandLabel)}}
 
 		outCtx := pkg.GetOutgoingContext(ctx, de.sess.NodeID)
 
@@ -560,7 +560,7 @@ func (se *fullEvaluatorContext) resolveRemoteInputs(ctx context.Context, ins uti
 			if err != nil {
 				panic(status.Errorf(codes.InvalidArgument, "invalid ciphertext: %s", err))
 			}
-			op = pkg.Operand{OperandLabel: in, Ciphertext: &bfv.Ciphertext{Ciphertext: &ct.Ciphertext}}
+			op = pkg.Operand{OperandLabel: in, Ciphertext: &ct.Ciphertext}
 			se.inputs <- op
 		}
 	}()

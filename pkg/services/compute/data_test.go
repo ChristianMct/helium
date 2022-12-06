@@ -9,8 +9,8 @@ import (
 	"github.com/ldsec/helium/pkg/node"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v3/bfv"
-	"github.com/tuneinsight/lattigo/v3/rlwe"
+	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/metadata"
 )
@@ -20,7 +20,8 @@ func TestCloudDataTransfers(t *testing.T) {
 	type client struct {
 		*ComputeService
 		api.ComputeServiceClient
-		bfv.Encryptor
+		//bfv.Encryptor
+		rlwe.Encryptor
 	}
 
 	for _, literalParams := range rangeParam {
@@ -99,12 +100,12 @@ func TestCloudDataTransfers(t *testing.T) {
 
 						g.Go(func() error {
 
-							bfvCt := c.EncryptZeroNew()
+							bfvCt := c.EncryptZeroNew(bfvParams.MaxLevel())
 
 							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "sender_id", string(c.ID())))
 
 							ctId := fmt.Sprintf("ct[%d]", ii)
-							msg := pkg.Ciphertext{Ciphertext: *bfvCt.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctId), Type: pkg.BFV}}.ToGRPC()
+							msg := pkg.Ciphertext{Ciphertext: *bfvCt, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctId), Type: pkg.BFV}}.ToGRPC()
 
 							rid, rerr := c.ComputeServiceClient.PutCiphertext(ctx, msg)
 							require.Nil(t, rerr, rerr)

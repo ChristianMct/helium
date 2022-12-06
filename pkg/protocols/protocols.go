@@ -9,8 +9,8 @@ import (
 	"github.com/ldsec/helium/pkg/api"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v3/drlwe"
-	"github.com/tuneinsight/lattigo/v3/rlwe"
+	"github.com/tuneinsight/lattigo/v4/drlwe"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
 type Descriptor struct {
@@ -546,7 +546,7 @@ func (rkgp *RKGProtocol) done(session *pkg.Session) error {
 	// todo: do we need the session param?
 	log.Printf("Node %s | RKG DONE | Session %s\n", rkgp.self, session.ID)
 	const maxRelinDegree = 2
-	rkgp.session.RelinearizationKey = rlwe.NewRelinKey(*rkgp.session.Params, maxRelinDegree)
+	rkgp.session.RelinearizationKey = rlwe.NewRelinearizationKey(*rkgp.session.Params, maxRelinDegree)
 	rkgp.GenRelinearizationKey(rkgp.aggR1.aggShare, rkgp.aggR2.aggShare, rkgp.session.RelinearizationKey)
 	return nil // todo: do we expect to have error checking or should `done` just not return an error?
 }
@@ -579,7 +579,10 @@ func NewCKSProtocol(sess *pkg.Session, target pkg.NodeID, lvl int, smudging floa
 
 func (cksp *CKSProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
 	cksp.protocol.Descriptor = pd
-	cksp.protocol.Init(session) // TODO should Init take the pd as input ?
+	err = cksp.protocol.Init(session)
+	if err != nil {
+		return err
+	} // TODO should Init take the pd as input ?
 
 	participants := utils.NewSet(pd.Participants)
 	if participants.Contains(cksp.target) { // Target of CKS protocol do not provide a share
@@ -626,7 +629,8 @@ func (cksp *CKSProtocol) GetShare(req ShareRequest) (share AggregatedShareInt, e
 			cksp.opIn = &op
 		}
 
-		cksp.GenShare(sk, cksp.zero, cksp.opIn.Value[1], cksp.share)
+		//cksp.GenShare(sk, cksp.zero, cksp.opIn.Value[1], cksp.share)
+		cksp.GenShare(sk, cksp.zero, cksp.opIn.Ciphertext, cksp.share)
 		return &AggregatedShare[*drlwe.CKSShare]{s: cksp.share, aggregateFor: utils.NewSingletonSet(cksp.self)}, nil
 	default:
 		if cksp.AggregatorOf == nil || !cksp.AggregatorOf.expected.Equals(utils.NewSet(req.AggregateFor)) {
@@ -651,7 +655,7 @@ func (cksp *CKSProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 			cksp.opIn = &op
 		}
 		ctOut := cksp.opIn.CopyNew()
-		cksp.CKSProtocol.KeySwitch(cksp.opIn.Ciphertext.Ciphertext, cksp.aggShare, ctOut.Ciphertext)
+		cksp.CKSProtocol.KeySwitch(cksp.opIn.Ciphertext, cksp.aggShare, ctOut)
 		cksp.c1out <- pkg.Operand{OperandLabel: "TODO", Ciphertext: ctOut}
 	}
 	return complete, nil
@@ -674,7 +678,7 @@ type PCKSProtocol struct {
 	drlwe.PCKSProtocol
 	*AggregatorOf[*drlwe.PCKSShare]
 
-	// from instanciation
+	// from instantiation
 	lvl    int
 	target pkg.NodeID
 	share  *drlwe.PCKSShare
@@ -701,7 +705,10 @@ func NewPCKSProtocol(sess *pkg.Session, target pkg.NodeID, lvl int, smudging flo
 
 func (cksp *PCKSProtocol) Init(pd Descriptor, session *pkg.Session) (err error) {
 	cksp.protocol.Descriptor = pd
-	cksp.protocol.Init(session) // TODO should Init take the pd as input ?
+	err = cksp.protocol.Init(session)
+	if err != nil {
+		return err
+	} // TODO should Init take the pd as input ?
 
 	participants := utils.NewSet(pd.Participants)
 
@@ -743,7 +750,8 @@ func (pcksp *PCKSProtocol) GetShare(req ShareRequest) (share AggregatedShareInt,
 			pcksp.opIn = &op
 		}
 
-		pcksp.GenShare(sk, pcksp.targetPk, pcksp.opIn.Value[1], pcksp.share)
+		//pcksp.GenShare(sk, pcksp.targetPk, pcksp.opIn.Value[1], pcksp.share)
+		pcksp.GenShare(sk, pcksp.targetPk, pcksp.opIn.Ciphertext, pcksp.share)
 		return &AggregatedShare[*drlwe.PCKSShare]{s: pcksp.share, aggregateFor: utils.NewSingletonSet(pcksp.self)}, nil
 	default:
 		if pcksp.AggregatorOf == nil || !pcksp.AggregatorOf.expected.Equals(utils.NewSet(req.AggregateFor)) {
@@ -768,7 +776,7 @@ func (pcksp *PCKSProtocol) PutShare(share AggregatedShareInt) (bool, error) {
 			pcksp.opIn = &op
 		}
 		ctOut := pcksp.opIn.CopyNew()
-		pcksp.PCKSProtocol.KeySwitch(pcksp.opIn.Ciphertext.Ciphertext, pcksp.aggShare, ctOut.Ciphertext)
+		pcksp.PCKSProtocol.KeySwitch(pcksp.opIn.Ciphertext, pcksp.aggShare, ctOut)
 		pcksp.c1out <- pkg.Operand{OperandLabel: "TODO", Ciphertext: ctOut}
 	}
 	return complete, nil

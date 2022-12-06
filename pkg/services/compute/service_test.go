@@ -10,8 +10,8 @@ import (
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tuneinsight/lattigo/v3/bfv"
-	"github.com/tuneinsight/lattigo/v3/rlwe"
+	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -52,7 +52,7 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 
 	"Mul4CKS": func(e EvaluationContext) error {
 
-		lvl2 := make(chan *bfv.Ciphertext, 2)
+		lvl2 := make(chan *rlwe.Ciphertext, 2)
 
 		op0 := e.Input("//full-0/in-0")
 		op1 := e.Input("//full-1/in-0")
@@ -101,7 +101,7 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 
 	"Mul4PCKS": func(e EvaluationContext) error {
 
-		lvl2 := make(chan *bfv.Ciphertext, 2)
+		lvl2 := make(chan *rlwe.Ciphertext, 2)
 
 		op0 := e.Input("//full-0/in-0")
 		op1 := e.Input("//full-1/in-0")
@@ -162,7 +162,7 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 		op0 := <-inputs
 		op1 := <-inputs
 
-		lvl2 := make(chan *bfv.Ciphertext, 2)
+		lvl2 := make(chan *rlwe.Ciphertext, 2)
 		go func() {
 			ev := e.ShallowCopy()
 			res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
@@ -318,7 +318,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 	type client struct {
 		*ComputeService
 		bfv.Encoder
-		bfv.Encryptor
+		rlwe.Encryptor
 	}
 
 	for label, cDef := range TestCircuits {

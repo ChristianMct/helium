@@ -13,7 +13,6 @@ import (
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
-	"github.com/tuneinsight/lattigo/v3/bfv"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -166,7 +165,7 @@ func (s *ComputeService) GetCiphertext(ctx context.Context, ctr *api.CiphertextR
 			return nil, status.Errorf(codes.NotFound, "circuit not found")
 		}
 		op := evalCtx.Get(pkg.OperandLabel(id))
-		ct = pkg.Ciphertext{Ciphertext: *op.Ciphertext.Ciphertext}
+		ct = pkg.Ciphertext{Ciphertext: *op.Ciphertext}
 	} else if ct, exists = sess.Load(id); !exists {
 		return nil, status.Errorf(codes.NotFound, "ciphertext not found")
 	}
@@ -208,7 +207,7 @@ func (s *ComputeService) PutCiphertext(ctx context.Context, apict *api.Ciphertex
 			return nil, status.Errorf(codes.InvalidArgument, "circuit %s not executing as full context", cid)
 		}
 
-		op := pkg.Operand{OperandLabel: pkg.OperandLabel(ct.ID), Ciphertext: &bfv.Ciphertext{Ciphertext: &ct.Ciphertext}}
+		op := pkg.Operand{OperandLabel: pkg.OperandLabel(ct.ID), Ciphertext: &ct.Ciphertext}
 
 		cFull.inputs <- op
 
