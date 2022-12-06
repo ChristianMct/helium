@@ -1,0 +1,26 @@
+name: CI Checks
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.19
+
+      - name: Build check
+        run: | 
+          go build -v ./...
+          make docker
+
+      - name: Test
+        run: make test
+
+      - name: Linting
+        run: make lint

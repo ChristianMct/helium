@@ -53,3 +53,10 @@ _testmain.go
 # generated
 /Coding
 
+# Test artifacts
+out
+
+# Keys / certificiates used for testing
+*key
+*crt
+*csr
