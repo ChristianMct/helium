@@ -18,9 +18,8 @@ import (
 func TestCloudDataTransfers(t *testing.T) {
 
 	type client struct {
-		*ComputeService
+		*Service
 		api.ComputeServiceClient
-		//bfv.Encryptor
 		rlwe.Encryptor
 	}
 
@@ -52,15 +51,15 @@ func TestCloudDataTransfers(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				nodes := []*ComputeService{clou}
+				nodes := []*Service{clou}
 
 				clients := make([]client, len(localtest.LightNodes))
 				for i := range localtest.LightNodes {
-					clients[i].ComputeService, err = NewComputeService(localtest.LightNodes[i])
+					clients[i].Service, err = NewComputeService(localtest.LightNodes[i])
 					if err != nil {
 						t.Fatal(err)
 					}
-					nodes = append(nodes, clients[i].ComputeService)
+					nodes = append(nodes, clients[i].Service)
 				}
 
 				params := localtest.Params
@@ -79,7 +78,7 @@ func TestCloudDataTransfers(t *testing.T) {
 
 				localtest.Start()
 
-				//decryptor := bfv.NewDecryptor(bfvParams, sk)
+				// decryptor := bfv.NewDecryptor(bfvParams, sk)
 
 				for i := range clients {
 					clients[i].Connect()
@@ -104,20 +103,20 @@ func TestCloudDataTransfers(t *testing.T) {
 
 							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "sender_id", string(c.ID())))
 
-							ctId := fmt.Sprintf("ct[%d]", ii)
-							msg := pkg.Ciphertext{Ciphertext: *bfvCt, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctId), Type: pkg.BFV}}.ToGRPC()
+							ctID := fmt.Sprintf("ct[%d]", ii)
+							msg := pkg.Ciphertext{Ciphertext: *bfvCt, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctID), Type: pkg.BFV}}.ToGRPC()
 
-							rid, rerr := c.ComputeServiceClient.PutCiphertext(ctx, msg)
+							rctID, rerr := c.ComputeServiceClient.PutCiphertext(ctx, msg)
 							require.Nil(t, rerr, rerr)
-							require.Equal(t, ctId, rid.CiphertextId)
+							require.Equal(t, ctID, rctID.CiphertextId)
 
-							req := &api.CiphertextRequest{Id: &api.CiphertextID{CiphertextId: ctId}}
+							req := &api.CiphertextRequest{Id: &api.CiphertextID{CiphertextId: ctID}}
 							resp, rerr := c.ComputeServiceClient.GetCiphertext(ctx, req)
 							require.Nil(t, rerr, rerr)
 
-							rct, err := pkg.NewCiphertextFromGRPC(resp)
-							require.Nil(t, err, rerr)
-							require.Equal(t, pkg.CiphertextID(ctId), rct.ID)
+							rct, errCt := pkg.NewCiphertextFromGRPC(resp)
+							require.Nil(t, errCt, rerr)
+							require.Equal(t, pkg.CiphertextID(ctID), rct.ID)
 							require.Equal(t, pkg.BFV, rct.Type)
 							require.True(t, rct.Ciphertext.Value[0].Equals(bfvCt.Value[0]) && rct.Ciphertext.Value[1].Equals(bfvCt.Value[1]))
 

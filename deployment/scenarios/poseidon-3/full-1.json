@@ -1,0 +1,48 @@
+{
+	"ID": "full-1",
+	"Address": ":40000",
+	"SessionParameters": [
+		{
+			"ID": "test-session",
+			"RLWEParams": {
+				"LogN": 14,
+				"Q": null,
+				"P": null,
+				"LogQ": [
+					52,
+					47,
+					47,
+					47,
+					47,
+					47,
+					47
+				],
+				"LogP": [
+					52,
+					52
+				],
+				"Pow2Base": 0,
+				"Sigma": 0,
+				"H": 0,
+				"RingType": "Standard",
+				"DefaultScale": {
+					"Value": "0",
+					"Mod": null
+				},
+				"DefaultNTTFlag": false
+			},
+			"T": 3,
+			"Nodes": [
+				"full-0",
+				"full-1",
+				"full-2"
+			],
+			"ShamirPks": {
+				"full-0": 1,
+				"full-1": 2,
+				"full-2": 3
+			},
+			"CRSKey": "bGF0dGlnMA=="
+		}
+	]
+}

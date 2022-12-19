@@ -1,17 +1,12 @@
 package setup
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"math/bits"
-	"math/rand"
-	"net"
 	"testing"
 
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/node"
-	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
 
 	"github.com/stretchr/testify/require"
@@ -34,22 +29,20 @@ var testSettings = []testSetting{
 
 type peer struct {
 	*node.Node
-	*SetupService
-
-	dialer func(context.Context, string) (net.Conn, error)
+	*Service
 }
 
 type cloud struct {
 	*node.Node
-	*SetupService
+	*Service
 }
 
-type client struct {
+type lightNode struct {
 	*node.Node
-	*SetupService
+	*Service
 }
 
-// TestCloudAssistedSetup tests the generation of the public key in push mode
+// TestCloudAssistedSetup tests the generation of the public key in push mode.
 func TestCloudAssistedSetup(t *testing.T) {
 	for _, literalParams := range rangeParam {
 		for _, ts := range testSettings {
@@ -75,25 +68,21 @@ func TestCloudAssistedSetup(t *testing.T) {
 				localTest := node.NewLocalTest(testConfig)
 
 				params := localTest.Params
-				peerIds := localTest.NodeIds()
-				galEl := localTest.Params.GaloisElementForRowRotation()
 
-				cloudID := localTest.HelperNodes[0].ID()
-				// define protocols to test
-				protocolMap := ProtocolMap{
-					protocols.Descriptor{Type: api.ProtocolType_CKG, Aggregator: cloudID,
-						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					protocols.Descriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)},
-						Aggregator: cloudID, Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
-					protocols.Descriptor{Type: api.ProtocolType_RKG, Aggregator: cloudID,
-						Participants: getRandomClientSet(ts.T, peerIds[:ts.T])},
+				setup := Description{
+					Cpk:       true,
+					GaloisEls: localTest.Params.GaloisElementsForRowInnerSum(),
+					Rlk:       true,
+					Delegated: false,
 				}
+				// define protocols to test
+				protocolMap := GenerateProtocolMap(setup, localTest.LightNodes, ts.T, localTest.HelperNodes...)
 
 				var err error
 
-				clou := cloud{Node: localTest.HelperNodes[0]}
+				clou := &cloud{Node: localTest.HelperNodes[0]}
 
-				clou.SetupService, err = NewSetupService(clou.Node)
+				clou.Service, err = NewSetupService(clou.Node)
 				if err != nil {
 					t.Error(err)
 				}
@@ -101,16 +90,16 @@ func TestCloudAssistedSetup(t *testing.T) {
 				sk := localTest.SkIdeal
 
 				// initialise clients
-				allNodes := []*SetupService{clou.SetupService}
-				clients := make([]client, ts.N)
+				allNodes := []*Service{clou.Service}
+				clients := make([]lightNode, ts.N)
 				sessionNodes := localTest.SessionNodes()
 				for i := range clients {
 					clients[i].Node = sessionNodes[i]
-					clients[i].SetupService, err = NewSetupService(clients[i].Node)
+					clients[i].Service, err = NewSetupService(clients[i].Node)
 					if err != nil {
 						t.Fatal(err)
 					}
-					allNodes = append(allNodes, clients[i].SetupService)
+					allNodes = append(allNodes, clients[i].Service)
 				}
 
 				// loads the protocolMap at all nodes
@@ -134,27 +123,27 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 					// runs the cloud
 					g.Go(func() error {
-						// this takes care of populating the Peers map of the SetupService
+						// this takes care of populating the Peers map of the Service
 						// (will be empty since the cloud has no full-n peer)
-						clou.SetupService.Connect()
+						clou.Service.Connect()
 						// this should run the full n logic
-						err := clou.Execute()
-						if err != nil {
-							err = fmt.Errorf("cloud (%s) error: %w", clou.ID(), err)
+						errExec := clou.Execute()
+						if errExec != nil {
+							errExec = fmt.Errorf("cloud (%s) error: %w", clou.ID(), errExec)
 						}
-						return err
+						return errExec
 					})
 
 					// runs the clients
 					for i := range clients {
 						c := clients[i]
 						g.Go(func() error {
-							c.SetupService.Connect()
-							err := c.Execute()
-							if err != nil {
-								err = fmt.Errorf("client (%s) error: %w", c.ID(), err)
+							c.Service.Connect()
+							errExec := c.Execute()
+							if errExec != nil {
+								errExec = fmt.Errorf("client (%s) error: %w", c.ID(), errExec)
 							}
-							return err
+							return errExec
 						})
 					}
 
@@ -163,11 +152,15 @@ func TestCloudAssistedSetup(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					sess, ok := clou.GetSessionFromID("test-session")
-					if !ok {
-						t.Fatal("session should exist")
+					// clou.PrintNetworkStats()
+
+					for _, node := range allNodes {
+						sess, ok := node.GetSessionFromID("test-session")
+						if !ok {
+							t.Fatal("session should exist")
+						}
+						checkKeyGenProt(t, sess, params, setup, sk, ts.N)
 					}
-					checkKeyGenProt(t, sess, params, galEl, sk, ts.N)
 				})
 			})
 		}
@@ -198,20 +191,13 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 				params := localTest.Params
 				peerIds := localTest.NodeIds()
-				galEl := localTest.Params.GaloisElementForRowRotation()
-
+				setup := Description{
+					GaloisEls: localTest.Params.GaloisElementsForRowInnerSum(),
+					Cpk:       true,
+					Rlk:       true,
+				}
 				// define protocols to test
-				protocolMap := ProtocolMap{
-					protocols.Descriptor{Type: api.ProtocolType_CKG, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
-					protocols.Descriptor{Type: api.ProtocolType_RTG, Args: map[string]string{"GalEl": fmt.Sprint(galEl)}, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
-					protocols.Descriptor{Type: api.ProtocolType_RKG, Aggregator: peerIds[0], Participants: getRandomClientSet(ts.T, peerIds)},
-				}
-
-				if ts.T < ts.N {
-					protocolMap = append(ProtocolMap{
-						protocols.Descriptor{Type: api.ProtocolType_SKG, Participants: peerIds},
-					}, protocolMap...)
-				}
+				protocolMap := GenerateProtocolMap(setup, localTest.Nodes, ts.T)
 
 				var err error
 
@@ -220,7 +206,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 				for _, n := range localTest.Nodes {
 					n := &peer{Node: n}
 
-					n.SetupService, err = NewSetupService(n.Node)
+					n.Service, err = NewSetupService(n.Node)
 					if err != nil {
 						t.Error(err)
 					}
@@ -230,7 +216,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 						t.Fatal("session should exists")
 					}
 
-					err = n.SetupService.LoadProtocolMap(sess, protocolMap)
+					err = n.Service.LoadProtocolMap(sess, protocolMap)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -250,9 +236,9 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 						g.Go(
 							func() error {
-								node.SetupService.Connect()
+								node.Service.Connect()
 
-								return node.SetupService.Execute()
+								return node.Service.Execute()
 							},
 						)
 
@@ -262,57 +248,72 @@ func TestPeerToPeerSetup(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					node0 := nodes[peerIds[0]]
+					// Checks that a random client set of size T can reconstruct the ideal secret-key
+					grp := pkg.GetRandomClientSlice(testConfig.Session.T, localTest.NodeIds())
+					skagg := rlwe.NewSecretKey(params)
+					for _, nodeid := range grp {
+						node := nodes[nodeid]
+						sess, _ := node.GetSessionFromID("test-session")
+						skp, errSk := sess.SecretKeyForGroup(grp)
 
-					sess, _ := node0.GetSessionFromID("test-session")
-
-					if err != nil {
-						t.Fatal(err)
+						if errSk != nil {
+							panic(errSk)
+						}
+						localTest.Params.RingQP().AddLvl(skagg.LevelQ(), skagg.LevelP(), skp.Value, skagg.Value, skagg.Value)
 					}
+					require.True(t, localTest.Params.RingQ().Equal(skagg.Value.Q, localTest.SkIdeal.Value.Q))
+					require.True(t, localTest.Params.RingP().Equal(skagg.Value.P, localTest.SkIdeal.Value.P))
 
-					checkKeyGenProt(t, sess, params, galEl, localTest.SkIdeal, ts.N)
+					// checks that all nodes have a complete setup
+					for _, node := range nodes {
+						node.PrintNetworkStats()
+						sess, _ := node.GetSessionFromID("test-session")
+						checkKeyGenProt(t, sess, params, setup, localTest.SkIdeal, ts.N)
+					}
 				})
 			})
 		}
 	}
 }
 
-func getRandomClientSet(t int, nodes []pkg.NodeID) []pkg.NodeID {
-	cid := make([]pkg.NodeID, len(nodes))
-	copy(cid, nodes)
-	rand.Shuffle(len(cid), func(i, j int) {
-		cid[i], cid[j] = cid[j], cid[i]
-	})
-	return cid[:t]
-}
+// Based on the session information, check if the protocol was performed correctly.
+func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, setup Description, sk *rlwe.SecretKey, nParties int) {
 
-// Based on the session information, check if the protocol was performed correctly
-func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, galEl uint64, sk *rlwe.SecretKey, N int) {
-	pk := sess.PublicKey
-
-	log2BoundPk := bits.Len64(uint64(N) * params.NoiseBound() * uint64(params.N()))
-	require.True(t, rlwe.PublicKeyIsCorrect(pk, sk, params, log2BoundPk))
-
-	rlk := sess.RelinearizationKey
-	if rlk == nil {
-		t.Fatal("rlk was not generated")
+	if setup.Cpk {
+		pk := sess.PublicKey
+		if pk == nil {
+			t.Fatalf("pk was not generated for node %s", sess.NodeID)
+		}
+		log2BoundPk := bits.Len64(uint64(nParties) * params.NoiseBound() * uint64(params.N()))
+		require.True(t, rlwe.PublicKeyIsCorrect(pk, sk, params, log2BoundPk))
 	}
 
-	levelQ, levelP := params.QCount()-1, params.PCount()-1
-	decompSize := params.DecompPw2(levelQ, levelP) * params.DecompRNS(levelQ, levelP)
-	log2BoundRlk := bits.Len64(uint64(
-		params.N() * decompSize * (params.N()*3*int(params.NoiseBound()) +
-			2*3*int(params.NoiseBound()) + params.N()*3)))
-	require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], sk, params, log2BoundRlk))
+	if !setup.Delegated {
+		if setup.Rlk {
+			rlk := sess.RelinearizationKey
+			if rlk == nil {
+				t.Fatalf("rlk was not generated for node %s", sess.NodeID)
+			}
 
-	rtk, isGen := sess.EvaluationKey.Rtks.Keys[galEl]
-	if !isGen {
-		t.Fatal("rtk was not generated")
+			levelQ, levelP := params.QCount()-1, params.PCount()-1
+			decompSize := params.DecompPw2(levelQ, levelP) * params.DecompRNS(levelQ, levelP)
+			log2BoundRlk := bits.Len64(uint64(
+				params.N() * decompSize * (params.N()*3*int(params.NoiseBound()) +
+					2*3*int(params.NoiseBound()) + params.N()*3)))
+			require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], sk, params, log2BoundRlk))
+		}
+
+		for _, galEl := range setup.GaloisEls {
+			rtk, isGen := sess.EvaluationKey.Rtks.Keys[galEl]
+			if !isGen {
+				t.Fatalf("rtk was not generated for node %s", sess.NodeID)
+			}
+			log2BoundRtk := bits.Len64(uint64(
+				params.N() * len(rtk.Value) * len(rtk.Value[0]) *
+					(params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
+						2*3*int(math.Floor(rlwe.DefaultSigma*6)) + params.N()*3)))
+			require.True(t, rlwe.RotationKeyIsCorrect(rtk, galEl, sk, params, log2BoundRtk), "rtk for galEl %d should be correct", galEl)
+		}
 	}
 
-	log2BoundRtk := bits.Len64(uint64(
-		params.N() * len(rtk.Value) * len(rtk.Value[0]) *
-			(params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
-				2*3*int(math.Floor(rlwe.DefaultSigma*6)) + params.N()*3)))
-	require.True(t, rlwe.RotationKeyIsCorrect(rtk, galEl, sk, params, log2BoundRtk))
 }

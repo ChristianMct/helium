@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-const MaxMsgSize = 1024 * 1024 * 20
+const MaxMsgSize = 1024 * 1024 * 32
 
 type Dialer = func(c context.Context, s string) (net.Conn, error)
 
@@ -55,42 +55,51 @@ type Node struct {
 	grpcServer *grpc.Server
 
 	sessions *pkg.SessionStore
+
+	statsHandler statsHandler
 }
 
-type NodeConfig struct {
+type Config struct {
 	ID                pkg.NodeID
 	Address           pkg.NodeAddress
-	Peers             map[pkg.NodeID]pkg.NodeAddress
 	SessionParameters []SessionParameters
+}
+
+type NodesList []struct {
+	pkg.NodeID
+	pkg.NodeAddress
 }
 
 // NewNode initialises a new node according to a given NodeConfig which provides the address and peers of this node
 // Also initialises other attributes such as the parameters, session store and the WaitGroup Greets
 // also initialises the peers of the node by calling initPeerNode().
-func NewNode(config NodeConfig) (node *Node, err error) {
+func NewNode(config Config, nodeList NodesList) (node *Node, err error) {
 	node = new(Node)
 
 	node.addr = config.Address
 	node.id = config.ID
 	node.sessions = pkg.NewSessionStore()
 
-	node.peers = make(map[pkg.NodeID]*Node, len(config.Peers))
-	for id, peerAddr := range config.Peers {
-		if id == node.id {
-			return nil, fmt.Errorf("node config should not include node as peer")
+	node.peers = make(map[pkg.NodeID]*Node, len(nodeList))
+	for _, peer := range nodeList {
+		if peer.NodeID != node.id {
+			node.peers[peer.NodeID] = newPeerNode(peer.NodeID, peer.NodeAddress)
 		}
-		node.peers[id] = newPeerNode(id, peerAddr)
 	}
 
 	if node.IsFullNode() {
-		node.grpcServer = grpc.NewServer(grpc.MaxRecvMsgSize(MaxMsgSize), grpc.MaxSendMsgSize(MaxMsgSize))
+		node.grpcServer = grpc.NewServer(
+			grpc.MaxRecvMsgSize(MaxMsgSize),
+			grpc.MaxSendMsgSize(MaxMsgSize),
+			grpc.StatsHandler(&node.statsHandler),
+		)
 		log.Printf("Node %s | started as full helium node at address %s\n", node.id, node.addr)
 	} else {
 		log.Printf("Node %s | started as light helium node\n", node.id)
 	}
 
 	for _, sp := range config.SessionParameters {
-		_, err := node.CreateNewSession(sp)
+		_, err = node.CreateNewSession(sp)
 		if err != nil {
 			panic(err)
 		}
@@ -99,18 +108,18 @@ func NewNode(config NodeConfig) (node *Node, err error) {
 	return node, nil
 }
 
-func (n *Node) RegisterService(sd *grpc.ServiceDesc, ss interface{}) {
-	n.grpcServer.RegisterService(sd, ss)
+func (node *Node) RegisterService(sd *grpc.ServiceDesc, ss interface{}) {
+	node.grpcServer.RegisterService(sd, ss)
 }
 
 // Peers returns a map of (NodeID, *Node) containing each peer of Node n.
-func (n Node) Peers() map[pkg.NodeID]*Node {
-	return n.peers
+func (node *Node) Peers() map[pkg.NodeID]*Node {
+	return node.peers
 }
 
-func (n Node) Conns() map[pkg.NodeID]*grpc.ClientConn {
+func (node *Node) Conns() map[pkg.NodeID]*grpc.ClientConn {
 	conns := make(map[pkg.NodeID]*grpc.ClientConn)
-	for peerID, peer := range n.peers {
+	for peerID, peer := range node.peers {
 		if peer.conn != nil {
 			conns[peerID] = peer.conn
 		}
@@ -118,12 +127,12 @@ func (n Node) Conns() map[pkg.NodeID]*grpc.ClientConn {
 	return conns
 }
 
-func (n Node) Dialers() map[pkg.NodeID]Dialer {
+func (node *Node) Dialers() map[pkg.NodeID]Dialer {
 	dialers := make(map[pkg.NodeID]Dialer)
-	for _, peer := range n.peers {
+	for _, peer := range node.peers {
 		if peer.HasAddress() {
 			addr := peer.addr
-			dialers[peer.id] = func(c context.Context, s string) (net.Conn, error) {
+			dialers[peer.id] = func(_ context.Context, _ string) (net.Conn, error) {
 				return net.Dial("tcp", addr.String())
 			}
 		}
@@ -131,28 +140,28 @@ func (n Node) Dialers() map[pkg.NodeID]Dialer {
 	return dialers
 }
 
-func (n Node) ID() pkg.NodeID {
-	return n.id
+func (node *Node) ID() pkg.NodeID {
+	return node.id
 }
 
-func (n Node) HasAddress() bool {
-	return n.addr != ""
+func (node *Node) HasAddress() bool {
+	return node.addr != ""
 }
 
-func (n Node) GetPeer(peerId pkg.NodeID) (*Node, error) {
-	peer := n.peers[peerId] // not concurrency-safe - not sure if that's a problem
+func (node *Node) GetPeer(peerID pkg.NodeID) (*Node, error) {
+	peer := node.peers[peerID] // not concurrency-safe - not sure if that's a problem
 	if peer != nil {
 		return peer, nil
 	}
-	return nil, fmt.Errorf("node %s does not have peer %s", n.id, peerId)
+	return nil, fmt.Errorf("peer not found: %s", peerID)
 }
 
-func (n Node) HelperPeer() (*Node, error) {
-	if n.HasAddress() {
+func (node *Node) HelperPeer() (*Node, error) {
+	if node.HasAddress() {
 		return nil, fmt.Errorf("full node doesn't have helper peers")
 	}
 
-	for _, node := range n.peers {
+	for _, node := range node.peers {
 		if node.HasAddress() {
 			return node, nil
 		}
@@ -160,7 +169,19 @@ func (n Node) HelperPeer() (*Node, error) {
 	return nil, fmt.Errorf("no helper peer")
 }
 
-// newPeerNode initialises a peer node with a given address
+func (node *Node) GetNetworkStats() NetStats {
+	node.statsHandler.mu.Lock()
+	defer node.statsHandler.mu.Unlock()
+	return node.statsHandler.stats
+}
+
+func (node *Node) PrintNetworkStats() {
+	node.statsHandler.mu.Lock()
+	defer node.statsHandler.mu.Unlock()
+	log.Println(node.statsHandler.stats)
+}
+
+// newPeerNode initialises a peer node with a given address.
 func newPeerNode(id pkg.NodeID, addr pkg.NodeAddress) (node *Node) {
 	node = new(Node)
 	node.id = id
@@ -196,7 +217,7 @@ func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) 
 	for _, peer := range node.peers {
 		dialer, has := dialers[peer.id]
 		if peer.id != node.id && has && peer.HasAddress() {
-			peer.conn, err = grpc.Dial(string(peer.addr),
+			opts := []grpc.DialOption{
 				grpc.WithContextDialer(dialer),
 				grpc.WithInsecure(),
 				grpc.WithBlock(),
@@ -204,7 +225,9 @@ func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) 
 				grpc.WithDefaultCallOptions(
 					grpc.MaxCallRecvMsgSize(MaxMsgSize),
 					grpc.MaxCallSendMsgSize(MaxMsgSize)),
-			)
+				grpc.WithStatsHandler(&node.statsHandler),
+			}
+			peer.conn, err = grpc.Dial(string(peer.addr), opts...)
 			if err != nil {
 				return fmt.Errorf("fail to dial: %w", err)
 			}
@@ -260,7 +283,7 @@ func (node *Node) CreateNewSession(sessParams SessionParameters) (sess *pkg.Sess
 	return sess, nil
 }
 
-func (node *Node) GetContext(sessionID pkg.SessionID) context.Context {
+func (node *Node) GetOutgoingContext(sessionID pkg.SessionID) context.Context {
 	md := metadata.Pairs("session_id", string(sessionID), "node_id", string(node.id))
 	return metadata.NewOutgoingContext(context.Background(), md)
 }
@@ -270,14 +293,14 @@ func (node *Node) GetSessionFromID(sessionID pkg.SessionID) (*pkg.Session, bool)
 }
 
 func (node *Node) GetSessionFromContext(ctx context.Context) (*pkg.Session, bool) {
-	sessId, has := pkg.SessionIdFromContext(ctx)
+	sessID, has := pkg.SessionIDFromContext(ctx)
 	if !has {
 		return nil, false
 	}
-	return node.GetSessionFromID(sessId)
+	return node.GetSessionFromID(sessID)
 }
 
 func (node *Node) GetSessionFromIncomingContext(ctx context.Context) (*pkg.Session, bool) {
-	sessId := pkg.SessionIDFromIncomingContext(ctx)
-	return node.GetSessionFromID(sessId)
+	sessID := pkg.SessionIDFromIncomingContext(ctx)
+	return node.GetSessionFromID(sessID)
 }

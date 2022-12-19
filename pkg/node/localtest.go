@@ -32,20 +32,21 @@ type LocalTest struct {
 	LightNodes  []*Node
 	HelperNodes []*Node
 
-	Params  rlwe.Parameters
-	SkIdeal *rlwe.SecretKey
+	Params      rlwe.Parameters
+	SkIdeal     *rlwe.SecretKey
+	NodeConfigs []Config
+	NodesList
 }
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
 func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 
-	ncs := genNodeConfigs(config)
-
 	test = new(LocalTest)
+	test.NodeConfigs, test.NodesList = genNodeConfigs(config)
 	test.Nodes = make([]*Node, config.FullNodes+config.LightNodes+config.HelperNodes)
-	for i, nc := range ncs {
+	for i, nc := range test.NodeConfigs {
 		var err error
-		test.Nodes[i], err = NewNode(nc)
+		test.Nodes[i], err = NewNode(nc, test.NodesList)
 		if err != nil {
 			panic(err)
 		}
@@ -75,16 +76,22 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
-func genNodeConfigs(config LocalTestConfig) []NodeConfig {
+func genNodeConfigs(config LocalTestConfig) ([]Config, NodesList) {
 
-	ncs := make([]NodeConfig, 0, config.FullNodes+config.HelperNodes+config.LightNodes)
+	ncs := make([]Config, 0, config.FullNodes+config.HelperNodes+config.LightNodes)
+	nl := NodesList{}
+
 	sessionNodesIds := make([]pkg.NodeID, 0, config.FullNodes+config.LightNodes)
 	nodeShamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
 
 	shamirPk := 1
 	for i := 0; i < config.FullNodes; i++ {
-		nc := NodeConfig{ID: pkg.NodeID("full-" + strconv.Itoa(i)), Address: pkg.NodeAddress("local")}
+		nc := Config{ID: pkg.NodeID("full-" + strconv.Itoa(i)), Address: pkg.NodeAddress("local")}
 		ncs = append(ncs, nc)
+		nl = append(nl, struct {
+			pkg.NodeID
+			pkg.NodeAddress
+		}{nc.ID, nc.Address})
 		sessionNodesIds = append(sessionNodesIds, nc.ID)
 
 		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
@@ -92,8 +99,12 @@ func genNodeConfigs(config LocalTestConfig) []NodeConfig {
 	}
 
 	for i := 0; i < config.LightNodes; i++ {
-		nc := NodeConfig{ID: pkg.NodeID("light-" + strconv.Itoa(i))}
+		nc := Config{ID: pkg.NodeID("light-" + strconv.Itoa(i))}
 		ncs = append(ncs, nc)
+		nl = append(nl, struct {
+			pkg.NodeID
+			pkg.NodeAddress
+		}{nc.ID, nc.Address})
 		sessionNodesIds = append(sessionNodesIds, nc.ID)
 
 		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
@@ -101,18 +112,12 @@ func genNodeConfigs(config LocalTestConfig) []NodeConfig {
 	}
 
 	for i := 0; i < config.HelperNodes; i++ {
-		nc := NodeConfig{ID: pkg.NodeID("helper-" + strconv.Itoa(i)), Address: pkg.NodeAddress("local")}
+		nc := Config{ID: pkg.NodeID("helper-" + strconv.Itoa(i)), Address: pkg.NodeAddress("local")}
 		ncs = append(ncs, nc)
-	}
-
-	// sets the peers' addresses
-	for i := range ncs {
-		ncs[i].Peers = make(map[pkg.NodeID]pkg.NodeAddress)
-		for k := range ncs {
-			if ncs[i].ID != ncs[k].ID {
-				ncs[i].Peers[ncs[k].ID] = ncs[k].Address
-			}
-		}
+		nl = append(nl, struct {
+			pkg.NodeID
+			pkg.NodeAddress
+		}{nc.ID, nc.Address})
 	}
 
 	// sets session-specific variables with test values
@@ -127,7 +132,7 @@ func genNodeConfigs(config LocalTestConfig) []NodeConfig {
 		}
 	}
 
-	return ncs
+	return ncs, nl
 }
 
 // Start creates some in-memory connections between the nodes and returns

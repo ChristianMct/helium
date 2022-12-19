@@ -1,0 +1,26 @@
+services:
+  full-0:
+    image:  heliummpc/helium:latest
+    container_name: full-0
+    command: -protocolmap /helium/config/protocolmap.json
+    volumes:
+      - ../full-0.json:/helium/config/node.json
+      - ./nodelist.json:/helium/config/nodelist.json
+      - ../protocolmap.json:/helium/config/protocolmap.json
+  full-1:
+    image:  heliummpc/helium:latest
+    container_name: full-1
+    command: -protocolmap /helium/config/protocolmap.json
+    volumes:
+      - ../full-1.json:/helium/config/node.json
+      - ./nodelist.json:/helium/config/nodelist.json
+      - ../protocolmap.json:/helium/config/protocolmap.json
+  full-2:
+    image:  heliummpc/helium:latest
+    container_name: full-2
+    command: -protocolmap /helium/config/protocolmap.json
+    volumes:
+      - ../full-2.json:/helium/config/node.json
+      - ./nodelist.json:/helium/config/nodelist.json
+      - ../protocolmap.json:/helium/config/protocolmap.json
+      

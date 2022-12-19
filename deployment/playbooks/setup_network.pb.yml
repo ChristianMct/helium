@@ -1,0 +1,7 @@
+---
+- hosts: all
+  become: true
+
+  tasks:
+    - name: Set network simulation parameter
+      ansible.builtin.command: sudo tc qdisc add dev ens786f0 root netem delay 10ms rate 1gbit

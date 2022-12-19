@@ -9,7 +9,7 @@ import (
 	pkg "github.com/ldsec/helium/pkg/session"
 )
 
-type ManageService struct {
+type Service struct {
 	*node.Node
 
 	peers map[pkg.NodeID]api.ManageServiceClient
@@ -17,8 +17,8 @@ type ManageService struct {
 	Greets sync.WaitGroup
 }
 
-func NewManageService(n *node.Node) (s *ManageService) {
-	s = new(ManageService)
+func NewManageService(n *node.Node) (s *Service) {
+	s = new(Service)
 	s.Node = n
 	s.peers = make(map[pkg.NodeID]api.ManageServiceClient)
 	if n.IsFullNode() {
@@ -28,7 +28,7 @@ func NewManageService(n *node.Node) (s *ManageService) {
 	return s
 }
 
-func (node *ManageService) Connect() error {
+func (node *Service) Connect() error {
 	for peerID, peerConn := range node.Conns() {
 		node.peers[peerID] = api.NewManageServiceClient(peerConn)
 	}
@@ -36,8 +36,8 @@ func (node *ManageService) Connect() error {
 }
 
 // GreetAll greets all the nodes peers.
-func (node *ManageService) GreetAll() {
-	ctx := node.GetContext("test-session")
+func (node *Service) GreetAll() {
+	ctx := node.GetOutgoingContext("test-session")
 	nodeID := node.ID()
 	for peerID, peer := range node.peers {
 		if peerID != nodeID {
@@ -51,6 +51,6 @@ func (node *ManageService) GreetAll() {
 	}
 }
 
-func (node *ManageService) WaitForGreetings() {
+func (node *Service) WaitForGreetings() {
 	node.Greets.Wait()
 }

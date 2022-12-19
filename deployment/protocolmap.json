@@ -1,5 +1,0 @@
-[
-    {"Type":2,"Args":null,"Aggregator":"node-a","Participants":["node-a", "node-b"]},
-    {"Type":4,"Args":{"GalEl":"5"},"Aggregator":"node-b","Participants":["node-a", "node-b"]},
-    {"Type":3,"Args":null,"Aggregator":"node-a","Participants":["node-a", "node-b"]}
-]

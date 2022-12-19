@@ -1,7 +1,6 @@
 package manage
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +12,7 @@ func TestPeerToPeer(t *testing.T) {
 	var testConfig = node.LocalTestConfig{FullNodes: 3, LightNodes: 0}
 	localtest := node.NewLocalTest(testConfig)
 
-	helloNodes := make([]*ManageService, len(localtest.Nodes))
+	helloNodes := make([]*Service, len(localtest.Nodes))
 	for i, n := range localtest.Nodes {
 		helloNodes[i] = NewManageService(n)
 	}
@@ -23,7 +22,10 @@ func TestPeerToPeer(t *testing.T) {
 	// Step 2: all node try to establish connections with all their peers
 	<-time.After(time.Second / 10) // might be needed for debug purposes, but it seems that the Dial method does several retries already in case where the servers are not listening when the first client tries to connect.
 	for _, n := range helloNodes {
-		n.Connect()
+		err := n.Connect()
+		if err != nil {
+			t.Error(err)
+		}
 	}
 
 	wg := sync.WaitGroup{}
@@ -42,8 +44,6 @@ func TestPeerToPeer(t *testing.T) {
 		n.StopListening()
 	}
 
-	fmt.Println("Done")
-
 }
 
 func TestCloud(t *testing.T) {
@@ -51,7 +51,7 @@ func TestCloud(t *testing.T) {
 	localtest := node.NewLocalTest(testConfig)
 
 	cloud := NewManageService(localtest.HelperNodes[0])
-	clients := make([]*ManageService, len(localtest.LightNodes))
+	clients := make([]*Service, len(localtest.LightNodes))
 	for i := range localtest.LightNodes {
 		clients[i] = NewManageService(localtest.LightNodes[i])
 	}
@@ -61,7 +61,10 @@ func TestCloud(t *testing.T) {
 	// Step 2: all node try to establish connections with all their peers
 	<-time.After(time.Second / 10) // might be needed for debug purposes, but it seems that the Dial method does several retries already in case where the servers are not listening when the first client tries to connect.
 	for _, c := range clients {
-		c.Connect()
+		err := c.Connect()
+		if err != nil {
+			t.Error(err)
+		}
 	}
 
 	for _, n := range clients {
@@ -76,5 +79,4 @@ func TestCloud(t *testing.T) {
 
 	cloud.StopListening()
 
-	fmt.Println("Done")
 }

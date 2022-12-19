@@ -45,7 +45,7 @@ lint-go: ## lint go files
 	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1
 	@go mod tidy
 	golangci-lint run || true
-	@echo "\e[1;93mWarn: this test never fails - please check the log for actual issues\e[0m"
+	@echo "${YELLOW}WARN${RESET}  this test never fails - please check the log for actual issues"
 
 
 vet: ## Check for suspicious constructs
@@ -58,7 +58,10 @@ gen-proto: ## Compile protobuf files
 
 ## Docker:
 docker: ## Use the Dockerfile to build the containers
-	docker build --rm -t helium .
+	docker build --rm -t heliummpc/helium:latest .
+
+push:docker
+	docker push heliummpc/helium:latest
 
 ## Help:
 help: ## Show this help.

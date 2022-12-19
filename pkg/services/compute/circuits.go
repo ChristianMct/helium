@@ -8,6 +8,7 @@ import (
 	"path"
 	"sync"
 
+	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bfv"
@@ -47,7 +48,7 @@ type EvaluationContext interface {
 type Circuit func(EvaluationContext) error
 
 // It seems that a central piece of the orchestration could be a good
-// URL scheme for locating/designating ciphertexts
+// URL scheme for locating/designating ciphertexts.
 type URL url.URL
 
 func ParseURL(s string) (*URL, error) {
@@ -88,14 +89,14 @@ func (u *URL) String() string {
 
 type CircuitDescription struct {
 	InputSet, Ops, OutputSet utils.Set[pkg.OperandLabel]
-	CKSs, PCKSs              map[pkg.ProtocolID]map[string]interface{}
+	KeyOps                   map[pkg.ProtocolID]protocols.Descriptor
 	NeedRlk                  bool
 }
 
 type circuitParserContext struct {
 	dummyEvaluator
 	cDesc       CircuitDescription
-	circId      pkg.CircuitID
+	circID      pkg.CircuitID
 	SubCtx      map[pkg.CircuitID]*circuitParserContext
 	params      bfv.Parameters
 	nodeMapping map[string]pkg.NodeID
@@ -103,13 +104,12 @@ type circuitParserContext struct {
 }
 
 func newCircuitParserCtx(id pkg.CircuitID, params bfv.Parameters, nodeMapping map[string]pkg.NodeID) *circuitParserContext {
-	return &circuitParserContext{circId: id,
+	return &circuitParserContext{circID: id,
 		cDesc: CircuitDescription{
 			InputSet:  utils.NewEmptySet[pkg.OperandLabel](),
 			Ops:       utils.NewEmptySet[pkg.OperandLabel](),
 			OutputSet: utils.NewEmptySet[pkg.OperandLabel](),
-			CKSs:      make(map[pkg.ProtocolID]map[string]interface{}),
-			PCKSs:     make(map[pkg.ProtocolID]map[string]interface{}),
+			KeyOps:    make(map[pkg.ProtocolID]protocols.Descriptor),
 		},
 		SubCtx:      make(map[pkg.CircuitID]*circuitParserContext, 0),
 		params:      params,
@@ -124,7 +124,6 @@ func (e *circuitParserContext) CircuitDescription() CircuitDescription {
 func (e *circuitParserContext) String() string {
 	e.l.Lock()
 	defer e.l.Unlock()
-	//return fmt.Sprintf("Inputs: %s\nOutputs: %s\n SubCtx: %v\n", e.inputSet, e.outputSet, e.subCtx)
 	b, err := json.MarshalIndent(e, "", "\t")
 	if err != nil {
 		panic(err)
@@ -147,32 +146,28 @@ func (e *circuitParserContext) LocalOutputs() chan pkg.Operand {
 func (e *circuitParserContext) Input(in pkg.OperandLabel) pkg.Operand {
 	e.l.Lock()
 	defer e.l.Unlock()
-	//fmt.Println("inputting", in)
-	e.cDesc.InputSet.Add(in.ForCircuit(e.circId).ForMapping(e.nodeMapping))
+	e.cDesc.InputSet.Add(in.ForCircuit(e.circID).ForMapping(e.nodeMapping))
 	return pkg.Operand{OperandLabel: in}
 }
 
 func (e *circuitParserContext) Set(op pkg.Operand) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	opl := op.OperandLabel.ForCircuit(e.circId).ForMapping(e.nodeMapping)
-	//fmt.Println("setting", opl)
+	opl := op.OperandLabel.ForCircuit(e.circID).ForMapping(e.nodeMapping)
 	e.cDesc.Ops.Add(opl)
 }
 
 func (e *circuitParserContext) Get(opl pkg.OperandLabel) pkg.Operand {
 	e.l.Lock()
 	defer e.l.Unlock()
-	//fmt.Println("getting", opl)
-	e.cDesc.Ops.Add(opl.ForCircuit(e.circId).ForMapping(e.nodeMapping))
+	e.cDesc.Ops.Add(opl.ForCircuit(e.circID).ForMapping(e.nodeMapping))
 	return pkg.Operand{OperandLabel: opl}
 }
 
 func (e *circuitParserContext) Output(out pkg.Operand) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	opl := out.OperandLabel.ForCircuit(e.circId).ForMapping(e.nodeMapping)
-	//fmt.Println("outputting", opl)
+	opl := out.OperandLabel.ForCircuit(e.circID).ForMapping(e.nodeMapping)
 	e.cDesc.OutputSet.Add(opl)
 	e.cDesc.Ops.Add(opl)
 }
@@ -180,63 +175,56 @@ func (e *circuitParserContext) Output(out pkg.Operand) {
 func (e *circuitParserContext) SubCircuit(id pkg.CircuitID, cd Circuit) (EvaluationContext, error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	//fmt.Println("executing sub circuit", id)
-	subCtx := newCircuitParserCtx(pkg.CircuitID(fmt.Sprintf("%s/%s", e.circId, id)), e.params, e.nodeMapping)
+	subCtx := newCircuitParserCtx(pkg.CircuitID(fmt.Sprintf("%s/%s", e.circID, id)), e.params, e.nodeMapping)
 	e.SubCtx[id] = subCtx
 	err := cd(subCtx)
 	return subCtx, err
+}
+
+func (e *circuitParserContext) registerKeyOps(id pkg.ProtocolID, pd protocols.Descriptor) error {
+
+	target, hasTarget := pd.Args["target"]
+	if !hasTarget {
+		return fmt.Errorf("protocol parameter should have a target")
+	}
+
+	targetStr, isString := target.(string)
+	if !isString {
+		return fmt.Errorf("protocol parameter should have target of string type")
+	}
+
+	if e.nodeMapping != nil {
+		pd.Args["target"] = e.nodeMapping[targetStr]
+	}
+
+	if _, exists := e.cDesc.KeyOps[id]; exists {
+		return fmt.Errorf("protocol with id %s exists", id)
+	}
+
+	e.cDesc.KeyOps[id] = pd
+	return nil
 }
 
 func (e *circuitParserContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	if _, exists := e.cDesc.CKSs[id]; exists {
-		panic("CKS with id exists")
+	pd := protocols.Descriptor{Type: protocols.DEC, Args: params}
+	if err = e.registerKeyOps(id, pd); err != nil {
+		panic(err)
 	}
-
-	target, hasTarget := params["target"]
-	if !hasTarget {
-		return pkg.Operand{}, fmt.Errorf("CKS parameter should have a target")
-	}
-
-	targetStr, isString := target.(string)
-	if !isString {
-		return pkg.Operand{}, fmt.Errorf("CKS parameter should have target of string type")
-	}
-
-	if e.nodeMapping != nil {
-		params["target"] = e.nodeMapping[targetStr]
-	}
-
-	e.cDesc.CKSs[id] = params
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", targetStr, id))}, nil
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", params["target"], id))}, nil
 }
 
 func (e *circuitParserContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	if _, exists := e.cDesc.PCKSs[id]; exists {
-		panic("PCKS with id exists")
+	pd := protocols.Descriptor{Type: protocols.PCKS, Args: params}
+	if err = e.registerKeyOps(id, pd); err != nil {
+		panic(err)
 	}
-
-	target, hasTarget := params["target"]
-	if !hasTarget {
-		return pkg.Operand{}, fmt.Errorf("PCKS parameter should have a target")
-	}
-
-	targetStr, isString := target.(string)
-	if !isString {
-		return pkg.Operand{}, fmt.Errorf("PCKS parameter should have target of string type")
-	}
-
-	if e.nodeMapping != nil {
-		params["target"] = e.nodeMapping[targetStr]
-	}
-
-	e.cDesc.PCKSs[id] = params
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", targetStr, id))}, nil
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", params["target"], id))}, nil
 }
 
 func (e *circuitParserContext) Parameters() bfv.Parameters {
@@ -329,11 +317,11 @@ func (de dummyEvaluator) SwitchKeys(ctIn *rlwe.Ciphertext, switchKey *rlwe.Switc
 }
 
 func (de dummyEvaluator) EvaluatePoly(input interface{}, pol *bfv.Polynomial) (opOut *rlwe.Ciphertext, err error) {
-	return nil, nil
+	return &rlwe.Ciphertext{}, nil
 }
 
 func (de dummyEvaluator) EvaluatePolyVector(input interface{}, pols []*bfv.Polynomial, encoder bfv.Encoder, slotsIndex map[int][]int) (opOut *rlwe.Ciphertext, err error) {
-	return nil, nil
+	return &rlwe.Ciphertext{}, nil
 }
 
 func (de dummyEvaluator) SwitchKeysNew(ctIn *rlwe.Ciphertext, switchkey *rlwe.SwitchingKey) (ctOut *rlwe.Ciphertext) {

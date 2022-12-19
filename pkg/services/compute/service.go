@@ -6,18 +6,17 @@ import (
 	"log"
 	"path"
 	"strings"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/node"
-	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/services"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-var CircuitDefs map[string]Circuit = map[string]Circuit{}
+var CircuitDefs = map[string]Circuit{}
 
 type Signature struct {
 	CircuitName   string
@@ -25,22 +24,25 @@ type Signature struct {
 	Delegate      pkg.NodeID
 }
 
-type ComputeService struct {
+type Service struct {
 	*node.Node
+	*services.Environment
 	*api.UnimplementedComputeServiceServer
 
-	evalCtxs map[pkg.CircuitID]ServiceEvaluationContext
+	evalEnvs map[pkg.CircuitID]ServiceEvaluationEnvironment
 
 	peers map[pkg.NodeID]api.ComputeServiceClient
-
-	debugLock sync.Mutex // TODO: eventually remove global API lock
 }
 
-func NewComputeService(n *node.Node) (s *ComputeService, err error) {
-	s = new(ComputeService)
+func NewComputeService(n *node.Node) (s *Service, err error) {
+	s = new(Service)
 	s.Node = n
 
-	s.evalCtxs = make(map[pkg.CircuitID]ServiceEvaluationContext)
+	s.Environment, err = services.NewEnvironment(n.ID())
+	if err != nil {
+		return nil, err
+	}
+	s.evalEnvs = make(map[pkg.CircuitID]ServiceEvaluationEnvironment)
 
 	s.peers = make(map[pkg.NodeID]api.ComputeServiceClient)
 
@@ -53,7 +55,7 @@ func NewComputeService(n *node.Node) (s *ComputeService, err error) {
 
 // Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers).
 // These connections are used to initialise the api.ComputeServiceClient instances of the nodes (stored in peers).
-func (s *ComputeService) Connect() {
+func (s *Service) Connect() {
 	for peerID, peerConn := range s.Conns() {
 		s.peers[peerID] = api.NewComputeServiceClient(peerConn)
 	}
@@ -67,9 +69,9 @@ func RegisterCircuit(name string, cd Circuit) error {
 	return nil
 }
 
-func (s *ComputeService) LoadCircuit(ctx context.Context, cd Signature, label pkg.CircuitID) error {
+func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.CircuitID) error {
 
-	if _, exist := s.evalCtxs[label]; exist {
+	if _, exist := s.evalEnvs[label]; exist {
 		return fmt.Errorf("circuit with label %s already exists", label)
 	}
 
@@ -84,20 +86,20 @@ func (s *ComputeService) LoadCircuit(ctx context.Context, cd Signature, label pk
 	}
 
 	if cd.Delegate == "" || cd.Delegate == s.ID() {
-		s.evalCtxs[label] = newFullEvaluationContext(sess, s.peers, label, cDef, nil)
+		s.evalEnvs[label] = s.newFullEvaluationContext(sess, s.peers, label, cDef, nil)
 	} else {
-		s.evalCtxs[label] = newDelegatedEvaluatorContext(cd.Delegate, s.peers[cd.Delegate], sess, label, cDef)
+		s.evalEnvs[label] = s.newDelegatedEvaluatorContext(cd.Delegate, s.peers[cd.Delegate], sess, label, cDef)
 	}
 
 	return nil
 }
 
 // TODO: async execute that returns ops as they are computed
-func (s *ComputeService) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
+func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
 
 	log.Printf("Node %s | started execute with args %v \n", s.ID(), localOps)
 
-	c, exists := s.evalCtxs[label]
+	c, exists := s.evalEnvs[label]
 	if !exists {
 		return nil, fmt.Errorf("circuit does not exist")
 	}
@@ -111,13 +113,15 @@ func (s *ComputeService) Execute(ctx context.Context, label pkg.CircuitID, local
 
 	// starts the evaluation routine
 	go func() {
-		c.Execute(ctx)
+		if errExec := c.Execute(ctx); errExec != nil {
+			panic(errExec)
+		}
 	}()
 
 	out := make([]pkg.Operand, 0, len(c.CircuitDescription().OutputSet))
 	for opLabel := range c.CircuitDescription().OutputSet {
-		opUrl := NewURL(string(opLabel))
-		if opUrl.Host == string(s.ID()) || len(opUrl.Host) == 0 { // TODO: extract in InputLabel semantic ?
+		opURL := NewURL(string(opLabel))
+		if opURL.Host == string(s.ID()) || len(opURL.Host) == 0 { // TODO: extract in InputLabel semantic ?
 			out = append(out, pkg.Operand{OperandLabel: opLabel})
 		}
 	}
@@ -142,7 +146,7 @@ func (s *ComputeService) Execute(ctx context.Context, label pkg.CircuitID, local
 	return out, err
 }
 
-func (s *ComputeService) GetCiphertext(ctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
+func (s *Service) GetCiphertext(ctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
 
 	sess, exists := s.GetSessionFromIncomingContext(ctx)
 	if !exists {
@@ -153,14 +157,14 @@ func (s *ComputeService) GetCiphertext(ctx context.Context, ctr *api.CiphertextR
 
 	var ct pkg.Ciphertext
 
-	ctUrl, err := ParseURL(ctr.Id.CiphertextId)
+	ctURL, err := ParseURL(ctr.Id.CiphertextId)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid ciphertext id")
 	}
-	if dir, _ := path.Split(ctUrl.Path); len(dir) > 0 { // ctid belongs to a circuit
+	if dir, _ := path.Split(ctURL.Path); len(dir) > 0 { // ctid belongs to a circuit
 		root := strings.SplitN(strings.Trim(dir, "/"), "/", 2)[0]
-		evalCtx, exists := s.evalCtxs[pkg.CircuitID(root)]
-		if !exists {
+		evalCtx, envExists := s.evalEnvs[pkg.CircuitID(root)]
+		if !envExists {
 			log.Printf("Node %s | got request from %s - GET %s: circuit not found \"%s\" \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), id, root)
 			return nil, status.Errorf(codes.NotFound, "circuit not found")
 		}
@@ -177,10 +181,7 @@ func (s *ComputeService) GetCiphertext(ctx context.Context, ctr *api.CiphertextR
 	return ctMsg, nil
 }
 
-func (s *ComputeService) PutCiphertext(ctx context.Context, apict *api.Ciphertext) (ctId *api.CiphertextID, err error) {
-
-	//s.debugLock.Lock()
-	//defer s.debugLock.Unlock()
+func (s *Service) PutCiphertext(ctx context.Context, apict *api.Ciphertext) (ctID *api.CiphertextID, err error) {
 
 	sess, exists := s.GetSessionFromIncomingContext(ctx)
 	if !exists {
@@ -197,8 +198,8 @@ func (s *ComputeService) PutCiphertext(ctx context.Context, apict *api.Ciphertex
 	cid := pkg.CircuitIDFromIncomingContext(ctx)
 	if cid != "" {
 
-		c, exists := s.evalCtxs[cid]
-		if !exists {
+		c, envExists := s.evalEnvs[cid]
+		if !envExists {
 			return nil, status.Errorf(codes.InvalidArgument, "circuit %s does not exist", cid)
 		}
 
@@ -230,49 +231,10 @@ func (s *ComputeService) PutCiphertext(ctx context.Context, apict *api.Ciphertex
 	return &api.CiphertextID{CiphertextId: string(ct.ID)}, nil
 }
 
-func (s *ComputeService) PutShare(ctx context.Context, share *api.Share) (*api.Void, error) {
+func (s *Service) GetShare(ctx context.Context, req *api.ShareRequest) (*api.Share, error) {
+	return s.Environment.GetShare(ctx, req)
+}
 
-	//s.debugLock.Lock()
-	//defer s.debugLock.Unlock()
-
-	_, exists := s.GetSessionFromIncomingContext(ctx)
-	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
-	}
-
-	cid := pkg.CircuitIDFromIncomingContext(ctx)
-
-	c, exists := s.evalCtxs[cid]
-	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "circuit \"%s\" does not exist", cid)
-	}
-
-	sec, isFull := c.(*fullEvaluatorContext)
-	if !isFull {
-		return nil, status.Errorf(codes.InvalidArgument, "circuit \"%s\" is not run as a full", cid)
-	}
-
-	protoId := pkg.ProtocolID(share.GetProtocolID().ProtocolID) // TODO pass through context ?
-	proto, exists := sec.protos[protoId]
-	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "circuit \"%s\" does  not have a protocol \"%s\"", cid, protoId)
-	}
-
-	log.Printf("Node %s | got request from %s - PUT SHARE %s \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), protoId)
-
-	proptoShare, err := proto.GetShare(protocols.ShareRequest{AggregateFor: nil}) // TODO dirty way to allocate a share
-	if err != nil {
-		return nil, err
-	}
-
-	proptoShare.Share().UnmarshalBinary(share.Share)
-	senderID := pkg.SenderIDFromIncomingContext(ctx)
-	proptoShare.AggregateFor().Add(senderID)
-
-	_, err = proto.PutShare(proptoShare)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, err.Error())
-	}
-
-	return &api.Void{}, nil
+func (s *Service) PutShare(ctx context.Context, share *api.Share) (*api.Void, error) {
+	return s.Environment.PutShare(ctx, share)
 }

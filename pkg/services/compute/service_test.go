@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109} // , rlwe.TestPN13QP218, rlwe.TestPN14QP438, rlwe.TestPN15QP880}
+var rangeParam = []rlwe.ParametersLiteral{ /*rlwe.TestPN12QP109 , */ rlwe.TestPN13QP218 /* rlwe.TestPN14QP438, rlwe.TestPN15QP880 */}
 
 type testSetting struct {
 	N, T int
@@ -25,7 +25,7 @@ var testSettings = []testSetting{
 	{N: 4},
 }
 
-var TestCircuits map[string]Circuit = map[string]Circuit{
+var TestCircuits = map[string]Circuit{
 
 	"Identity": func(ec EvaluationContext) error {
 		op := ec.Input("//full-0/in-0")
@@ -61,7 +61,6 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 			ev := e.ShallowCopy()
 			res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
 			ev.Relinearize(res, res)
-			fmt.Println("computed lvl 1,1")
 			lvl2 <- res
 		}()
 
@@ -72,14 +71,12 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 			ev := e.ShallowCopy()
 			res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
 			ev.Relinearize(res, res)
-			fmt.Println("computed lvl 1,2")
 			lvl2 <- res
 		}()
 
 		res1, res2 := <-lvl2, <-lvl2
 		res := e.MulNew(res1, res2)
 		e.Relinearize(res, res)
-		fmt.Println("computed lvl 0")
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
@@ -95,7 +92,6 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 
 		e.Output(opout)
 
-		fmt.Println("received from CKS")
 		return nil
 	},
 
@@ -110,7 +106,6 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 			ev := e.ShallowCopy()
 			res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
 			ev.Relinearize(res, res)
-			//fmt.Println("computed lvl 1,1")
 			lvl2 <- res
 		}()
 
@@ -121,14 +116,12 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 			ev := e.ShallowCopy()
 			res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
 			ev.Relinearize(res, res)
-			//fmt.Println("computed lvl 1,2")
 			lvl2 <- res
 		}()
 
 		res1, res2 := <-lvl2, <-lvl2
 		res := e.MulNew(res1, res2)
 		e.Relinearize(res, res)
-		//fmt.Println("computed lvl 0")
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
@@ -144,11 +137,10 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 
 		e.Output(opout)
 
-		//fmt.Println("received from PCKS")
 		return nil
 	},
 
-	"CloudMul4PCKS": func(e EvaluationContext) error {
+	"CloudMul4CKS": func(e EvaluationContext) error {
 
 		inputs := make(chan pkg.Operand, 4)
 		inOpls := utils.NewSet([]pkg.OperandLabel{"//light-0/in-0", "//light-1/in-0", "//light-2/in-0", "//light-3/in-0"})
@@ -186,7 +178,7 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-		opout, err := e.PCKS("PCKS-0", opres, map[string]interface{}{
+		opout, err := e.CKS("DEC-0", opres, map[string]interface{}{
 			"target":     "light-0",
 			"aggregator": "helper-0",
 			"lvl":        params.MaxLevel(),
@@ -205,7 +197,9 @@ var TestCircuits map[string]Circuit = map[string]Circuit{
 func TestPeerEvalCircuit(t *testing.T) {
 
 	for label, cDef := range TestCircuits {
-		RegisterCircuit(label, cDef)
+		if err := RegisterCircuit(label, cDef); err != nil {
+			t.Log(err)
+		}
 	}
 
 	for _, literalParams := range rangeParam {
@@ -225,9 +219,9 @@ func TestPeerEvalCircuit(t *testing.T) {
 					},
 				}
 
-				var cDesc = Signature{CircuitName: "Mul4PCKS"}
+				var cDesc = Signature{CircuitName: "Mul4CKS"}
 
-				sessionId := pkg.SessionID("test-session")
+				sessionID := pkg.SessionID("test-session")
 				cLabel := pkg.CircuitID("test-circuit-0")
 
 				localtest := node.NewLocalTest(testConfig)
@@ -243,13 +237,13 @@ func TestPeerEvalCircuit(t *testing.T) {
 				recSk, recPk := kg.GenKeyPair()
 
 				var err error
-				nodes := make([]*ComputeService, len(localtest.Nodes))
+				nodes := make([]*Service, len(localtest.Nodes))
 				for i := range localtest.Nodes {
 					nodes[i], err = NewComputeService(localtest.Nodes[i])
 					if err != nil {
 						t.Fatal(err)
 					}
-					sess, exists := nodes[i].GetSessionFromID(sessionId)
+					sess, exists := nodes[i].GetSessionFromID(sessionID)
 					if !exists {
 						t.Fatal("session should exist")
 					}
@@ -272,9 +266,10 @@ func TestPeerEvalCircuit(t *testing.T) {
 
 				localtest.Start()
 
-				ctx := pkg.NewContext(&sessionId, nil)
+				ctx := pkg.NewContext(&sessionID, nil)
 
 				for _, node := range nodes {
+					node.Connect()
 					err = node.LoadCircuit(ctx, cDesc, cLabel)
 					if err != nil {
 						t.Fatal(err)
@@ -284,21 +279,20 @@ func TestPeerEvalCircuit(t *testing.T) {
 				g := new(errgroup.Group)
 				for _, node := range nodes {
 					node := node
-					decoder := decoder.ShallowCopy()
+					nodeDecoder := decoder.ShallowCopy()
 					g.Go(func() error {
-						node.Connect()
-						out, err := node.Execute(ctx, cLabel, inputs[node.ID()])
-						if err != nil {
-							return fmt.Errorf("node %s: %s", node.ID(), err)
+						out, errExec := node.Execute(ctx, cLabel, inputs[node.ID()])
+						if errExec != nil {
+							return fmt.Errorf("node %s: %w", node.ID(), errExec)
 						}
 						if len(out) > 0 {
-							sess, _ := node.GetSessionFromID(sessionId)
-							sk := sess.GetSecretKey()
+							sess, _ := node.GetSessionFromID(sessionID)
+							nodeSK := sess.GetSecretKey()
 							_ = recSk
-							_ = sk
-							ptdec := bfv.NewDecryptor(bfvParams, recSk).DecryptNew(out[0].Ciphertext)
-							fmt.Println(decoder.DecodeUintNew(ptdec)[:6])
-							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, decoder.DecodeUintNew(ptdec)[:6])
+							_ = nodeSK
+							ptdec := bfv.NewDecryptor(bfvParams, nodeSK).DecryptNew(out[0].Ciphertext)
+							// fmt.Println(nodeDecoder.DecodeUintNew(ptdec)[:6])
+							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, nodeDecoder.DecodeUintNew(ptdec)[:6])
 						}
 						return nil
 					})
@@ -316,13 +310,15 @@ func TestPeerEvalCircuit(t *testing.T) {
 func TestCloudEvalCircuit(t *testing.T) {
 
 	type client struct {
-		*ComputeService
+		*Service
 		bfv.Encoder
 		rlwe.Encryptor
 	}
 
 	for label, cDef := range TestCircuits {
-		RegisterCircuit(label, cDef)
+		if err := RegisterCircuit(label, cDef); err != nil {
+			t.Log(err)
+		}
 	}
 
 	for _, literalParams := range rangeParam {
@@ -353,15 +349,15 @@ func TestCloudEvalCircuit(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				nodes := []*ComputeService{clou}
+				nodes := []*Service{clou}
 
 				clients := make([]client, len(localtest.LightNodes))
 				for i := range localtest.LightNodes {
-					clients[i].ComputeService, err = NewComputeService(localtest.LightNodes[i])
+					clients[i].Service, err = NewComputeService(localtest.LightNodes[i])
 					if err != nil {
 						t.Fatal(err)
 					}
-					nodes = append(nodes, clients[i].ComputeService)
+					nodes = append(nodes, clients[i].Service)
 				}
 
 				params := localtest.Params
@@ -370,10 +366,10 @@ func TestCloudEvalCircuit(t *testing.T) {
 				kg := rlwe.NewKeyGenerator(params)
 				sk := localtest.SkIdeal
 
-				sessionId := pkg.SessionID("test-session")
+				sessionID := pkg.SessionID("test-session")
 
 				// initialise the cloud with given parameters and a session
-				sess, ok := clou.GetSessionFromID(sessionId)
+				sess, ok := clou.GetSessionFromID(sessionID)
 				if !ok {
 					t.Fatal("session should exist")
 				}
@@ -385,7 +381,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 				localtest.Start()
 
 				decoder := bfv.NewEncoder(bfvParams)
-				//idealDecryptor := bfv.NewDecryptor(bfvParams, sk.CopyNew())
+				// idealDecryptor := bfv.NewDecryptor(bfvParams, sk.CopyNew())
 
 				recSk, recPk := kg.GenKeyPair()
 				sess.RegisterPkForNode("light-0", *recPk)
@@ -394,17 +390,17 @@ func TestCloudEvalCircuit(t *testing.T) {
 					clients[i].Connect()
 					clients[i].Encoder = decoder.ShallowCopy()
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, sess.PublicKey)
-					cliSess, _ := clients[i].GetSessionFromID(sessionId)
+					cliSess, _ := clients[i].GetSessionFromID(sessionID)
 					cliSess.RegisterPkForNode("light-0", *recPk)
 				}
 
 				var cSign = Signature{
-					CircuitName: "CloudMul4PCKS",
+					CircuitName: "CloudMul4CKS",
 					Delegate:    clou.ID(),
 				}
 
 				cLabel := pkg.CircuitID("test-circuit-0")
-				ctx := pkg.NewContext(&sessionId, nil)
+				ctx := pkg.NewContext(&sessionID, nil)
 
 				for _, node := range nodes {
 					err = node.LoadCircuit(ctx, cSign, cLabel)
@@ -418,7 +414,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 				g.Go(func() error {
 					_, err = clou.Execute(ctx, cLabel)
 					if err != nil {
-						return fmt.Errorf("Node %s: %s", clou.ID(), err)
+						return fmt.Errorf("Node %s: %w", clou.ID(), err)
 					}
 					return nil
 				})
@@ -432,21 +428,21 @@ func TestCloudEvalCircuit(t *testing.T) {
 						pt := client.Encoder.EncodeNew(data, bfvParams.MaxLevel())
 						ct := client.Encryptor.EncryptNew(pt)
 						op := pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.ID(), cLabel)), Ciphertext: ct}
-						out, err := client.Execute(ctx, cLabel, op)
-						if err != nil {
-							return fmt.Errorf("client %s: %s", client.ID(), err)
+						out, errExec := client.Execute(ctx, cLabel, op)
+						if errExec != nil {
+							return fmt.Errorf("client %s: %w", client.ID(), errExec)
 						}
 						if len(out) > 0 {
 
 							require.NotNil(t, out[0].Ciphertext, "client %s should have non-nil output", client.ID())
 
-							cliSess, _ := client.GetSessionFromID(sessionId)
+							cliSess, _ := client.GetSessionFromID(sessionID)
 							_ = recSk
 							_ = cliSess
-							decryptor := bfv.NewDecryptor(bfvParams, recSk)
+							decryptor := bfv.NewDecryptor(bfvParams, cliSess.Sk)
 
 							ptdec := decryptor.DecryptNew(out[0].Ciphertext)
-							fmt.Println(decoder.DecodeUintNew(ptdec)[:6])
+							// fmt.Println(decoder.DecodeUintNew(ptdec)[:6])
 							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, decoder.DecodeUintNew(ptdec)[:6])
 						}
 						return nil

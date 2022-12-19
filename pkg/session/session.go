@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 
 	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"github.com/tuneinsight/lattigo/v4/utils"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/tuneinsight/lattigo/v4/drlwe"
+	lattigoUtils "github.com/tuneinsight/lattigo/v4/utils"
 
 	"sync"
 )
@@ -31,45 +32,45 @@ var (
 	ctxCircuitID ctxKey = "circuit_id"
 )
 
-func NewContext(sessId *SessionID, circId *CircuitID) context.Context {
+func NewContext(sessID *SessionID, circID *CircuitID) context.Context {
 	ctx := context.Background()
-	if sessId != nil {
-		ctx = context.WithValue(ctx, ctxSessionID, *sessId)
+	if sessID != nil {
+		ctx = context.WithValue(ctx, ctxSessionID, *sessID)
 	}
-	if circId != nil {
-		ctx = AppendCircuitID(ctx, *circId)
+	if circID != nil {
+		ctx = AppendCircuitID(ctx, *circID)
 	}
 	return ctx
 }
 
-func NewOutgoingContext(senderId *NodeID, sessId *SessionID, circId *CircuitID) context.Context {
+func NewOutgoingContext(senderID *NodeID, sessID *SessionID, circID *CircuitID) context.Context {
 	md := metadata.New(nil)
-	if senderId != nil {
-		md.Append("sender_id", string(*senderId))
+	if senderID != nil {
+		md.Append("sender_id", string(*senderID))
 	}
-	if sessId != nil {
-		md.Append(string(ctxSessionID), string(*sessId))
+	if sessID != nil {
+		md.Append(string(ctxSessionID), string(*sessID))
 	}
-	if circId != nil {
-		md.Append(string(ctxCircuitID), string(*circId))
+	if circID != nil {
+		md.Append(string(ctxCircuitID), string(*circID))
 	}
 	return metadata.NewOutgoingContext(context.Background(), md)
 }
 
-func GetOutgoingContext(ctx context.Context, senderId NodeID) context.Context {
+func GetOutgoingContext(ctx context.Context, senderID NodeID) context.Context {
 	md := metadata.New(nil)
-	md.Append("sender_id", string(senderId))
-	if sessId, hasSessId := SessionIdFromContext(ctx); hasSessId {
-		md.Append(string(ctxSessionID), string(sessId))
+	md.Append("sender_id", string(senderID))
+	if sessID, hasSessID := SessionIDFromContext(ctx); hasSessID {
+		md.Append(string(ctxSessionID), string(sessID))
 	}
-	if circId, hasCircId := CircuitIDFromContext(ctx); hasCircId {
-		md.Append(string(ctxCircuitID), string(circId))
+	if circID, hasCircID := CircuitIDFromContext(ctx); hasCircID {
+		md.Append(string(ctxCircuitID), string(circID))
 	}
 	return metadata.NewOutgoingContext(ctx, md)
 }
 
-func AppendCircuitID(ctx context.Context, circId CircuitID) context.Context {
-	return context.WithValue(ctx, ctxCircuitID, circId)
+func AppendCircuitID(ctx context.Context, circID CircuitID) context.Context {
+	return context.WithValue(ctx, ctxCircuitID, circID)
 }
 
 func ValueFromIncomingContext(ctx context.Context, key string) string {
@@ -96,14 +97,14 @@ func CircuitIDFromIncomingContext(ctx context.Context) CircuitID {
 	return CircuitID(ValueFromIncomingContext(ctx, string(ctxCircuitID)))
 }
 
-func SessionIdFromContext(ctx context.Context) (SessionID, bool) {
-	sessId, ok := ctx.Value(ctxSessionID).(SessionID)
-	return sessId, ok
+func SessionIDFromContext(ctx context.Context) (SessionID, bool) {
+	sessID, ok := ctx.Value(ctxSessionID).(SessionID)
+	return sessID, ok
 }
 
 func CircuitIDFromContext(ctx context.Context) (CircuitID, bool) {
-	circId, isValid := ctx.Value(ctxCircuitID).(CircuitID)
-	return circId, isValid
+	circID, isValid := ctx.Value(ctxCircuitID).(CircuitID)
+	return circID, isValid
 }
 
 func (na NodeAddress) String() string {
@@ -114,8 +115,7 @@ type Session struct {
 	*drlwe.Combiner
 	*CiphertextStore
 
-	ID SessionID
-	//NodeAddress string
+	ID     SessionID
 	NodeID NodeID
 	Nodes  []NodeID
 
@@ -127,7 +127,6 @@ type Session struct {
 	tskDone sync.Cond
 
 	CRSKey []byte
-	CRS    drlwe.CRS
 	Params *rlwe.Parameters
 
 	Sk *rlwe.SecretKey
@@ -149,12 +148,11 @@ func NewSessionStore() *SessionStore {
 	return ss
 }
 
-func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
+func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
 
 	sess = new(Session)
-	sess.ID = SessionID(sessionID)
-	//sess.NodeAddress = nodeId
-	sess.NodeID = NodeID(nodeId)
+	sess.ID = sessionID
+	sess.NodeID = nodeID
 	sess.Nodes = nodes
 
 	sess.NodesPk = map[NodeID]rlwe.PublicKey{}
@@ -165,11 +163,6 @@ func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, node
 	sess.EvaluationKey = &rlwe.EvaluationKey{Rlk: rlwe.NewRelinearizationKey(*params, 1), Rtks: rlwe.NewRotationKeySet(*params, []uint64{})}
 	sess.RelinearizationKey = sess.EvaluationKey.Rlk
 	sess.CRSKey = crsKey
-	prng, err := utils.NewKeyedPRNG(sess.CRSKey)
-	if err != nil {
-		log.Fatal(err)
-	}
-	sess.CRS = prng
 
 	sess.T = t
 	sess.SPKS = make(map[NodeID]drlwe.ShamirPublicPoint, len(shamirPts))
@@ -183,23 +176,23 @@ func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, node
 
 	sess.tskDone = *sync.NewCond(&sync.Mutex{})
 
-	sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeId], spts, t)
+	sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
 	sess.CiphertextStore = NewCiphertextStore()
 
 	return sess, err
 }
 
-func (s *SessionStore) NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeId NodeID, nodes []NodeID, t int, shamirPks map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
+func (s *SessionStore) NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPks map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
 
-	if _, exists := s.sessions[SessionID(sessionID)]; exists {
+	if _, exists := s.sessions[sessionID]; exists {
 		return nil, fmt.Errorf("session id already exists: %s", sessionID)
 	}
 
-	sess, err = NewSession(params, sk, crsKey, nodeId, nodes, t, shamirPks, sessionID)
+	sess, err = NewSession(params, sk, crsKey, nodeID, nodes, t, shamirPks, sessionID)
 
 	s.sessions[sess.ID] = sess
 
-	return
+	return sess, err
 }
 
 func (s *SessionStore) GetSessionFromID(id SessionID) (*Session, bool) {
@@ -218,6 +211,13 @@ func (s *Session) GetRelinKey() ([]byte, error) {
 	}
 
 	return relin, nil
+}
+
+func (s *Session) SetRotationKey(galEl uint64, swk *rlwe.SwitchingKey) error {
+	s.mutex.Lock()
+	s.EvaluationKey.Rtks.Keys[galEl] = swk
+	s.mutex.Unlock()
+	return nil
 }
 
 func (s *Session) SetTSK(tsk *drlwe.ShamirSecretShare) {
@@ -257,6 +257,17 @@ func (s *Session) SecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err e
 	}
 }
 
+func (s *Session) GetCRSForProtocol(pid ProtocolID) drlwe.CRS {
+	crsKey := make([]byte, 0, len(s.CRSKey)+len(pid))
+	crsKey = append(crsKey, s.CRSKey...)
+	crsKey = append(crsKey, []byte(pid)...)
+	prng, err := lattigoUtils.NewKeyedPRNG(crsKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return prng
+}
+
 func (s *Session) RegisterPkForNode(nid NodeID, pk rlwe.PublicKey) {
 	if _, exists := s.NodesPk[nid]; exists {
 		panic("pk for node already registered")
@@ -266,20 +277,14 @@ func (s *Session) RegisterPkForNode(nid NodeID, pk rlwe.PublicKey) {
 
 func (s *Session) GetPkForNode(nid NodeID) (pk rlwe.PublicKey, exists bool) {
 	pk, exists = s.NodesPk[nid]
-	return
+	return pk, exists
 }
 
-func getParamsFromString(stringParams string) (rlwe.Parameters, error) {
-	switch stringParams {
-	case "TestPN12QP109":
-		return rlwe.NewParametersFromLiteral(rlwe.TestPN12QP109)
-	case "TestPN14QP438":
-		return rlwe.NewParametersFromLiteral(rlwe.TestPN14QP438)
-	case "TestPN13QP218":
-		return rlwe.NewParametersFromLiteral(rlwe.TestPN13QP218)
-	case "TestPN15QP880":
-		return rlwe.NewParametersFromLiteral(rlwe.TestPN15QP880)
-	default:
-		return rlwe.Parameters{}, nil
-	}
+func GetRandomClientSlice(t int, nodes []NodeID) []NodeID {
+	cid := make([]NodeID, len(nodes))
+	copy(cid, nodes)
+	rand.Shuffle(len(cid), func(i, j int) {
+		cid[i], cid[j] = cid[j], cid[i]
+	})
+	return cid[:t]
 }

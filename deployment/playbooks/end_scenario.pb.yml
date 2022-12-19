@@ -1,0 +1,42 @@
+---
+- hosts: localhost
+  gather_facts: no
+  vars_prompt:
+  - name: scenario
+    prompt: Enter the scenario folder name
+    private: false
+  vars:
+    scenario_folder: "../scenarios/{{ scenario }}"
+    nodelist_file: "{{ scenario_folder }}/iccluster/nodelist.json"
+    nodelist: "{{ lookup('file', nodelist_file) }}"
+
+
+  tasks:
+    - name: Reading inventory from scenario nodelist
+      add_host:
+        hostname: "{{ item.NodeAddress.split(':')[0] }}"
+        groups: scenario_hosts
+        nodeid: "{{ item.NodeID }}"
+        scenario_folder: "../scenarios/{{ scenario }}"
+      with_items:  "{{ nodelist | to_json | from_json }}"
+
+    - name: Creating stats folder
+      ansible.builtin.file:
+        path: "{{ scenario_folder }}/stats"
+        state: directory
+        mode: '0755'
+
+- hosts: scenario_hosts
+  become: true
+  tasks:
+
+  - name: Collecting stats files
+    ansible.builtin.fetch:
+      src: "/helium/stats/{{ nodeid }}.json"
+      dest: "{{ scenario_folder }}/stats/{{ nodeid }}.json"
+      flat: yes
+
+  - name: Stopping containers
+    community.docker.docker_container:
+        name: helium
+        state: stopped

@@ -88,7 +88,7 @@ func (cts *CiphertextStore) Load(id CiphertextID) (ct Ciphertext, exists bool) {
 	cts.mutex.RLock()
 	defer cts.mutex.RUnlock()
 	ct, exists = cts.cts[id]
-	return
+	return ct, exists
 }
 
 func (ctt CiphertextType) String() string {
@@ -116,11 +116,11 @@ func (opl OperandLabel) ForMapping(nodeMapping map[string]NodeID) OperandLabel {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
 	}
 	if len(nopl.Host) > 0 {
-		nodeId, provided := nodeMapping[nopl.Host]
+		nodeID, provided := nodeMapping[nopl.Host]
 		if !provided {
 			panic(fmt.Errorf("no mapping provided for node id %s", nopl.Host))
 		}
-		nopl.Host = string(nodeId)
+		nopl.Host = string(nodeID)
 	}
 	return OperandLabel(nopl.String())
 }

@@ -10,14 +10,14 @@ import (
 	pkg "github.com/ldsec/helium/pkg/session"
 )
 
-type ManageServiceServer struct {
-	*ManageService
+type ServiceServer struct {
+	*Service
 	api.UnimplementedManageServiceServer
 }
 
-func NewManageServiceServer(ms *ManageService) *ManageServiceServer {
-	mss := new(ManageServiceServer)
-	mss.ManageService = ms
+func NewManageServiceServer(ms *Service) *ServiceServer {
+	mss := new(ServiceServer)
+	mss.Service = ms
 	ms.RegisterService(&api.ManageService_ServiceDesc, mss)
 	return mss
 }
@@ -29,9 +29,9 @@ node : Node to which we are sending hello
 in : P2PRequest from sending node
 ctx : context
 
-returns P2PResponse from node to the in P2PRequest from another node
+returns P2PResponse from node to the in P2PRequest from another node.
 */
-func (mss *ManageServiceServer) SayHello(ctx context.Context, in *api.HelloRequest) (*api.HelloResponse, error) {
+func (mss *ServiceServer) SayHello(ctx context.Context, in *api.HelloRequest) (*api.HelloResponse, error) {
 
 	ictx := node.Context{C: ctx}
 	log.Printf("Node %s | received greeting from %s\n", mss.ID(), ictx.SenderID())

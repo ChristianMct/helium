@@ -5,9 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ldsec/helium/pkg/node"
@@ -20,23 +23,24 @@ import (
 const DefaultAddress = ":40000"
 
 var addr = flag.String("address", DefaultAddress, "the address on which the node will listen")
-var configFile = flag.String("config", "./config/node.json", "the node config file for this node")
-var protocolMapFile = flag.String("protocolmap", "", "the protocol map for the setup")
+var configFile = flag.String("config", "/helium/config/node.json", "the node config file for this node")
+var nodeList = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
+var protocolMapFile = flag.String("protocolmap", "/helium/config/protocolmap.json", "the protocol map for the setup")
 
-// Instructions to run: go run main.go node.go -config [nodeconfigfile]
+// Instructions to run: go run main.go node.go -config [nodeconfigfile].
 func main() {
 
 	flag.Parse()
 
 	if *configFile == "" {
-		fmt.Println("need to provide a config file with the -config flag")
+		log.Println("need to provide a config file with the -config flag")
 		os.Exit(1)
 	}
 
 	var err error
-	var nc node.NodeConfig
+	var nc node.Config
 	if err = UnmarshalFromFile(*configFile, &nc); err != nil {
-		fmt.Println("could not read config:", err)
+		log.Println("could not read config:", err)
 		os.Exit(1)
 	}
 
@@ -45,22 +49,27 @@ func main() {
 	}
 
 	if nc.ID == "" {
-		fmt.Println("bad config: no ID")
+		log.Println("bad config: no ID")
+		os.Exit(1)
+	}
+
+	var nl node.NodesList
+	if err = UnmarshalFromFile(*nodeList, &nl); err != nil {
+		log.Println("could not read nodelist:", err)
 		os.Exit(1)
 	}
 
 	var pm []protocols.Descriptor
-	//var pm2 []string
 	if *protocolMapFile != "" {
 		if err = UnmarshalFromFile(*protocolMapFile, &pm); err != nil {
-			fmt.Printf("could not read protocols map: %s\n", err)
+			log.Printf("could not read protocols map: %s\n", err)
 			os.Exit(1)
 		}
 	}
 
-	node, err := node.NewNode(nc)
+	node, err := node.NewNode(nc, nl)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		os.Exit(1)
 	}
 
@@ -83,14 +92,14 @@ func main() {
 			panic("multi-session nodes implemented")
 		}
 
-		sessId := nc.SessionParameters[0].ID
+		sessID := nc.SessionParameters[0].ID
 
-		sess, exists := node.GetSessionFromID(pkg.SessionID(sessId))
+		sess, exists := node.GetSessionFromID(sessID)
 		if !exists {
-			log.Fatalf("Node %s | session was not created\n", nc.Address)
+			log.Fatalf("Node %s | session was not created\n", nc.ID)
 		}
 		if err = setupService.LoadProtocolMap(sess, pm); err != nil {
-			fmt.Printf("could not read protocols map: %s\n", err)
+			log.Printf("could not read protocols map: %s\n", err)
 			os.Exit(1)
 		}
 
@@ -99,7 +108,7 @@ func main() {
 
 	lis, err := net.Listen("tcp", string(nc.Address))
 	if err != nil {
-		log.Printf("Node %s | failed to listen: %v\n", nc.Address, err)
+		log.Printf("Node %s | failed to listen: %v\n", nc.ID, err)
 	}
 
 	go node.StartListening(lis)
@@ -108,11 +117,11 @@ func main() {
 
 	err = node.Connect()
 	if err != nil {
-		log.Printf("Node %s | connection error: %s", nc.Address, err)
+		log.Printf("Node %s | connection error: %s", nc.ID, err)
 	}
 	err = manageService.Connect()
 	if err != nil {
-		log.Printf("Node %s | manage service conn error: %s", nc.Address, err)
+		log.Printf("Node %s | manage service conn error: %s", nc.ID, err)
 	}
 	setupService.Connect()
 
@@ -120,12 +129,33 @@ func main() {
 
 	manageService.Greets.Wait()
 
+	start := time.Now()
 	err = setupService.Execute()
 	if err != nil {
-		log.Printf("Node %s | execute returned an error: %s", nc.Address, err)
+		log.Printf("Node %s | execute returned an error: %s", nc.ID, err)
+	}
+	elapsed := time.Since(start)
+	log.Printf("Node %s | finished setup for N=%d T=%d", nc.ID, len(nl), nc.SessionParameters[0].T)
+	log.Printf("Node %s | execute returned after %s", nc.ID, elapsed)
+	log.Printf("Node %s | network stats: %s", nc.ID, node.GetNetworkStats())
+
+	statsJSON, err := json.MarshalIndent(map[string]string{
+		"N":        fmt.Sprint(len(nl)),
+		"T":        fmt.Sprint(nc.SessionParameters[0].T),
+		"Wall":     fmt.Sprint(elapsed),
+		"NetStats": node.GetNetworkStats().String(),
+	}, "", "\t")
+	if err != nil {
+		panic(err)
+	}
+	if errWrite := ioutil.WriteFile(fmt.Sprintf("/helium/stats/%s.json", nc.ID), statsJSON, 0600); errWrite != nil {
+		log.Println(errWrite)
 	}
 
-	<-time.After(1 * time.Second)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	<-sigs
+	log.Printf("Node %s | exiting.", nc.ID)
 }
 
 func UnmarshalFromFile(filename string, s interface{}) error {
