@@ -8,6 +8,7 @@ import (
 
 	"github.com/ldsec/helium/pkg/node"
 	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -67,17 +68,6 @@ func TestCloudAssistedSetup(t *testing.T) {
 				}
 				localTest := node.NewLocalTest(testConfig)
 
-				params := localTest.Params
-
-				setup := Description{
-					Cpk:       true,
-					GaloisEls: localTest.Params.GaloisElementsForRowInnerSum(),
-					Rlk:       true,
-					Delegated: false,
-				}
-				// define protocols to test
-				protocolMap := GenerateProtocolMap(setup, localTest.LightNodes, ts.T, localTest.HelperNodes...)
-
 				var err error
 
 				clou := &cloud{Node: localTest.HelperNodes[0]}
@@ -86,8 +76,6 @@ func TestCloudAssistedSetup(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-
-				sk := localTest.SkIdeal
 
 				// initialise clients
 				allNodes := []*Service{clou.Service}
@@ -102,13 +90,26 @@ func TestCloudAssistedSetup(t *testing.T) {
 					allNodes = append(allNodes, clients[i].Service)
 				}
 
+				setup := Description{
+					Cpk: localTest.SessionNodesIds(),
+					GaloisKeys: []struct {
+						GaloisEl  uint64
+						Receivers []pkg.NodeID
+					}{
+						{5, []pkg.NodeID{clou.ID()}},
+						{25, []pkg.NodeID{clou.ID()}},
+						{125, []pkg.NodeID{clou.ID()}},
+					},
+					Rlk: []pkg.NodeID{clou.ID()},
+				}
+
 				// loads the protocolMap at all nodes
 				for _, n := range allNodes {
 					sess, ok := n.GetSessionFromID("test-session")
 					if !ok {
 						t.Fatal("session should exist")
 					}
-					err = n.LoadProtocolMap(sess, protocolMap)
+					err = n.LoadSetupDescription(sess, setup)
 					if err != nil {
 						t.Error(err)
 					}
@@ -159,7 +160,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 						if !ok {
 							t.Fatal("session should exist")
 						}
-						checkKeyGenProt(t, sess, params, setup, sk, ts.N)
+						checkKeyGenProt(t, localTest, setup, sess)
 					}
 				})
 			})
@@ -192,12 +193,17 @@ func TestPeerToPeerSetup(t *testing.T) {
 				params := localTest.Params
 				peerIds := localTest.NodeIds()
 				setup := Description{
-					GaloisEls: localTest.Params.GaloisElementsForRowInnerSum(),
-					Cpk:       true,
-					Rlk:       true,
+					Cpk: localTest.SessionNodesIds(),
+					GaloisKeys: []struct {
+						GaloisEl  uint64
+						Receivers []pkg.NodeID
+					}{
+						{5, localTest.SessionNodesIds()},
+						{25, localTest.SessionNodesIds()},
+						{125, localTest.SessionNodesIds()},
+					},
+					Rlk: localTest.SessionNodesIds(),
 				}
-				// define protocols to test
-				protocolMap := GenerateProtocolMap(setup, localTest.Nodes, ts.T)
 
 				var err error
 
@@ -216,7 +222,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 						t.Fatal("session should exists")
 					}
 
-					err = n.Service.LoadProtocolMap(sess, protocolMap)
+					err = n.Service.LoadSetupDescription(sess, setup)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -268,7 +274,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 					for _, node := range nodes {
 						node.PrintNetworkStats()
 						sess, _ := node.GetSessionFromID("test-session")
-						checkKeyGenProt(t, sess, params, setup, localTest.SkIdeal, ts.N)
+						checkKeyGenProt(t, localTest, setup, sess)
 					}
 				})
 			})
@@ -277,9 +283,13 @@ func TestPeerToPeerSetup(t *testing.T) {
 }
 
 // Based on the session information, check if the protocol was performed correctly.
-func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, setup Description, sk *rlwe.SecretKey, nParties int) {
+func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup Description, sess *pkg.Session) {
 
-	if setup.Cpk {
+	params := lt.Params
+	sk := lt.SkIdeal
+	nParties := len(lt.SessionNodes())
+
+	if utils.NewSet(setup.Cpk).Contains(sess.NodeID) {
 		pk := sess.PublicKey
 		if pk == nil {
 			t.Fatalf("pk was not generated for node %s", sess.NodeID)
@@ -288,23 +298,9 @@ func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, se
 		require.True(t, rlwe.PublicKeyIsCorrect(pk, sk, params, log2BoundPk))
 	}
 
-	if !setup.Delegated {
-		if setup.Rlk {
-			rlk := sess.RelinearizationKey
-			if rlk == nil {
-				t.Fatalf("rlk was not generated for node %s", sess.NodeID)
-			}
-
-			levelQ, levelP := params.QCount()-1, params.PCount()-1
-			decompSize := params.DecompPw2(levelQ, levelP) * params.DecompRNS(levelQ, levelP)
-			log2BoundRlk := bits.Len64(uint64(
-				params.N() * decompSize * (params.N()*3*int(params.NoiseBound()) +
-					2*3*int(params.NoiseBound()) + params.N()*3)))
-			require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], sk, params, log2BoundRlk))
-		}
-
-		for _, galEl := range setup.GaloisEls {
-			rtk, isGen := sess.EvaluationKey.Rtks.Keys[galEl]
+	for _, key := range setup.GaloisKeys {
+		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
+			rtk, isGen := sess.EvaluationKey.Rtks.Keys[key.GaloisEl]
 			if !isGen {
 				t.Fatalf("rtk was not generated for node %s", sess.NodeID)
 			}
@@ -312,8 +308,21 @@ func checkKeyGenProt(t *testing.T, sess *pkg.Session, params rlwe.Parameters, se
 				params.N() * len(rtk.Value) * len(rtk.Value[0]) *
 					(params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
 						2*3*int(math.Floor(rlwe.DefaultSigma*6)) + params.N()*3)))
-			require.True(t, rlwe.RotationKeyIsCorrect(rtk, galEl, sk, params, log2BoundRtk), "rtk for galEl %d should be correct", galEl)
+			require.True(t, rlwe.RotationKeyIsCorrect(rtk, key.GaloisEl, sk, params, log2BoundRtk), "rtk for galEl %d should be correct", key.GaloisEl)
 		}
 	}
 
+	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
+		rlk := sess.RelinearizationKey
+		if rlk == nil {
+			t.Fatalf("rlk was not generated for node %s", sess.NodeID)
+		}
+
+		levelQ, levelP := params.QCount()-1, params.PCount()-1
+		decompSize := params.DecompPw2(levelQ, levelP) * params.DecompRNS(levelQ, levelP)
+		log2BoundRlk := bits.Len64(uint64(
+			params.N() * decompSize * (params.N()*3*int(params.NoiseBound()) +
+				2*3*int(params.NoiseBound()) + params.N()*3)))
+		require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], sk, params, log2BoundRlk))
+	}
 }

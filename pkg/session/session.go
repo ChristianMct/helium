@@ -15,6 +15,12 @@ import (
 	"sync"
 )
 
+type NodesList []struct {
+	NodeID
+	NodeAddress
+	DelegateID NodeID
+}
+
 type SessionID string
 
 type ProtocolID string
@@ -281,6 +287,7 @@ func (s *Session) GetPkForNode(nid NodeID) (pk rlwe.PublicKey, exists bool) {
 }
 
 func GetRandomClientSlice(t int, nodes []NodeID) []NodeID {
+	rand.Seed(1) // TODO
 	cid := make([]NodeID, len(nodes))
 	copy(cid, nodes)
 	rand.Shuffle(len(cid), func(i, j int) {

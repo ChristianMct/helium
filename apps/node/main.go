@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/node"
-	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/manage"
 	"github.com/ldsec/helium/pkg/services/setup"
 	pkg "github.com/ldsec/helium/pkg/session"
@@ -25,7 +24,7 @@ const DefaultAddress = ":40000"
 var addr = flag.String("address", DefaultAddress, "the address on which the node will listen")
 var configFile = flag.String("config", "/helium/config/node.json", "the node config file for this node")
 var nodeList = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
-var protocolMapFile = flag.String("protocolmap", "/helium/config/protocolmap.json", "the protocol map for the setup")
+var setupFile = flag.String("setup", "/helium/config/setup.json", "the setup description file")
 
 // Instructions to run: go run main.go node.go -config [nodeconfigfile].
 func main() {
@@ -53,16 +52,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	var nl node.NodesList
+	var nl pkg.NodesList
 	if err = UnmarshalFromFile(*nodeList, &nl); err != nil {
 		log.Println("could not read nodelist:", err)
 		os.Exit(1)
 	}
 
-	var pm []protocols.Descriptor
-	if *protocolMapFile != "" {
-		if err = UnmarshalFromFile(*protocolMapFile, &pm); err != nil {
-			log.Printf("could not read protocols map: %s\n", err)
+	var sd setup.Description
+	if *setupFile != "" {
+		if err = UnmarshalFromFile(*setupFile, &sd); err != nil {
+			log.Printf("could not read setup description file: %s\n", err)
 			os.Exit(1)
 		}
 	}
@@ -84,27 +83,24 @@ func main() {
 	}
 	log.Println("\t- setup: OK")
 
-	if len(pm) > 0 {
-
-		// TODO assumes single-session nodes
-
-		if len(nc.SessionParameters) != 1 {
-			panic("multi-session nodes implemented")
-		}
-
-		sessID := nc.SessionParameters[0].ID
-
-		sess, exists := node.GetSessionFromID(sessID)
-		if !exists {
-			log.Fatalf("Node %s | session was not created\n", nc.ID)
-		}
-		if err = setupService.LoadProtocolMap(sess, pm); err != nil {
-			log.Printf("could not read protocols map: %s\n", err)
-			os.Exit(1)
-		}
-
-		log.Printf("Node %s | loaded the protocol map \n", nc.ID)
+	// TODO assumes single-session nodes
+	if len(nc.SessionParameters) != 1 {
+		panic("multi-session nodes implemented")
 	}
+
+	sessID := nc.SessionParameters[0].ID
+
+	sess, exists := node.GetSessionFromID(sessID)
+	if !exists {
+		log.Fatalf("Node %s | session was not created\n", nc.ID)
+	}
+
+	if err = setupService.LoadSetupDescription(sess, sd); err != nil {
+		log.Printf("could not read protocols map: %s\n", err)
+		os.Exit(1)
+	}
+
+	log.Printf("Node %s | loaded the protocol map \n", nc.ID)
 
 	lis, err := net.Listen("tcp", string(nc.Address))
 	if err != nil {

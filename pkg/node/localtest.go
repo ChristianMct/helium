@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"strconv"
@@ -35,7 +36,7 @@ type LocalTest struct {
 	Params      rlwe.Parameters
 	SkIdeal     *rlwe.SecretKey
 	NodeConfigs []Config
-	NodesList
+	pkg.NodesList
 }
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
@@ -76,10 +77,10 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
-func genNodeConfigs(config LocalTestConfig) ([]Config, NodesList) {
+func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 
 	ncs := make([]Config, 0, config.FullNodes+config.HelperNodes+config.LightNodes)
-	nl := NodesList{}
+	nl := pkg.NodesList{}
 
 	sessionNodesIds := make([]pkg.NodeID, 0, config.FullNodes+config.LightNodes)
 	nodeShamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
@@ -91,7 +92,8 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, NodesList) {
 		nl = append(nl, struct {
 			pkg.NodeID
 			pkg.NodeAddress
-		}{nc.ID, nc.Address})
+			DelegateID pkg.NodeID
+		}{nc.ID, nc.Address, ""})
 		sessionNodesIds = append(sessionNodesIds, nc.ID)
 
 		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
@@ -104,7 +106,8 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, NodesList) {
 		nl = append(nl, struct {
 			pkg.NodeID
 			pkg.NodeAddress
-		}{nc.ID, nc.Address})
+			DelegateID pkg.NodeID
+		}{nc.ID, nc.Address, pkg.NodeID(fmt.Sprintf("helper-%d", i%config.HelperNodes))})
 		sessionNodesIds = append(sessionNodesIds, nc.ID)
 
 		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
@@ -117,7 +120,8 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, NodesList) {
 		nl = append(nl, struct {
 			pkg.NodeID
 			pkg.NodeAddress
-		}{nc.ID, nc.Address})
+			DelegateID pkg.NodeID
+		}{nc.ID, nc.Address, ""})
 	}
 
 	// sets session-specific variables with test values
@@ -172,6 +176,15 @@ func (lc LocalTest) Start() {
 // session.
 func (lc LocalTest) SessionNodes() []*Node {
 	return lc.Nodes[:len(lc.FullNodes)+len(lc.LightNodes)]
+}
+
+func (lc LocalTest) SessionNodesIds() []pkg.NodeID {
+	sessionNodes := lc.SessionNodes()
+	ids := make([]pkg.NodeID, len(sessionNodes))
+	for i, node := range sessionNodes {
+		ids[i] = node.id
+	}
+	return ids
 }
 
 // NodeIds returns the node ideas of all nodes in the local test.

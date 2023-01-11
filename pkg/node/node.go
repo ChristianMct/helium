@@ -48,7 +48,8 @@ type Node struct {
 	id   pkg.NodeID
 
 	// Protocol information
-	peers map[pkg.NodeID]*Node
+	peers    map[pkg.NodeID]*Node
+	nodeList pkg.NodesList
 
 	conn *grpc.ClientConn
 
@@ -65,15 +66,10 @@ type Config struct {
 	SessionParameters []SessionParameters
 }
 
-type NodesList []struct {
-	pkg.NodeID
-	pkg.NodeAddress
-}
-
 // NewNode initialises a new node according to a given NodeConfig which provides the address and peers of this node
 // Also initialises other attributes such as the parameters, session store and the WaitGroup Greets
 // also initialises the peers of the node by calling initPeerNode().
-func NewNode(config Config, nodeList NodesList) (node *Node, err error) {
+func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	node = new(Node)
 
 	node.addr = config.Address
@@ -86,6 +82,7 @@ func NewNode(config Config, nodeList NodesList) (node *Node, err error) {
 			node.peers[peer.NodeID] = newPeerNode(peer.NodeID, peer.NodeAddress)
 		}
 	}
+	node.nodeList = nodeList
 
 	if node.IsFullNode() {
 		node.grpcServer = grpc.NewServer(
@@ -115,6 +112,10 @@ func (node *Node) RegisterService(sd *grpc.ServiceDesc, ss interface{}) {
 // Peers returns a map of (NodeID, *Node) containing each peer of Node n.
 func (node *Node) Peers() map[pkg.NodeID]*Node {
 	return node.peers
+}
+
+func (node *Node) NodeList() pkg.NodesList {
+	return node.nodeList // TODO copy
 }
 
 func (node *Node) Conns() map[pkg.NodeID]*grpc.ClientConn {

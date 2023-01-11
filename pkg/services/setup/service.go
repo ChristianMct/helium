@@ -76,6 +76,10 @@ func (s *Service) Execute() error {
 	return nil
 }
 
+func (s *Service) LoadSetupDescription(session *pkg.Session, sd Description) error {
+	return s.LoadProtocolMap(session, GenProtoMap(sd, s.NodeList(), session.T, session.Nodes))
+}
+
 func (s *Service) LoadProtocolMap(session *pkg.Session, pm ProtocolMap) error {
 	var rtgID uint64
 	for _, protoDesc := range pm {
