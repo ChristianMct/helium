@@ -15,16 +15,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ldsec/helium/pkg/transport"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 
 	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/transport/grpctrans"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/test/bufconn"
 )
-
-const buffConBufferSize = 65 * 1024 * 1024
 
 // LocalTestConfig is a configuration structure for LocalTest types. It is used to
 // specify the number of full, light and helper nodes in the local test.
@@ -33,6 +33,7 @@ type LocalTestConfig struct {
 	LightNodes       int // Number of light nodes in the session
 	HelperNodes      int // number of helper nodes (full nodes that are not in the session key)
 	Session          *SessionParameters
+	DoThresholdSetup bool
 	InsecureChannels bool // are we using (m)TLS to establish the channels between nodes?
 }
 
@@ -43,8 +44,8 @@ type LocalTest struct {
 	FullNodes   []*Node
 	LightNodes  []*Node
 	HelperNodes []*Node
-
 	Params      rlwe.Parameters
+
 	SkIdeal     *rlwe.SecretKey
 	NodeConfigs []Config
 	pkg.NodesList
@@ -74,12 +75,32 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 			panic(err)
 		}
 
+		sess := make([]*pkg.Session, len(test.SessionNodes()))
 		test.SkIdeal = rlwe.NewSecretKey(test.Params)
-		for _, n := range test.SessionNodes() {
+		for i, n := range test.SessionNodes() {
 			// computes the ideal secret-key for the test
-			sess, _ := n.GetSessionFromID("test-session")
-			ski := sess.GetSecretKey()
-			test.Params.RingQP().AddLvl(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level(), ski.Value, test.SkIdeal.Value, test.SkIdeal.Value)
+			sess[i], _ = n.GetSessionFromID("test-session")
+			test.Params.RingQP().AddLvl(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level(), sess[i].GetSecretKey().Value, test.SkIdeal.Value, test.SkIdeal.Value)
+		}
+
+		if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {
+			shares := make(map[pkg.NodeID]map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
+			thresholdizer := drlwe.NewThresholdizer(test.Params)
+			for i, ni := range test.SessionNodes() {
+				shares[ni.id] = make(map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
+				shamirPoly, _ := thresholdizer.GenShamirPolynomial(config.Session.T, sess[i].GetSecretKey())
+				for _, nj := range test.SessionNodes() {
+					shares[ni.id][nj.id] = thresholdizer.AllocateThresholdSecretShare()
+					thresholdizer.GenShamirSecretShare(sess[i].SPKS[nj.ID()], shamirPoly, shares[ni.id][nj.id])
+				}
+			}
+			for i, ni := range test.SessionNodes() {
+				tsk := thresholdizer.AllocateThresholdSecretShare()
+				for _, nj := range test.SessionNodes() {
+					thresholdizer.AggregateShares(shares[nj.id][ni.id], tsk, tsk)
+				}
+				sess[i].SetTSK(tsk)
+			}
 		}
 	}
 
@@ -97,32 +118,11 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 
 	shamirPk := 1
 
-	// tempNodeList := pkg.NodesList{}
-	// for i := 0; i < config.FullNodes; i++ {
-	// 	tempNodeList = append(tempNodeList, struct {
-	// 		pkg.NodeID
-	// 		pkg.NodeAddress
-	// 	}{pkg.NodeID("full-" + strconv.Itoa(i)), ""})
-	// }
-	// for i := 0; i < config.LightNodes; i++ {
-	// 	tempNodeList = append(tempNodeList, struct {
-	// 		pkg.NodeID
-	// 		pkg.NodeAddress
-	// 	}{pkg.NodeID("light-" + strconv.Itoa(i)), ""})
-	// }
-	// for i := 0; i < config.HelperNodes; i++ {
-	// 	tempNodeList = append(tempNodeList, struct {
-	// 		pkg.NodeID
-	// 		pkg.NodeAddress
-	// 	}{pkg.NodeID("helper-" + strconv.Itoa(i)), ""})
-	// }
-
 	for i := 0; i < config.FullNodes; i++ {
 		nodeID := pkg.NodeID("full-" + strconv.Itoa(i))
 		nc := Config{
 			ID:      nodeID,
 			Address: pkg.NodeAddress("local"),
-			//TLSConfig: tlsConfigs[nodeID]
 		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
@@ -137,11 +137,9 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	}
 
 	for i := 0; i < config.LightNodes; i++ {
-		// spec := TLSSpec{InsecureChannels: config.InsecureChannels}
 		nodeID := pkg.NodeID("light-" + strconv.Itoa(i))
 		nc := Config{
 			ID: nodeID,
-			//TLSConfig: tlsConfigs[nodeID]
 		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
@@ -159,7 +157,6 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 		nodeID := pkg.NodeID("helper-" + strconv.Itoa(i))
 		nc := Config{ID: nodeID,
 			Address: pkg.NodeAddress("local"),
-			//TLSConfig: tlsConfigs[nodeID],
 		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
@@ -199,13 +196,13 @@ type nodeCrypto struct {
 	cert   x509.Certificate
 }
 
-func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[pkg.NodeID]TLSConfig, error) {
+func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[pkg.NodeID]grpctrans.TLSConfig, error) {
 
-	tlsConfigs := make(map[pkg.NodeID]TLSConfig, len(nodeList))
+	tlsConfigs := make(map[pkg.NodeID]grpctrans.TLSConfig, len(nodeList))
 
 	if testConfig.InsecureChannels {
 		for _, n := range nodeList {
-			tlsConfigs[n.NodeID] = TLSConfig{InsecureChannels: true}
+			tlsConfigs[n.NodeID] = grpctrans.TLSConfig{InsecureChannels: true}
 		}
 		return tlsConfigs, nil
 	}
@@ -246,15 +243,18 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[p
 	peerCrypto := make(map[pkg.NodeID]nodeCrypto, len(nodeList))
 	// sign certs for everyone
 	for _, peer := range nodeList {
-		pubkey, skey, err := ed25519.GenerateKey(nil)
-		if err != nil {
-			return nil, err
+		pubkey, skey, errGenKey := ed25519.GenerateKey(nil)
+		if errGenKey != nil {
+			return nil, errGenKey
 		}
-		csrbytes, err := cryptoUtil.GenCSR(string(peer.NodeID), pubkey, skey)
+		csrbytes, errGenCSR := cryptoUtil.GenCSR(string(peer.NodeID), pubkey, skey)
+		if errGenCSR != nil {
+			return nil, errGenCSR
+		}
 		csrPEM, _ := pem.Decode(csrbytes)
-		csr, err := x509.ParseCertificateRequest(csrPEM.Bytes)
-		if err != nil {
-			return nil, err
+		csr, errParseCertReq := x509.ParseCertificateRequest(csrPEM.Bytes)
+		if errParseCertReq != nil {
+			return nil, errParseCertReq
 		}
 		certTemp := x509.Certificate{
 			SerialNumber:       big.NewInt(1337),
@@ -272,13 +272,13 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[p
 			PublicKeyAlgorithm: csr.PublicKeyAlgorithm,
 			PublicKey:          csr.PublicKey,
 		}
-		cert, err := x509.CreateCertificate(rand.Reader, &certTemp, &caCert, pubkey, caPrivKey)
-		if err != nil {
-			return nil, err
+		cert, errCreateCert := x509.CreateCertificate(rand.Reader, &certTemp, &caCert, pubkey, caPrivKey)
+		if errCreateCert != nil {
+			return nil, errCreateCert
 		}
-		certObj, err := x509.ParseCertificate(cert)
-		if err != nil {
-			return nil, err
+		certObj, errParseCert := x509.ParseCertificate(cert)
+		if errParseCert != nil {
+			return nil, errParseCert
 		}
 		peerCrypto[peer.NodeID] = nodeCrypto{
 			pubkey: pubkey,
@@ -292,16 +292,16 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[p
 		peerPKs := make(map[pkg.NodeID]string, len(nodeList)-1) // fully connected nodes
 		peerCerts := make(map[pkg.NodeID]string, len(nodeList)-1)
 
-		skPem, err := cryptoUtil.ToPEM(nodeCrypo.skey)
+		var skPem, pkPem, certPem []byte
+		skPem, err = cryptoUtil.ToPEM(nodeCrypo.skey)
 		if err != nil {
 			return nil, err
 		}
-
-		pkPem, err := cryptoUtil.ToPEM(nodeCrypo.pubkey)
+		pkPem, err = cryptoUtil.ToPEM(nodeCrypo.pubkey)
 		if err != nil {
 			return nil, err
 		}
-		certPem, err := cryptoUtil.ToPEM(nodeCrypo.cert)
+		certPem, err = cryptoUtil.ToPEM(nodeCrypo.cert)
 		if err != nil {
 			return nil, err
 		}
@@ -310,19 +310,19 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[p
 			if nodeID == otherNodeID {
 				continue
 			}
-			peerPkPem, err := cryptoUtil.ToPEM(otherNodeCrypto.pubkey)
-			if err != nil {
-				return nil, err
+			peerPkPem, errPk := cryptoUtil.ToPEM(otherNodeCrypto.pubkey)
+			if errPk != nil {
+				return nil, errPk
 			}
-			peerCertPem, err := cryptoUtil.ToPEM(otherNodeCrypto.cert)
-			if err != nil {
-				return nil, err
+			peerCertPem, errCrt := cryptoUtil.ToPEM(otherNodeCrypto.cert)
+			if errCrt != nil {
+				return nil, errCrt
 			}
 			peerPKs[otherNodeID] = string(peerPkPem)
 			peerCerts[otherNodeID] = string(peerCertPem)
 		}
 
-		tlsConfigs[nodeID] = TLSConfig{
+		tlsConfigs[nodeID] = grpctrans.TLSConfig{
 			OwnSk:     string(skPem),
 			OwnPk:     string(pkPem),
 			OwnCert:   string(certPem),
@@ -334,29 +334,28 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[p
 	return tlsConfigs, nil
 }
 
+const buffConBufferSize = 65 * 1024 * 1024
+
 // Start creates some in-memory connections between the nodes and returns
 // when all nodes are connected.
 func (lc LocalTest) Start() {
-	ds := make(map[pkg.NodeID]Dialer)
-	for _, node := range lc.Nodes {
-		node := node
-		if node.IsFullNode() {
+	ls := make(map[pkg.NodeID]net.Listener)
+	ds := make(map[pkg.NodeID]transport.Dialer)
+	for _, node := range lc.NodesList {
+		if node.NodeAddress != "" {
 			lis := bufconn.Listen(buffConBufferSize)
-			go func() {
-				if err := node.grpcServer.Serve(lis); err != nil {
-					log.Fatalf("failed to serve: %v", err)
-				}
-			}()
-			ds[node.id] = func(context.Context, string) (net.Conn, error) { return lis.Dial() }
+			ls[node.NodeID] = lis
+			ds[node.NodeID] = func(context.Context, string) (net.Conn, error) { return lis.Dial() }
 		}
 	}
 
 	var wg sync.WaitGroup
 	for _, node := range lc.Nodes {
+		lis := ls[node.id]
 		node := node
 		wg.Add(1)
 		go func() {
-			err := node.ConnectWithDialers(ds)
+			err := node.GetTransport().(*grpctrans.Transport).ConnectWithDialers(lis, ds)
 			if err != nil {
 				log.Printf("node %s failed to connect: %v", node.ID(), err)
 				return

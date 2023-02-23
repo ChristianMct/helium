@@ -43,33 +43,52 @@ enum ProtocolType {
     RKG = 3; /* public relinearization-key generation */
     RTG = 4; /* public rotation-key generation */
     CKS = 5; /* collective switching to collective secret-key */
-    PCKS = 6; /* collective switching to known public-key */
+    DEC = 6; /* collective decryption */
+    PCKS = 7; /* collective switching to known public-key */
 }
+
+enum ProtocolStatus {
+    OK = 0;
+    RUNNING = 1;
+    FAILED = 2;
+}
+
 
 /* ProtocolDescriptor is a message type to describe a protocol by its type
 and arguments. It should be sufficient for parties to instantiate a protocol
 within a given session */
 message ProtocolDescriptor {
-    ProtocolType Type = 1;
+    ProtocolID ProtocolID = 1;
+    ProtocolType ProtocolType = 2;
     map<string, string> Args = 3;
+    NodeID Aggregator = 4;
+    repeated NodeID Participants = 5;
+    repeated NodeID Receivers = 6;
 }
 
-/* ShareRequest represents a request for a party's share in the protocol
-defined by its ProtocolDesc field. */
-message ShareRequest {
+message ProtocolUpdate {
+    ProtocolDescriptor ProtocolDescriptor = 1;
+    ProtocolStatus ProtocolStatus = 2;
+}
+
+message ShareDescriptor {
     ProtocolID ProtocolID = 1;
-    optional uint64 Round = 2;
-    optional Share Previous = 3;
-    repeated NodeID AggregateFor = 4;
-    optional bool NoData = 5;
-    Signature signature = 6;
+    ProtocolType ProtocolType = 3;
+    NodeID Sender = 4;
+    repeated NodeID Receivers = 5; 
+    optional uint64 Round = 6;
+    repeated NodeID AggregateFor = 7;
 }
 
 /* Share represents a party's share in the protocol described by its ProtocolDesc
 field. */
 message Share {
-    ProtocolID ProtocolID = 1;
-    optional uint64 Round = 2;
+    ShareDescriptor Desc = 1;
     bytes share = 3;
     Signature signature = 4;
+}
+
+message Aggregation {
+    repeated Share AggregatedShares = 1;
+    string message = 2;
 }

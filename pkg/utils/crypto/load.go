@@ -45,19 +45,19 @@ func ReadPEM(data []byte) (any, error) {
 	case "CERTIFICATE":
 		crt, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("couldn't parse cert: %s", err)
+			return nil, fmt.Errorf("couldn't parse cert: %w", err)
 		}
 		return crt, nil
 	case "PRIVATE KEY":
 		sk, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("couldn't parse private key: %s", err)
+			return nil, fmt.Errorf("couldn't parse private key: %w", err)
 		}
 		return sk, nil
 	case "PUBLIC KEY":
 		pk, err := x509.ParsePKIXPublicKey(block.Bytes)
 		if err != nil {
-			return nil, fmt.Errorf("couldn't parse public key: %s", err)
+			return nil, fmt.Errorf("couldn't parse public key: %w", err)
 		}
 		return pk, nil
 	default:

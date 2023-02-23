@@ -6,15 +6,12 @@ import (
 	"log"
 	"sync"
 
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/ldsec/helium/pkg/services"
 	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bfv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // ServiceEvaluationEnvironment defines the interface that is available to the service
@@ -26,6 +23,8 @@ type ServiceEvaluationEnvironment interface {
 
 	// LocalInput provides the local inputs to the circuit executing within this context.
 	LocalInputs([]pkg.Operand) error
+
+	IncomingInput(pkg.Operand) error
 
 	// LocalOutput returns a channel where the circuit executing within this context will write its outputs.
 	LocalOutputs() chan pkg.Operand
@@ -42,9 +41,10 @@ type ServiceEvaluationEnvironment interface {
 // It evaluates the homomorphic operations and compute the outputs of the circuit.
 type fullEvaluatorContext struct {
 	bfv.Evaluator
-	*services.Environment
 
-	peers map[pkg.NodeID]api.ComputeServiceClient
+	isLight map[pkg.NodeID]bool
+
+	transport transport.ComputeServiceTransport
 
 	sess   *pkg.Session
 	params bfv.Parameters
@@ -58,18 +58,25 @@ type fullEvaluatorContext struct {
 
 	f     Circuit
 	cDesc CircuitDescription
+
+	// TODO Extract ProtocolRunner
+	runningProtosMu sync.RWMutex
+	runningProtos   map[pkg.ProtocolID]struct {
+		pd       protocols.Descriptor
+		incoming chan protocols.Share
+	}
 }
 
-func (s *Service) newFullEvaluationContext(sess *pkg.Session, peers map[pkg.NodeID]api.ComputeServiceClient, id pkg.CircuitID, cDef Circuit, nodeMapping map[string]pkg.NodeID) *fullEvaluatorContext {
+func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, cDef Circuit, nodeMapping map[string]pkg.NodeID) *fullEvaluatorContext {
 	se := new(fullEvaluatorContext)
 	se.id = id
 	se.sess = sess
-	se.peers = peers
 
 	se.params, _ = bfv.NewParameters(*sess.Params, 65537)
 	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: sess.Rlk})
 	se.Evaluator = eval
-	se.Environment = s.Environment
+
+	se.isLight = make(map[pkg.NodeID]bool)
 
 	dummyCtx := newCircuitParserCtx(id, se.params, nodeMapping)
 	if err := cDef(dummyCtx); err != nil {
@@ -83,7 +90,7 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, peers map[pkg.Node
 
 	// adds all own-inputs to the outgoing ops
 	for inLabel := range se.cDesc.InputSet {
-		in := NewURL(string(inLabel))
+		in := pkg.NewURL(string(inLabel))
 		op := &FutureOperand{}
 		if len(in.Host) != 0 && in.Host == string(sess.ID) {
 			se.outgoingOps[inLabel] = op
@@ -107,43 +114,56 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, peers map[pkg.Node
 		}
 
 		protoDesc.Aggregator = aggregator
-		protoDesc.Participants = sess.Nodes
-		protoDesc.Receivers = []pkg.NodeID{aggregator}
+
+		part := utils.NewSet(sess.Nodes)
+		if protoDesc.Type == protocols.DEC {
+			part.Remove(pkg.NodeID(protoDesc.Args["target"].(string)))
+		}
+
+		protoDesc.Participants = part.Elements() // TODO decide on exec
 		proto, err := protocols.NewProtocol(protoDesc, sess, protoID)
 		if err != nil {
-			panic(err)
-		}
-		if err = se.RegisterProtocol(protoID, protoDesc.Type); err != nil {
 			panic(err)
 		}
 		se.protos[protoID], _ = proto.(protocols.KeySwitchInstance)
 	}
 
-	peerInt := make(map[pkg.NodeID]services.ProtocolClient)
-	for peerID, peerCli := range peers {
-		peerInt[peerID] = peerCli
-	}
-	se.Environment.Connect(peerInt)
-
 	se.inputs, se.outputs = make(chan pkg.Operand, len(se.cDesc.InputSet)), make(chan pkg.Operand, len(se.cDesc.OutputSet))
 
 	se.f = cDef
+
+	se.transport = s.transport
+	// TODO extract protocolrunner
+
+	se.runningProtos = make(map[pkg.ProtocolID]struct {
+		pd       protocols.Descriptor
+		incoming chan protocols.Share
+	})
+	go func() {
+		for incShare := range se.transport.IncomingShares() {
+			se.runningProtosMu.RLock()
+			proto, exists := se.runningProtos[incShare.ProtocolID]
+			se.runningProtosMu.RUnlock()
+			if !exists {
+				panic("protocol is not running")
+			}
+			proto.incoming <- incShare
+		}
+	}()
 
 	return se
 }
 
 func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 
-	log.Printf("Node %s | started full context Execute of %s\n", se.sess.NodeID, se.id)
-
-	se.Environment.Run(ctx)
+	log.Printf("%s | started full context Execute of %s\n", se.sess.NodeID, se.id)
 
 	se.resolveRemoteInputs(ctx, se.cDesc.InputSet)
 
 	err := se.f(se)
 
 	close(se.outputs)
-	log.Printf("Node %s | full context Execute returned, err = %v \n", se.sess.NodeID, err)
+	log.Printf("%s | full context Execute returned, err = %v \n", se.sess.NodeID, err)
 
 	return err
 }
@@ -152,6 +172,11 @@ func (se *fullEvaluatorContext) LocalInputs(lops []pkg.Operand) error {
 	for _, lop := range lops {
 		se.inputs <- lop // TODO validate
 	}
+	return nil
+}
+
+func (se *fullEvaluatorContext) IncomingInput(op pkg.Operand) error {
+	se.inputs <- op
 	return nil
 }
 
@@ -165,7 +190,7 @@ func (se *fullEvaluatorContext) Input(opl pkg.OperandLabel) pkg.Operand {
 		panic(fmt.Errorf("unexpected input: %s", opl))
 	}
 	op := <-fop.Await()
-	log.Printf("Node %s | got input %s\n", se.sess.NodeID, op.OperandLabel)
+	log.Printf("%s | got input %s\n", se.sess.NodeID, op.OperandLabel)
 	return op
 }
 
@@ -180,7 +205,7 @@ func (se *fullEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
 	panic(fmt.Errorf("Get on unknown op %s, %v", opl, se.ops))
 }
 
-func (se *fullEvaluatorContext) Output(op pkg.Operand) {
+func (se *fullEvaluatorContext) Output(op pkg.Operand, to pkg.NodeID) {
 	se.ops[op.OperandLabel.ForCircuit(se.id)].Done(op)
 	se.outputs <- pkg.Operand{OperandLabel: op.OperandLabel.ForCircuit(se.id), Ciphertext: op.Ciphertext}
 }
@@ -190,37 +215,38 @@ func (se *fullEvaluatorContext) SubCircuit(_ pkg.CircuitID, _ Circuit) (Evaluati
 }
 
 func (se *fullEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
-	se.Set(in)
-
-	cksInt := se.protos[id]
-
-	cksInt.Input(in.Ciphertext)
-
-	cksInt.Run(context.Background(), se.sess, se.EnvironmentForProtocol(id))
-
-	if utils.NewSet(cksInt.Desc().Receivers).Contains(se.sess.NodeID) {
-		out = pkg.Operand{Ciphertext: <-cksInt.Output()}
-	}
-
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", params["target"], id))
-
-	return out, nil
+	return se.runKeySwitch(id, in, params)
 }
 
 func (se *fullEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
+	return se.runKeySwitch(id, in, params)
+}
+
+func (se *fullEvaluatorContext) runKeySwitch(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
 	se.Set(in)
+
+	_ = params // TODO will need this for dynamic participant sets
 
 	cksInt := se.protos[id]
 
+	incShares := make(chan protocols.Share)
+	se.runningProtosMu.Lock()
+	se.runningProtos[id] = struct {
+		pd       protocols.Descriptor
+		incoming chan protocols.Share
+	}{cksInt.Desc(), incShares}
+	se.runningProtosMu.Unlock()
+
 	cksInt.Input(in.Ciphertext)
 
-	cksInt.Run(context.Background(), se.sess, se.EnvironmentForProtocol(id))
-
-	if utils.NewSet(cksInt.Desc().Receivers).Contains(se.sess.NodeID) {
-		out = pkg.Operand{Ciphertext: <-cksInt.Output()}
+	agg := <-cksInt.Aggregate(context.Background(), se.sess, &ProtocolEnvironment{incoming: incShares, outgoing: se.transport.OutgoingShares()})
+	if agg.Error != nil {
+		return pkg.Operand{}, agg.Error
 	}
 
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", params["target"], id))
+	out = pkg.Operand{Ciphertext: (<-cksInt.Output(agg)).Result.(*rlwe.Ciphertext)}
+
+	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))
 	return out, nil
 }
 
@@ -242,27 +268,21 @@ func (se *fullEvaluatorContext) resolveRemoteInputs(ctx context.Context, ins uti
 
 			var op pkg.Operand
 
-			inURL := NewURL(string(in))
+			inURL := pkg.NewURL(string(in))
 			if len(inURL.Host) == 0 || inURL.Host == string(se.sess.NodeID) {
-				log.Printf("Node %s | skipping input %s\n", se.sess.NodeID, in)
 				continue
 			}
 
-			peer, hasCli := se.peers[inURL.NodeID()]
-			if !hasCli {
-				continue // TODO should be a better way to check if peer is a light node
+			if se.isLight[inURL.NodeID()] {
+				continue // skipping light node inputs coming in push mode
 			}
 
-			outctx := pkg.GetOutgoingContext(ctx, se.sess.NodeID)
-			resp, err := peer.GetCiphertext(outctx, &api.CiphertextRequest{Id: inURL.CiphertextID().ToGRPC()})
-			if err != nil {
-				panic(err)
-			}
+			ctx = pkg.NewContext(&se.sess.ID, &se.id) // TODO: derive from passed context
 
-			var ct *pkg.Ciphertext
-			ct, err = pkg.NewCiphertextFromGRPC(resp)
+			ct, err := se.transport.GetCiphertext(ctx, pkg.CiphertextID(in))
 			if err != nil {
-				panic(status.Errorf(codes.InvalidArgument, "invalid ciphertext: %s", err))
+				log.Printf("%s | could not resolve input %s: %s", se.sess.NodeID, in, err)
+				continue
 			}
 			op = pkg.Operand{OperandLabel: in, Ciphertext: &ct.Ciphertext}
 			se.inputs <- op

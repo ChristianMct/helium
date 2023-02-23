@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"path"
-	"strings"
 
-	"github.com/google/uuid"
 	"github.com/ldsec/helium/pkg/api"
-	"github.com/ldsec/helium/pkg/node"
-	"github.com/ldsec/helium/pkg/services"
+	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/transport"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -25,40 +22,27 @@ type Signature struct {
 }
 
 type Service struct {
-	*node.Node
-	*services.Environment
+	id pkg.NodeID
+
 	*api.UnimplementedComputeServiceServer
 
-	evalEnvs map[pkg.CircuitID]ServiceEvaluationEnvironment
+	sessions  pkg.SessionProvider
+	transport transport.ComputeServiceTransport
 
-	peers map[pkg.NodeID]api.ComputeServiceClient
+	evalEnvs map[pkg.CircuitID]ServiceEvaluationEnvironment
 }
 
-func NewComputeService(n *node.Node) (s *Service, err error) {
+func NewComputeService(id pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport) (s *Service, err error) {
 	s = new(Service)
-	s.Node = n
 
-	s.Environment, err = services.NewEnvironment(n.ID())
-	if err != nil {
-		return nil, err
-	}
+	s.id = id
+
+	s.sessions = sessions
+	s.transport = trans
+
 	s.evalEnvs = make(map[pkg.CircuitID]ServiceEvaluationEnvironment)
 
-	s.peers = make(map[pkg.NodeID]api.ComputeServiceClient)
-
-	if n.IsFullNode() {
-		n.RegisterService(&api.ComputeService_ServiceDesc, s)
-	}
-
 	return s, nil
-}
-
-// Connect creates the grpc connections to the given nodes (represented by their pkg.NodeID's in the map dialers).
-// These connections are used to initialise the api.ComputeServiceClient instances of the nodes (stored in peers).
-func (s *Service) Connect() {
-	for peerID, peerConn := range s.Conns() {
-		s.peers[peerID] = api.NewComputeServiceClient(peerConn)
-	}
 }
 
 func RegisterCircuit(name string, cd Circuit) error {
@@ -75,7 +59,7 @@ func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.Circu
 		return fmt.Errorf("circuit with label %s already exists", label)
 	}
 
-	sess, exist := s.GetSessionFromContext(ctx)
+	sess, exist := s.sessions.GetSessionFromContext(ctx)
 	if !exist {
 		return fmt.Errorf("session does not exist")
 	}
@@ -86,9 +70,9 @@ func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.Circu
 	}
 
 	if cd.Delegate == "" || cd.Delegate == s.ID() {
-		s.evalEnvs[label] = s.newFullEvaluationContext(sess, s.peers, label, cDef, nil)
+		s.evalEnvs[label] = s.newFullEvaluationContext(sess, label, cDef, nil)
 	} else {
-		s.evalEnvs[label] = s.newDelegatedEvaluatorContext(cd.Delegate, s.peers[cd.Delegate], sess, label, cDef)
+		s.evalEnvs[label] = s.newDelegatedEvaluatorContext(cd.Delegate, sess, label, cDef)
 	}
 
 	return nil
@@ -97,7 +81,7 @@ func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.Circu
 // TODO: async execute that returns ops as they are computed
 func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
 
-	log.Printf("Node %s | started execute with args %v \n", s.ID(), localOps)
+	log.Printf("%s | started execute with args %v \n", s.ID(), localOps)
 
 	c, exists := s.evalEnvs[label]
 	if !exists {
@@ -118,12 +102,10 @@ func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...
 		}
 	}()
 
-	out := make([]pkg.Operand, 0, len(c.CircuitDescription().OutputSet))
-	for opLabel := range c.CircuitDescription().OutputSet {
-		opURL := NewURL(string(opLabel))
-		if opURL.Host == string(s.ID()) || len(opURL.Host) == 0 { // TODO: extract in InputLabel semantic ?
-			out = append(out, pkg.Operand{OperandLabel: opLabel})
-		}
+	outset := c.CircuitDescription().OutputsFor[s.id]
+	out := make([]pkg.Operand, 0, len(outset))
+	for opLabel := range outset {
+		out = append(out, pkg.Operand{OperandLabel: opLabel})
 	}
 
 	// gather the results
@@ -142,99 +124,145 @@ func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...
 		}
 	}
 
-	log.Printf("Node %s | execute returned\n", s.ID())
+	log.Printf("%s | execute returned\n", s.ID())
 	return out, err
 }
 
-func (s *Service) GetCiphertext(ctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
-
-	sess, exists := s.GetSessionFromIncomingContext(ctx)
-	if !exists {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
-	}
-
-	id := pkg.CiphertextID(ctr.Id.CiphertextId)
-
-	var ct pkg.Ciphertext
-
-	ctURL, err := ParseURL(ctr.Id.CiphertextId)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid ciphertext id")
-	}
-	if dir, _ := path.Split(ctURL.Path); len(dir) > 0 { // ctid belongs to a circuit
-		root := strings.SplitN(strings.Trim(dir, "/"), "/", 2)[0]
-		evalCtx, envExists := s.evalEnvs[pkg.CircuitID(root)]
-		if !envExists {
-			log.Printf("Node %s | got request from %s - GET %s: circuit not found \"%s\" \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), id, root)
-			return nil, status.Errorf(codes.NotFound, "circuit not found")
-		}
-		op := evalCtx.Get(pkg.OperandLabel(id))
-		ct = pkg.Ciphertext{Ciphertext: *op.Ciphertext}
-	} else if ct, exists = sess.Load(id); !exists {
-		return nil, status.Errorf(codes.NotFound, "ciphertext not found")
-	}
-
-	ctMsg := ct.ToGRPC()
-
-	log.Printf("Node %s | got request from %s - GET %s \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), id)
-
-	return ctMsg, nil
+func (s *Service) SendCiphertext(ctx context.Context, to pkg.NodeID, ct pkg.Ciphertext) error {
+	return s.transport.PutCiphertext(ctx, to, ct)
 }
 
-func (s *Service) PutCiphertext(ctx context.Context, apict *api.Ciphertext) (ctID *api.CiphertextID, err error) {
+func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
 
-	sess, exists := s.GetSessionFromIncomingContext(ctx)
+	sess, exists := s.sessions.GetSessionFromIncomingContext(ctx)
 	if !exists {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
+	}
+
+	ctURL, err := pkg.ParseURL(string(ctID))
+	if err != nil {
+		return nil, fmt.Errorf("invalid ciphertext id format")
+	}
+
+	if ctURL.NodeID() != "" && ctURL.NodeID() != s.id {
+		return nil, fmt.Errorf("non-local ciphertext id")
 	}
 
 	var ct *pkg.Ciphertext
-	ct, err = pkg.NewCiphertextFromGRPC(apict)
+
+	if ctURL.CircuitID() != "" { // ctid belongs to a circuit
+		evalCtx, envExists := s.evalEnvs[ctURL.CircuitID()]
+		if !envExists {
+			return nil, fmt.Errorf("ciphertext with id %s not found for circuit %s", ctID, ctURL.CircuitID())
+		}
+		op := evalCtx.Get(pkg.OperandLabel(ctURL.String()))
+		ct = &pkg.Ciphertext{Ciphertext: *op.Ciphertext}
+	} else if ct, exists = sess.Load(ctID); !exists {
+		return nil, fmt.Errorf("ciphertext with id %s not found in session", ctID)
+	}
+
+	return ct, nil
+}
+
+// func (s *Service) GetCiphertext(ctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
+
+// 	ctMsg := ct.ToGRPC()
+
+// 	log.Printf("%s | got request from %s - GET %s \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), id)
+
+// 	return ctMsg, nil
+// }
+
+func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
+
+	sess, exists := s.sessions.GetSessionFromIncomingContext(ctx)
+	if !exists {
+		return fmt.Errorf("invalid session id")
+	}
+
+	ctURL, err := pkg.ParseURL(string(ct.ID))
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid ciphertext: %s", err)
+		return fmt.Errorf("invalid ciphertext id \"%s\": %w", ct.ID, err)
 	}
 
 	// checks if input is sent for a circuit
-	cid := pkg.CircuitIDFromIncomingContext(ctx)
+	cid := ctURL.CircuitID()
 	if cid != "" {
 
 		c, envExists := s.evalEnvs[cid]
 		if !envExists {
-			return nil, status.Errorf(codes.InvalidArgument, "circuit %s does not exist", cid)
-		}
-
-		cFull, isFull := c.(*fullEvaluatorContext)
-		if !isFull {
-			return nil, status.Errorf(codes.InvalidArgument, "circuit %s not executing as full context", cid)
+			return fmt.Errorf("for unknown circuit %s", cid)
 		}
 
 		op := pkg.Operand{OperandLabel: pkg.OperandLabel(ct.ID), Ciphertext: &ct.Ciphertext}
+		err = c.IncomingInput(op)
+		if err != nil {
+			return err
+		}
 
-		cFull.inputs <- op
+		log.Printf("%s | got new ciphertext %s for circuit id \"%s\" \n", s.ID(), ct.ID, cid)
+	} else {
 
-		log.Printf("Node %s | got request from %s - PUT %s for circuit id \"%s\" \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), ct.ID, cid)
-		return ct.ID.ToGRPC(), nil
+		// stores the ciphertext
+		err = sess.Store(ct)
+		if err != nil {
+			return err
+		}
+
+		log.Printf("%s | got ciphertext %s for session storage\n", s.ID(), ct.ID)
 	}
+	return nil
 
-	// otherwise just store the ct in the session
-	if ct.ID == "" {
-		ct.ID = pkg.CiphertextID(uuid.New().String())
-	}
+	// // checks if input is sent for a circuit
+	// cid := pkg.CircuitIDFromIncomingContext(ctx)
+	// if cid != "" {
 
-	// stores the ciphertext
-	err = sess.Store(*ct)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, fmt.Sprintf("%s", err))
-	}
+	// 	c, envExists := s.evalEnvs[cid]
+	// 	if !envExists {
+	// 		return nil, status.Errorf(codes.InvalidArgument, "circuit %s does not exist", cid)
+	// 	}
 
-	log.Printf("Node %s | got request from %s - PUT %s for session storage\n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), ct.ID)
-	return &api.CiphertextID{CiphertextId: string(ct.ID)}, nil
+	// 	cFull, isFull := c.(*fullEvaluatorContext)
+	// 	if !isFull {
+	// 		return nil, status.Errorf(codes.InvalidArgument, "circuit %s not executing as full context", cid)
+	// 	}
+
+	// 	op := pkg.Operand{OperandLabel: pkg.OperandLabel(ct.ID), Ciphertext: &ct.Ciphertext}
+
+	// 	cFull.inputs <- op
+
+	// 	log.Printf("%s | got request from %s - PUT %s for circuit id \"%s\" \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), ct.ID, cid)
+	// 	return ct.ID.ToGRPC(), nil
+	// }
+
+	// // otherwise just store the ct in the session
+	// if ct.ID == "" {
+	// 	ct.ID = pkg.CiphertextID(uuid.New().String())
+	// }
+
+	// // stores the ciphertext
+	// err = sess.Store(ct)
+	// if err != nil {
+	// 	return nil, status.Errorf(codes.Internal, fmt.Sprintf("%s", err))
+	// }
+
+	// log.Printf("%s | got request from %s - PUT %s for session storage\n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), ct.ID)
+	// return &api.CiphertextID{CiphertextId: string(ct.ID)}, nil
 }
 
-func (s *Service) GetShare(ctx context.Context, req *api.ShareRequest) (*api.Share, error) {
-	return s.Environment.GetShare(ctx, req)
+func (s *Service) ID() pkg.NodeID {
+	return s.id
 }
 
-func (s *Service) PutShare(ctx context.Context, share *api.Share) (*api.Void, error) {
-	return s.Environment.PutShare(ctx, share)
+type ProtocolEnvironment struct { // TODO dedup with Setup
+	incoming <-chan protocols.Share
+	outgoing chan<- protocols.Share
+}
+
+func (pe *ProtocolEnvironment) OutgoingShares() chan<- protocols.Share {
+	return pe.outgoing
+}
+
+func (pe *ProtocolEnvironment) IncomingShares() <-chan protocols.Share {
+	return pe.incoming
 }

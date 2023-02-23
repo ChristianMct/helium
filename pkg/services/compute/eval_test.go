@@ -64,7 +64,7 @@ var ProdCKS Circuit = func(e EvaluationContext) error {
 		return err
 	}
 
-	e.Output(opout)
+	e.Output(opout, "node-0")
 
 	return nil
 }
@@ -90,17 +90,4 @@ func TestEvaluationContextWithNodeMapping(t *testing.T) {
 	if err := ProdCKS(de); err != nil {
 		t.Error(err)
 	}
-}
-
-var CKS Circuit = func(e EvaluationContext) error {
-
-	op := e.Input("/in-0")
-
-	_ = op
-
-	opOut := pkg.Operand{OperandLabel: "/out-0"}
-
-	e.Output(opOut)
-
-	return nil
 }

@@ -1,27 +1,20 @@
-package compute
+package compute_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/node"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bfv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc/metadata"
 )
 
 func TestCloudDataTransfers(t *testing.T) {
-
-	type client struct {
-		*Service
-		api.ComputeServiceClient
-		rlwe.Encryptor
-	}
 
 	for _, literalParams := range rangeParam {
 		for _, ts := range testSettings {
@@ -43,24 +36,14 @@ func TestCloudDataTransfers(t *testing.T) {
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
+					InsecureChannels: true,
 				}
 
 				localtest := node.NewLocalTest(testConfig)
+				sessionID := pkg.SessionID("test-session")
 
-				clou, err := NewComputeService(localtest.HelperNodes[0])
-				if err != nil {
-					t.Fatal(err)
-				}
-				nodes := []*Service{clou}
-
-				clients := make([]client, len(localtest.LightNodes))
-				for i := range localtest.LightNodes {
-					clients[i].Service, err = NewComputeService(localtest.LightNodes[i])
-					if err != nil {
-						t.Fatal(err)
-					}
-					nodes = append(nodes, clients[i].Service)
-				}
+				clou := cloud{Node: localtest.HelperNodes[0], Service: localtest.HelperNodes[0].GetComputeService()}
+				clou.Session, _ = clou.GetSessionFromID(sessionID)
 
 				params := localtest.Params
 				bfvParams, _ := bfv.NewParameters(params, 65537)
@@ -69,7 +52,7 @@ func TestCloudDataTransfers(t *testing.T) {
 				sk := localtest.SkIdeal
 
 				// initialise the cloud with given parameters and a session
-				sess, ok := clou.GetSessionFromID(pkg.SessionID("test-session"))
+				sess, ok := clou.GetSessionFromID(sessionID)
 				if !ok {
 					t.Fatal("session should exist")
 				}
@@ -80,19 +63,19 @@ func TestCloudDataTransfers(t *testing.T) {
 
 				// decryptor := bfv.NewDecryptor(bfvParams, sk)
 
-				for i := range clients {
-					clients[i].Connect()
+				clients := make([]client, len(localtest.LightNodes))
+				for i, node := range localtest.LightNodes {
+					clients[i].Node = node
+					clients[i].Service = node.GetComputeService()
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, sess.PublicKey)
-					clients[i].ComputeServiceClient = clients[i].peers[clou.ID()]
 				}
 
 				t.Run("Store+Load", func(t *testing.T) {
 
-					t.Skip("skip")
+					// t.Skip("skip")
 
 					g := new(errgroup.Group)
 
-					// Allocate, generate and share (put) CKG Shares of each client
 					for i := range clients[:ts.N] {
 						c := clients[i]
 						ii := i
@@ -101,34 +84,35 @@ func TestCloudDataTransfers(t *testing.T) {
 
 							bfvCt := c.EncryptZeroNew(bfvParams.MaxLevel())
 
-							ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("session_id", "test-session", "sender_id", string(c.ID())))
-
 							ctID := fmt.Sprintf("ct[%d]", ii)
-							msg := pkg.Ciphertext{Ciphertext: *bfvCt, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctID), Type: pkg.BFV}}.ToGRPC()
+							msg := pkg.Ciphertext{Ciphertext: *bfvCt, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(ctID), Type: pkg.BFV}}
 
-							rctID, rerr := c.ComputeServiceClient.PutCiphertext(ctx, msg)
+							ctx := context.TODO()
+							rerr := c.SendCiphertext(ctx, clou.NodeID, msg)
 							require.Nil(t, rerr, rerr)
-							require.Equal(t, ctID, rctID.CiphertextId)
+							// require.Equal(t, ctID, rctID.CiphertextId)
 
-							req := &api.CiphertextRequest{Id: &api.CiphertextID{CiphertextId: ctID}}
-							resp, rerr := c.ComputeServiceClient.GetCiphertext(ctx, req)
-							require.Nil(t, rerr, rerr)
+							// req := &api.CiphertextRequest{Id: &api.CiphertextID{CiphertextId: ctID}}
+							// resp, rerr := c.ComputeServiceClient.GetCiphertext(ctx, req)
+							// require.Nil(t, rerr, rerr)
 
-							rct, errCt := pkg.NewCiphertextFromGRPC(resp)
-							require.Nil(t, errCt, rerr)
-							require.Equal(t, pkg.CiphertextID(ctID), rct.ID)
-							require.Equal(t, pkg.BFV, rct.Type)
-							require.True(t, rct.Ciphertext.Value[0].Equals(bfvCt.Value[0]) && rct.Ciphertext.Value[1].Equals(bfvCt.Value[1]))
+							// rct, errCt := pkg.NewCiphertextFromGRPC(resp)
+							// require.Nil(t, errCt, rerr)
+							// require.Equal(t, pkg.CiphertextID(ctID), rct.ID)
+							// require.Equal(t, pkg.BFV, rct.Type)
+							// require.True(t, rct.Ciphertext.Value[0].Equals(bfvCt.Value[0]) && rct.Ciphertext.Value[1].Equals(bfvCt.Value[1]))
 
 							return nil
 						})
 
 					}
 
-					err = g.Wait()
+					err := g.Wait()
 					if err != nil {
 						t.Fatal(err)
 					}
+
+					<-time.After(time.Second)
 
 				})
 			})

@@ -2,16 +2,16 @@ package compute
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/ldsec/helium/pkg/services"
+	"github.com/ldsec/helium/pkg/transport"
+	"github.com/ldsec/helium/pkg/utils"
+
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/bfv"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // delegatedEvaluatorContext is an evaluation context for which circuit evaluation is
@@ -23,26 +23,28 @@ import (
 // The delegate is assumed to run a full evaluation context (see fullEvaluationContext).
 type delegatedEvaluatorContext struct {
 	dummyEvaluator
-	*services.Environment
+
+	transport transport.ComputeServiceTransport
 
 	id         pkg.CircuitID
 	sess       *pkg.Session
 	delegateID pkg.NodeID
-	delegate   api.ComputeServiceClient
 
 	params bfv.Parameters
 
+	ops map[pkg.OperandLabel]*FutureOperand
+
 	outgoingOps chan pkg.Operand
 	outputs     chan pkg.Operand
+	inputs      chan pkg.Operand
 
 	f     Circuit
 	cDesc CircuitDescription
 }
 
-func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, delegate api.ComputeServiceClient, sess *pkg.Session, cid pkg.CircuitID, cDef Circuit) *delegatedEvaluatorContext {
+func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, sess *pkg.Session, cid pkg.CircuitID, cDef Circuit) *delegatedEvaluatorContext {
 	de := new(delegatedEvaluatorContext)
 	de.delegateID = delegateID
-	de.delegate = delegate
 	de.sess = sess
 	de.f = cDef
 	de.id = cid
@@ -56,10 +58,13 @@ func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, delegate a
 
 	de.outgoingOps = make(chan pkg.Operand, len(de.cDesc.InputSet)) // TODO too large of a buffer
 	de.outputs = make(chan pkg.Operand, len(de.cDesc.OutputSet))    // TODO too large of a buffer
+	de.inputs = make(chan pkg.Operand)
+	de.transport = s.transport
 
-	de.Environment = s.Environment
-
-	de.Environment.Connect(map[pkg.NodeID]services.ProtocolClient{delegateID: delegate})
+	de.ops = make(map[pkg.OperandLabel]*FutureOperand)
+	for opl := range de.cDesc.Ops {
+		de.ops[opl] = &FutureOperand{}
+	}
 
 	return de
 }
@@ -67,8 +72,6 @@ func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, delegate a
 func (de *delegatedEvaluatorContext) Execute(ctx context.Context) error {
 
 	log.Printf("Node %s | started delegated context Execute of %s\n", de.sess.NodeID, de.id)
-
-	de.Environment.Run(ctx)
 
 	// starts go routine to send the local inputs to delegate
 	go func() {
@@ -93,6 +96,11 @@ func (de *delegatedEvaluatorContext) LocalInputs(lops []pkg.Operand) error {
 	return nil
 }
 
+func (de *delegatedEvaluatorContext) IncomingInput(op pkg.Operand) error {
+	de.inputs <- op
+	return nil
+}
+
 func (de *delegatedEvaluatorContext) LocalOutputs() chan pkg.Operand {
 	return de.outputs
 }
@@ -106,27 +114,22 @@ func (de *delegatedEvaluatorContext) Set(op pkg.Operand) {
 }
 
 func (de *delegatedEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
-
-	log.Printf("Node %s | fetching %s\n", de.sess.NodeID, opl)
-
-	outctx := pkg.NewOutgoingContext(&de.sess.NodeID, &de.sess.ID, &de.id)
-	resp, err := de.delegate.GetCiphertext(outctx, &api.CiphertextRequest{Id: pkg.CiphertextID(opl).ToGRPC()})
+	ctURL, err := pkg.ParseURL(string(opl))
 	if err != nil {
 		panic(err)
 	}
-
-	var ct *pkg.Ciphertext
-	ct, err = pkg.NewCiphertextFromGRPC(resp)
-	if err != nil {
-		panic(status.Errorf(codes.InvalidArgument, "invalid ciphertext: %s", err))
+	if ctURL.Host == "" {
+		ctURL.Host = string(de.delegateID)
 	}
-
+	ct, err := de.transport.GetCiphertext(pkg.NewContext(&de.sess.ID, &de.id), ctURL.CiphertextID())
+	if err != nil {
+		panic(err)
+	}
 	return pkg.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}
 }
 
-func (de *delegatedEvaluatorContext) Output(op pkg.Operand) {
-	outURL := NewURL(string(op.OperandLabel))
-	if len(outURL.Host) == 0 || outURL.Host == string(de.sess.NodeID) {
+func (de *delegatedEvaluatorContext) Output(op pkg.Operand, to pkg.NodeID) {
+	if to == de.sess.NodeID {
 		op = de.Get(op.OperandLabel.ForCircuit(de.id))
 		de.outputs <- op
 	}
@@ -142,23 +145,32 @@ func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, id pk
 	op := de.Get(in.OperandLabel.ForCircuit(de.id))
 
 	cks.Input(op.Ciphertext)
-	cks.Run(context.Background(), de.sess, de.EnvironmentForProtocol(id))
 
-	if pkg.NodeID(pd.Args["target"].(string)) == de.sess.NodeID {
-		out = pkg.Operand{Ciphertext: <-cks.Output()}
-	}
+	cks.Aggregate(context.Background(), de.sess, &ProtocolEnvironment{outgoing: de.transport.OutgoingShares()})
 
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", pd.Args["target"], id))
+	// agg, err := de.transport.GetAggregationFrom(pkg.NewContext(&de.sess.ID, &de.id), de.delegateID, pd.ID)
+	// if agg.Error != nil {
+	// 	return pkg.Operand{}, err
+	// }
+
+	// if pkg.NodeID(pd.Args["target"].(string)) == de.sess.NodeID {
+	// 	out = pkg.Operand{Ciphertext: (<-cks.Output(*agg)).Result.(*rlwe.Ciphertext)}
+	// }
+
+	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))
 	return out, nil
 }
 
 func (de *delegatedEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
-	pd := protocols.Descriptor{Type: protocols.DEC, Args: params, Aggregator: de.delegateID, Participants: de.sess.Nodes}
+	parts := utils.NewSet(de.sess.Nodes)
+	parts.Remove(pkg.NodeID(params["target"].(string)))
+	pd := protocols.Descriptor{Type: protocols.DEC, Args: params, Aggregator: de.delegateID, Participants: parts.Elements()} // TODO receive desc from evaluator
+
 	return de.runKeySwitch(pd, id, in)
 }
 
 func (de *delegatedEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
-	pd := protocols.Descriptor{Type: protocols.PCKS, Args: params, Aggregator: de.delegateID, Participants: de.sess.Nodes, Receivers: []pkg.NodeID{de.delegateID}}
+	pd := protocols.Descriptor{Type: protocols.PCKS, Args: params, Aggregator: de.delegateID, Participants: de.sess.Nodes}
 	return de.runKeySwitch(pd, id, in)
 }
 
@@ -175,18 +187,11 @@ func (de *delegatedEvaluatorContext) CircuitDescription() CircuitDescription {
 }
 
 func (de *delegatedEvaluatorContext) sendLocalInputs(ctx context.Context, outOps chan pkg.Operand) error {
+	errs := make([]error, 0)
 	for op := range outOps {
-		log.Printf("Node %s | sending input to %s: %s\n", de.sess.NodeID, de.delegateID, op.OperandLabel)
+		log.Printf("%s | sending input to %s: %s\n", de.sess.NodeID, de.delegateID, op.OperandLabel)
 		ct := pkg.Ciphertext{Ciphertext: *op.Ciphertext, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(op.OperandLabel)}}
-
-		outCtx := pkg.GetOutgoingContext(ctx, de.sess.NodeID)
-
-		_, err := de.delegate.PutCiphertext(outCtx, ct.ToGRPC())
-		if err != nil {
-			log.Printf("Node %s | error while sending input to %s: %s\n", de.sess.ID, de.delegateID, err)
-			return err
-		}
-
+		errs = append(errs, de.transport.PutCiphertext(ctx, de.delegateID, ct))
 	}
-	return nil
+	return errors.Join(errs...)
 }

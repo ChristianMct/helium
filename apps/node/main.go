@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,7 +14,6 @@ import (
 	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/ldsec/helium/pkg/node"
-	"github.com/ldsec/helium/pkg/services/manage"
 	"github.com/ldsec/helium/pkg/services/setup"
 )
 
@@ -82,68 +80,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Printf("Node %s | loading services:\n", nc.ID)
-	manageService := manage.NewManageService(node)
-	log.Println("\t- manage: OK")
-
-	setupService, err := setup.NewSetupService(node)
-	if err != nil {
-		log.Println("\t- setup: ERROR")
-		log.Println(err)
-	}
-	log.Println("\t- setup: OK")
-
 	// TODO assumes single-session nodes
 	if len(nc.SessionParameters) != 1 {
 		panic("multi-session nodes implemented")
 	}
 
-	sessID := nc.SessionParameters[0].ID
-
-	sess, exists := node.GetSessionFromID(sessID)
-	if !exists {
-		log.Fatalf("Node %s | session was not created\n", nc.ID)
+	if errConn := node.Connect(); errConn != nil {
+		panic(errConn)
 	}
-
-	if err = setupService.LoadSetupDescription(sess, sd); err != nil {
-		log.Printf("could not read protocols map: %s\n", err)
-		os.Exit(1)
-	}
-
-	log.Printf("Node %s | loaded the protocol map \n", nc.ID)
-
-	lis, err := net.Listen("tcp", string(nc.Address))
-	if err != nil {
-		log.Printf("Node %s | failed to listen: %v\n", nc.ID, err)
-	}
-
-	go node.StartListening(lis)
-
-	<-time.After(time.Second)
-
-	err = node.Connect()
-	if err != nil {
-		log.Printf("Node %s | connection error: %s", nc.ID, err)
-	}
-	err = manageService.Connect()
-	if err != nil {
-		log.Printf("Node %s | manage service conn error: %s", nc.ID, err)
-	}
-	setupService.Connect()
-
-	manageService.GreetAll()
-
-	manageService.Greets.Wait()
 
 	start := time.Now()
-	err = setupService.Execute()
+	err = node.GetSetupService().Execute(sd, nl)
 	if err != nil {
 		log.Printf("Node %s | execute returned an error: %s", nc.ID, err)
 	}
 	elapsed := time.Since(start)
 	log.Printf("Node %s | finished setup for N=%d T=%d", nc.ID, len(nl), nc.SessionParameters[0].T)
 	log.Printf("Node %s | execute returned after %s", nc.ID, elapsed)
-	log.Printf("Node %s | network stats: %s", nc.ID, node.GetNetworkStats())
+	log.Printf("Node %s | network stats: %s", nc.ID, node.GetTransport().GetNetworkStats())
 
 	if *outputMetrics {
 		var statsJSON []byte
@@ -151,7 +105,7 @@ func main() {
 			"N":        fmt.Sprint(len(nl)),
 			"T":        fmt.Sprint(nc.SessionParameters[0].T),
 			"Wall":     fmt.Sprint(elapsed),
-			"NetStats": node.GetNetworkStats().String(),
+			"NetStats": node.GetTransport().GetNetworkStats().String(),
 		}, "", "\t")
 		if err != nil {
 			panic(err)

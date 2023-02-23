@@ -5,9 +5,20 @@ type ShareQuery struct {
 	Result chan Share
 }
 
-type Environment interface {
-	ShareQuery(ShareQuery)
+type Transport interface {
 	OutgoingShares() chan<- Share
 	IncomingShares() <-chan Share
-	IncomingShareQueries() <-chan ShareQuery
+}
+
+type Status int32
+
+const (
+	OK Status = iota
+	Running
+	Failed
+)
+
+type StatusUpdate struct {
+	Descriptor
+	Status
 }

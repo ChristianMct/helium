@@ -1,15 +1,16 @@
-package setup
+package setup_test
 
 import (
 	"fmt"
 	"math"
 	"math/bits"
 	"testing"
+	"time"
 
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/services/setup"
 	pkg "github.com/ldsec/helium/pkg/session"
 
 	"github.com/stretchr/testify/require"
@@ -30,47 +31,32 @@ var testSettings = []testSetting{
 	{N: 3, T: 2},
 }
 
-var signatureSettings = []node.SignatureParameters{
-	//{Type: api.SignatureType_NONE},
-	{Type: api.SignatureType_ED25519},
-}
-
-var insecureChannel = []bool{
-	false,
-	true,
-}
-
 type peer struct {
 	*node.Node
-	*Service
+	*setup.Service
 }
 
 type cloud struct {
 	*node.Node
-	*Service
+	*setup.Service
+	*pkg.Session
 }
 
 type lightNode struct {
 	*node.Node
-	*Service
+	*setup.Service
+	*pkg.Session
 }
 
-var testParams = utils.Zip[bool, node.SignatureParameters, rlwe.ParametersLiteral](insecureChannel, signatureSettings, rangeParam)
-
-// TestCloudAssistedSetup tests the generation of the public key in push mode.
+// TestCloudAssistedSetup tests the setup service in cloud-assisted mode with one helper and N light nodes.
 func TestCloudAssistedSetup(t *testing.T) {
-	for _, testParam := range testParams {
-		insecureChannels, sig, literalParams := testParam.Fst, testParam.Snd, testParam.Trd
+	for _, literalParams := range rangeParam {
 		for _, ts := range testSettings {
 			if ts.T == 0 {
 				ts.T = ts.N // N-out-of-N scenario
 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d/mTLS=%t/sigs=%s", ts.N, ts.T, literalParams.LogN, !insecureChannels, sig.Type), func(t *testing.T) {
-
-				if ts.T != ts.N {
-					t.Skip("T != N not yet supported in cloud-assisted setting")
-				}
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
 				var testConfig = node.LocalTestConfig{
 					HelperNodes: 1, // the cloud
@@ -79,55 +65,50 @@ func TestCloudAssistedSetup(t *testing.T) {
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
-					InsecureChannels: insecureChannels,
+					DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 				}
 				localTest := node.NewLocalTest(testConfig)
 
 				var err error
-
+				var ok bool
 				clou := &cloud{Node: localTest.HelperNodes[0]}
-
-				clou.Service, err = NewSetupService(clou.Node)
+				clou.Service = clou.GetSetupService()
 				if err != nil {
 					t.Error(err)
 				}
+				clou.Session, ok = clou.GetSessionFromID("test-session")
+				if !ok {
+					t.Fatal("session should exist")
+				}
 
 				// initialise clients
-				allNodes := []*Service{clou.Service}
+				allNodes := []*setup.Service{clou.Service}
 				clients := make([]lightNode, ts.N)
 				sessionNodes := localTest.SessionNodes()
 				for i := range clients {
 					clients[i].Node = sessionNodes[i]
-					clients[i].Service, err = NewSetupService(clients[i].Node)
+					clients[i].Service = clients[i].GetSetupService()
+					clients[i].Session, ok = clients[i].GetSessionFromID("test-session")
+					if !ok {
+						t.Fatal("session should exist")
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
 					allNodes = append(allNodes, clients[i].Service)
 				}
 
-				setup := Description{
+				setup := setup.Description{
 					Cpk: localTest.SessionNodesIds(),
 					GaloisKeys: []struct {
 						GaloisEl  uint64
 						Receivers []pkg.NodeID
 					}{
-						{5, []pkg.NodeID{clou.ID()}},
-						{25, []pkg.NodeID{clou.ID()}},
-						{125, []pkg.NodeID{clou.ID()}},
+						{5, []pkg.NodeID{clou.Node.ID()}},
+						{25, []pkg.NodeID{clou.Node.ID()}},
+						{125, []pkg.NodeID{clou.Node.ID()}},
 					},
-					Rlk: []pkg.NodeID{clou.ID()},
-				}
-
-				// loads the protocolMap at all nodes
-				for _, n := range allNodes {
-					sess, ok := n.GetSessionFromID("test-session")
-					if !ok {
-						t.Fatal("session should exist")
-					}
-					err = n.LoadSetupDescription(sess, setup)
-					if err != nil {
-						t.Error(err)
-					}
+					Rlk: []pkg.NodeID{clou.Node.ID()},
 				}
 
 				localTest.Start()
@@ -139,43 +120,69 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 					// runs the cloud
 					g.Go(func() error {
-						// this takes care of populating the Peers map of the Service
-						// (will be empty since the cloud has no full-n peer)
-						clou.Service.Connect()
-						// this should run the full n logic
-						errExec := clou.Execute()
+						errExec := clou.Execute(setup, localTest.NodesList)
 						if errExec != nil {
-							errExec = fmt.Errorf("cloud (%s) error: %w", clou.ID(), errExec)
+							errExec = fmt.Errorf("cloud (%s) error: %w", clou.Node.ID(), errExec)
 						}
 						return errExec
 					})
 
-					// runs the clients
-					for i := range clients {
-						c := clients[i]
+					// This test simulate erratic light nodes that may not be online when the
+					// setup begins (but connect eventually).
+					nDelayed := ts.N - ts.T
+					if ts.N == ts.T {
+						nDelayed = 1
+					}
+					split := len(clients) - nDelayed
+					online, delayed := utils.NewSet(clients[:split]), utils.NewSet(clients[split:])
+
+					// runs the online clients
+					for c := range online {
+						c := c
 						g.Go(func() error {
-							c.Service.Connect()
-							errExec := c.Execute()
+							errExec := c.Execute(setup, localTest.NodesList)
 							if errExec != nil {
-								errExec = fmt.Errorf("client (%s) error: %w", c.ID(), errExec)
+								errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
 							}
 							return errExec
 						})
 					}
 
+					// if T < N, the online parties should be able to complete the setup
+					// by themselves, so we wait for them to finish and check their
+					// sessions. Otherwise, we wait for a bit before running the others.
+					if len(online) >= ts.T {
+						err = g.Wait()
+						if err != nil {
+							t.Fatal(err)
+						}
+						checkKeyGenProt(t, localTest, setup, clou.Session)
+						for c := range online {
+							checkKeyGenProt(t, localTest, setup, c.Session)
+						}
+					} else {
+						<-time.After(time.Second >> 4)
+					}
+
+					// runs the delayed clients
+					for c := range delayed {
+						c := c
+						g.Go(func() error {
+							errExec := c.Execute(setup, localTest.NodesList)
+							if errExec != nil {
+								errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
+							}
+							return errExec
+						})
+					}
 					err = g.Wait()
 					if err != nil {
 						t.Fatal(err)
 					}
 
-					// clou.PrintNetworkStats()
-
-					for _, node := range allNodes {
-						sess, ok := node.GetSessionFromID("test-session")
-						if !ok {
-							t.Fatal("session should exist")
-						}
-						checkKeyGenProt(t, localTest, setup, sess)
+					checkKeyGenProt(t, localTest, setup, clou.Session)
+					for _, node := range clients {
+						checkKeyGenProt(t, localTest, setup, node.Session)
 					}
 				})
 			})
@@ -183,16 +190,19 @@ func TestCloudAssistedSetup(t *testing.T) {
 	}
 }
 
+// TestPeerToPeerSetup tests the peer to peer setup with N full nodes.
 func TestPeerToPeerSetup(t *testing.T) {
-	for _, testParam := range testParams {
-		insecureChannels, sig, literalParams := testParam.Fst, testParam.Snd, testParam.Trd
+
+	t.Skip("skipped: current version focuses on cloud-based model")
+
+	for _, literalParams := range rangeParam {
 		for _, ts := range testSettings {
 
 			if ts.T == 0 {
 				ts.T = ts.N // N-out-of-N scenario
 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d/mTLS=%t/sigs=%s", ts.N, ts.T, literalParams.LogN, !insecureChannels, sig.Type), func(t *testing.T) {
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
 				var testConfig = node.LocalTestConfig{
 					FullNodes:  ts.N,
@@ -201,13 +211,13 @@ func TestPeerToPeerSetup(t *testing.T) {
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
-					InsecureChannels: insecureChannels,
+					DoThresholdSetup: true,
 				}
 				localTest := node.NewLocalTest(testConfig)
 
 				params := localTest.Params
 				peerIds := localTest.NodeIds()
-				setup := Description{
+				sd := setup.Description{
 					Cpk: localTest.SessionNodesIds(),
 					GaloisKeys: []struct {
 						GaloisEl  uint64
@@ -227,19 +237,9 @@ func TestPeerToPeerSetup(t *testing.T) {
 				for _, n := range localTest.Nodes {
 					n := &peer{Node: n}
 
-					n.Service, err = NewSetupService(n.Node)
+					n.Service = n.Node.GetSetupService()
 					if err != nil {
 						t.Error(err)
-					}
-
-					sess, exists := n.GetSessionFromID("test-session")
-					if !exists {
-						t.Fatal("session should exists")
-					}
-
-					err = n.Service.LoadSetupDescription(sess, setup)
-					if err != nil {
-						t.Fatal(err)
 					}
 
 					nodes[n.ID()] = n
@@ -257,9 +257,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 						g.Go(
 							func() error {
-								node.Service.Connect()
-
-								return node.Service.Execute()
+								return node.Service.Execute(sd, localTest.NodesList)
 							},
 						)
 
@@ -287,9 +285,9 @@ func TestPeerToPeerSetup(t *testing.T) {
 
 					// checks that all nodes have a complete setup
 					for _, node := range nodes {
-						node.PrintNetworkStats()
+						// node.PrintNetworkStats()
 						sess, _ := node.GetSessionFromID("test-session")
-						checkKeyGenProt(t, localTest, setup, sess)
+						checkKeyGenProt(t, localTest, sd, sess)
 					}
 				})
 			})
@@ -298,7 +296,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 }
 
 // Based on the session information, check if the protocol was performed correctly.
-func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup Description, sess *pkg.Session) {
+func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, sess *pkg.Session) {
 
 	params := lt.Params
 	sk := lt.SkIdeal

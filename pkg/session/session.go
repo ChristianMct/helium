@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 
+	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"google.golang.org/grpc/metadata"
 
@@ -143,6 +144,12 @@ type Session struct {
 	mutex sync.RWMutex
 }
 
+type SessionProvider interface {
+	GetSessionFromID(sessionID SessionID) (*Session, bool)
+	GetSessionFromContext(ctx context.Context) (*Session, bool)
+	GetSessionFromIncomingContext(ctx context.Context) (*Session, bool)
+}
+
 type SessionStore struct {
 	lock     sync.RWMutex
 	sessions map[SessionID]*Session
@@ -238,6 +245,12 @@ func (s *Session) GetSecretKey() *rlwe.SecretKey {
 	return s.Sk
 }
 
+func (s *Session) HasTSK() bool {
+	s.tskDone.L.Lock()
+	defer s.tskDone.L.Unlock()
+	return s.tsk != nil
+}
+
 func (s *Session) SecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err error) {
 	switch {
 	case len(parties) == len(s.Nodes):
@@ -286,8 +299,11 @@ func (s *Session) GetPkForNode(nid NodeID) (pk rlwe.PublicKey, exists bool) {
 	return pk, exists
 }
 
+func (s *Session) Contains(nodeID NodeID) bool {
+	return utils.NewSet(s.Nodes).Contains(nodeID)
+}
+
 func GetRandomClientSlice(t int, nodes []NodeID) []NodeID {
-	rand.Seed(1) // TODO
 	cid := make([]NodeID, len(nodes))
 	copy(cid, nodes)
 	rand.Shuffle(len(cid), func(i, j int) {

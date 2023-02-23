@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
-	"path"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/protocols"
@@ -26,7 +24,7 @@ type EvaluationContext interface {
 	Set(pkg.Operand)
 
 	// Output outputs the given operand to the context.
-	Output(pkg.Operand)
+	Output(pkg.Operand, pkg.NodeID)
 
 	// CKS runs a CKS protocol over the provided operand within the context.
 	CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error)
@@ -47,48 +45,9 @@ type EvaluationContext interface {
 // a provided evaluation context.
 type Circuit func(EvaluationContext) error
 
-// It seems that a central piece of the orchestration could be a good
-// URL scheme for locating/designating ciphertexts.
-type URL url.URL
-
-func ParseURL(s string) (*URL, error) {
-	u, err := url.Parse(s)
-	if err != nil {
-		return nil, err
-	}
-	return (*URL)(u), nil
-}
-
-func NewURL(s string) *URL {
-	url, err := ParseURL(s)
-	if err != nil {
-		panic(err)
-	}
-	return url
-}
-
-func (u *URL) IsSessionWide() bool {
-	return u.Host == ""
-}
-
-func (u *URL) CiphertextBaseID() pkg.CiphertextID {
-	return pkg.CiphertextID(path.Base(u.Path))
-}
-
-func (u *URL) CiphertextID() pkg.CiphertextID {
-	return pkg.CiphertextID(u.String())
-}
-
-func (u *URL) NodeID() pkg.NodeID {
-	return pkg.NodeID(u.Host)
-}
-
-func (u *URL) String() string {
-	return (*url.URL)(u).String()
-}
-
 type CircuitDescription struct {
 	InputSet, Ops, OutputSet utils.Set[pkg.OperandLabel]
+	OutputsFor               map[pkg.NodeID]utils.Set[pkg.OperandLabel]
 	KeyOps                   map[pkg.ProtocolID]protocols.Descriptor
 	NeedRlk                  bool
 }
@@ -103,18 +62,20 @@ type circuitParserContext struct {
 	l           sync.Mutex
 }
 
-func newCircuitParserCtx(id pkg.CircuitID, params bfv.Parameters, nodeMapping map[string]pkg.NodeID) *circuitParserContext {
-	return &circuitParserContext{circID: id,
+func newCircuitParserCtx(cid pkg.CircuitID, params bfv.Parameters, nodeMapping map[string]pkg.NodeID) *circuitParserContext {
+	cpc := &circuitParserContext{circID: cid,
 		cDesc: CircuitDescription{
-			InputSet:  utils.NewEmptySet[pkg.OperandLabel](),
-			Ops:       utils.NewEmptySet[pkg.OperandLabel](),
-			OutputSet: utils.NewEmptySet[pkg.OperandLabel](),
-			KeyOps:    make(map[pkg.ProtocolID]protocols.Descriptor),
+			InputSet:   utils.NewEmptySet[pkg.OperandLabel](),
+			Ops:        utils.NewEmptySet[pkg.OperandLabel](),
+			OutputSet:  utils.NewEmptySet[pkg.OperandLabel](),
+			OutputsFor: make(map[pkg.NodeID]utils.Set[pkg.OperandLabel]),
+			KeyOps:     make(map[pkg.ProtocolID]protocols.Descriptor),
 		},
 		SubCtx:      make(map[pkg.CircuitID]*circuitParserContext, 0),
 		params:      params,
 		nodeMapping: nodeMapping,
 	}
+	return cpc
 }
 
 func (e *circuitParserContext) CircuitDescription() CircuitDescription {
@@ -164,12 +125,19 @@ func (e *circuitParserContext) Get(opl pkg.OperandLabel) pkg.Operand {
 	return pkg.Operand{OperandLabel: opl}
 }
 
-func (e *circuitParserContext) Output(out pkg.Operand) {
+func (e *circuitParserContext) Output(out pkg.Operand, to pkg.NodeID) {
 	e.l.Lock()
 	defer e.l.Unlock()
 	opl := out.OperandLabel.ForCircuit(e.circID).ForMapping(e.nodeMapping)
 	e.cDesc.OutputSet.Add(opl)
 	e.cDesc.Ops.Add(opl)
+
+	outset, exists := e.cDesc.OutputsFor[to]
+	if !exists {
+		outset = utils.NewEmptySet[pkg.OperandLabel]()
+		e.cDesc.OutputsFor[to] = outset
+	}
+	outset.Add(opl)
 }
 
 func (e *circuitParserContext) SubCircuit(id pkg.CircuitID, cd Circuit) (EvaluationContext, error) {
@@ -213,7 +181,7 @@ func (e *circuitParserContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map
 	if err = e.registerKeyOps(id, pd); err != nil {
 		panic(err)
 	}
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", params["target"], id))}, nil
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))}, nil
 }
 
 func (e *circuitParserContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
@@ -224,7 +192,7 @@ func (e *circuitParserContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params ma
 	if err = e.registerKeyOps(id, pd); err != nil {
 		panic(err)
 	}
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s-out-0", params["target"], id))}, nil
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))}, nil
 }
 
 func (e *circuitParserContext) Parameters() bfv.Parameters {

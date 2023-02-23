@@ -39,7 +39,7 @@ lint: lint-go vet ## Run all available linters
 
 lint-go: ## lint go files
 	# Coding style static check.
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.50.1
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.51.2
 	@go mod tidy
 	golangci-lint run || true
 	@echo "${YELLOW}WARN${RESET}  this test never fails - please check the log for actual issues"

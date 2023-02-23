@@ -3,6 +3,8 @@ package pkg
 import (
 	"fmt"
 	"net/url"
+	"path"
+	"strings"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -35,13 +37,60 @@ type CiphertextMetadata struct {
 
 type CiphertextID string
 
+// It seems that a central piece of the orchestration could be a good
+// URL scheme for locating/designating ciphertexts.
+type URL url.URL
+
+func ParseURL(s string) (*URL, error) {
+	u, err := url.Parse(s)
+	if err != nil {
+		return nil, err
+	}
+	return (*URL)(u), nil
+}
+
+func NewURL(s string) *URL {
+	url, err := ParseURL(s)
+	if err != nil {
+		panic(err)
+	}
+	return url
+}
+
+func (u *URL) IsSessionWide() bool {
+	return u.Host == ""
+}
+
+func (u *URL) CiphertextBaseID() CiphertextID {
+	return CiphertextID(path.Base(u.Path))
+}
+
+func (u *URL) CiphertextID() CiphertextID {
+	return CiphertextID(u.String())
+}
+
+func (u *URL) NodeID() NodeID {
+	return NodeID(u.Host)
+}
+
+func (u *URL) CircuitID() CircuitID {
+	if dir, _ := path.Split(u.Path); len(dir) > 0 { // ctid belongs to a circuit
+		return CircuitID(strings.SplitN(strings.Trim(dir, "/"), "/", 2)[0])
+	}
+	return ""
+}
+
+func (u *URL) String() string {
+	return (*url.URL)(u).String()
+}
+
 type Ciphertext struct {
 	rlwe.Ciphertext
 	CiphertextMetadata
 }
 
 type CiphertextStore struct {
-	cts   map[CiphertextID]Ciphertext
+	cts   map[CiphertextID]*Ciphertext
 	mutex sync.RWMutex
 }
 
@@ -74,17 +123,17 @@ func (ct Ciphertext) ToGRPC() *api.Ciphertext {
 }
 
 func NewCiphertextStore() *CiphertextStore {
-	return &CiphertextStore{cts: make(map[CiphertextID]Ciphertext)}
+	return &CiphertextStore{cts: make(map[CiphertextID]*Ciphertext)}
 }
 
 func (cts *CiphertextStore) Store(ct Ciphertext) error {
 	cts.mutex.Lock()
 	defer cts.mutex.Unlock()
-	cts.cts[ct.ID] = ct
+	cts.cts[ct.ID] = &ct
 	return nil
 }
 
-func (cts *CiphertextStore) Load(id CiphertextID) (ct Ciphertext, exists bool) {
+func (cts *CiphertextStore) Load(id CiphertextID) (ct *Ciphertext, exists bool) {
 	cts.mutex.RLock()
 	defer cts.mutex.RUnlock()
 	ct, exists = cts.cts[id]

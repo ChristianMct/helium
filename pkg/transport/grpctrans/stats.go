@@ -1,21 +1,16 @@
-package node
+package grpctrans
 
 import (
-	"fmt"
 	"sync"
 
-	"github.com/ldsec/helium/pkg/utils"
+	"github.com/ldsec/helium/pkg/transport"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/stats"
 )
 
-type NetStats struct {
-	dataSent, dataRecv uint64
-}
-
 type statsHandler struct {
 	mu    sync.Mutex
-	stats NetStats
+	stats transport.NetStats
 }
 
 // TagRPC can attach some information to the given context.
@@ -31,9 +26,9 @@ func (s *statsHandler) HandleRPC(_ context.Context, sta stats.RPCStats) {
 	defer s.mu.Unlock()
 	switch sta := sta.(type) {
 	case *stats.InPayload:
-		s.stats.dataRecv += uint64(sta.WireLength)
+		s.stats.DataRecv += uint64(sta.WireLength)
 	case *stats.OutPayload:
-		s.stats.dataSent += uint64(sta.WireLength)
+		s.stats.DataSent += uint64(sta.WireLength)
 	}
 }
 
@@ -52,7 +47,3 @@ func (s *statsHandler) TagConn(ctx context.Context, _ *stats.ConnTagInfo) contex
 
 // HandleConn processes the Conn stats.
 func (s *statsHandler) HandleConn(_ context.Context, _ stats.ConnStats) {}
-
-func (s NetStats) String() string {
-	return fmt.Sprintf("Sent: %s, Received: %s", utils.ByteCountSI(s.dataSent), utils.ByteCountSI(s.dataRecv))
-}

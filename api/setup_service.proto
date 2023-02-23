@@ -8,10 +8,14 @@ package helium_proto;
  
 service SetupService {
 
-    /* GetShare is used to get the share of the callee in the protocol described in the ShareRequest. */
-    rpc GetShare (ShareRequest) returns (Share) {} 
+    rpc RegisterForSetup(Void) returns (stream ProtocolUpdate) {}
+
+    rpc GetAggregationOutput(ProtocolID) returns (Aggregation) {}
     
-    /* PutShare is used to push the caller's share in the protocol described by the Share.ProtocolDesc
+    /* PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
     field to the callee. */
     rpc PutShare (Share) returns (Void) {}
+
+    /* StreamShares is a bidirectional stream of shares between the client and server */
+    rpc StreamShares(stream Share) returns (stream Share) {}
 }

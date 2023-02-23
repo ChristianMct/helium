@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"fmt"
+
 	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
@@ -17,36 +19,21 @@ type Description struct {
 
 type ProtocolMap []protocols.Descriptor
 
-func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessNodeIds []pkg.NodeID) ProtocolMap {
+func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessNodeIds []pkg.NodeID, doThresholdSetup, assignPart bool) ProtocolMap {
 
 	pm := make(ProtocolMap, 0, len(setup.GaloisKeys)+3)
 
-	if len(setup.Cpk) > 0 {
-		pm = append(pm, protocols.Descriptor{Type: protocols.CKG, Receivers: setup.Cpk})
-	}
-
-	for _, key := range setup.GaloisKeys {
-		if len(key.Receivers) == 0 {
-			continue
-		}
-		pm = append(pm, protocols.Descriptor{Type: protocols.RTG, Args: map[string]interface{}{"GalEl": key.GaloisEl}, Receivers: key.Receivers})
-	}
-
-	if len(setup.Rlk) > 0 {
-		pm = append(pm, protocols.Descriptor{Type: protocols.RKG, Receivers: setup.Rlk})
-	}
-
 	nAggr := map[pkg.NodeID]int{}
-	minAggId := func(ids []pkg.NodeID) pkg.NodeID {
-		minId := ids[0]
-		minVal := nAggr[minId]
+	minAggID := func(ids []pkg.NodeID) pkg.NodeID {
+		minID := ids[0]
+		minVal := nAggr[minID]
 		for _, id := range ids {
 			if nAggr[id] < minVal {
-				minId = id
-				minVal = nAggr[minId]
+				minID = id
+				minVal = nAggr[minID]
 			}
 		}
-		return minId
+		return minID
 	}
 
 	delegates := make(map[pkg.NodeID]pkg.NodeID)
@@ -61,12 +48,29 @@ func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessN
 		}
 	}
 
-	for i := range pm {
-		pm[i].Aggregator = minAggId(pm[i].Receivers)
-		nAggr[pm[i].Aggregator]++
-		if del, hasDelegate := delegates[pm[i].Aggregator]; hasDelegate {
-			pm[i].Aggregator = del
+	getAggreg := func(receivers []pkg.NodeID) []pkg.NodeID {
+		aggregs := make([]pkg.NodeID, len(receivers))
+		for i, rec := range receivers {
+			aggregs[i] = delegates[rec]
 		}
+		return aggregs
+	}
+
+	if len(setup.Cpk) > 0 {
+		pm = append(pm, protocols.Descriptor{ID: "CPK", Type: protocols.CKG, Aggregator: minAggID(getAggreg(setup.Cpk))})
+	}
+
+	galKeyCount := 0
+	for _, key := range setup.GaloisKeys {
+		if len(key.Receivers) == 0 {
+			continue
+		}
+		pm = append(pm, protocols.Descriptor{ID: pkg.ProtocolID(fmt.Sprintf("RTG[%d]", galKeyCount)), Type: protocols.RTG, Args: map[string]interface{}{"GalEl": key.GaloisEl}, Aggregator: minAggID(getAggreg(key.Receivers))})
+		galKeyCount++
+	}
+
+	if len(setup.Rlk) > 0 {
+		pm = append(pm, protocols.Descriptor{ID: "RKG", Type: protocols.RKG, Aggregator: minAggID(getAggreg(setup.Rlk))})
 	}
 
 	getPartListForAgg := func(agg pkg.NodeID) []pkg.NodeID {
@@ -78,12 +82,14 @@ func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessN
 		return part
 	}
 
-	for i := range pm {
-		pm[i].Participants = getPartListForAgg(pm[i].Aggregator)
+	if assignPart {
+		for i := range pm {
+			pm[i].Participants = getPartListForAgg(pm[i].Aggregator)
+		}
 	}
 
-	if threshold < len(sessNodeIds) {
-		pm = append([]protocols.Descriptor{{Type: protocols.SKG, Participants: sessNodeIds}}, pm...)
+	if threshold < len(sessNodeIds) && doThresholdSetup {
+		pm = append([]protocols.Descriptor{{ID: "SKG", Type: protocols.SKG, Participants: sessNodeIds}}, pm...)
 	}
 
 	return pm
