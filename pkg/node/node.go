@@ -1,20 +1,27 @@
 package node
 
 import (
+	"crypto/ed25519"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"net"
 	"time"
 
+	"github.com/ldsec/helium/pkg/api"
+	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
+	"google.golang.org/grpc/credentials"
+
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
-
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -58,12 +65,24 @@ type Node struct {
 	sessions *pkg.SessionStore
 
 	statsHandler statsHandler
+
+	sigs     SignatureScheme
+	tlsSetup *tlsSetup
+}
+
+type SignatureScheme struct {
+	Type api.SignatureType
+	sk   []byte // as generic as possible
 }
 
 type Config struct {
 	ID                pkg.NodeID
 	Address           pkg.NodeAddress
+	Peers             map[pkg.NodeID]pkg.NodeAddress
 	SessionParameters []SessionParameters
+	//SignatureParameters SignatureParameters
+	TLSConfig TLSConfig
+	//TLSSetup            TLSSetup
 }
 
 // NewNode initialises a new node according to a given NodeConfig which provides the address and peers of this node
@@ -84,12 +103,55 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	}
 	node.nodeList = nodeList
 
+	node.tlsSetup, err = node.getTLSSetup(config.TLSConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load crypto material: %w", err)
+	}
+	if !node.tlsSetup.IsValid() {
+		return nil, fmt.Errorf("failed to create node: bad TLSConfig")
+	}
+
+	if node.tlsSetup.withInsecureChannels {
+		node.sigs = SignatureScheme{
+			Type: api.SignatureType_NONE,
+		}
+	} else {
+		node.sigs = SignatureScheme{
+			Type: api.SignatureType_ED25519,
+			sk:   node.tlsSetup.ownSk.(ed25519.PrivateKey),
+		}
+	}
+
 	if node.IsFullNode() {
-		node.grpcServer = grpc.NewServer(
+
+		interceptors := []grpc.UnaryServerInterceptor{
+			node.serverSigChecker,
+		}
+
+		serverOpts := []grpc.ServerOption{
 			grpc.MaxRecvMsgSize(MaxMsgSize),
 			grpc.MaxSendMsgSize(MaxMsgSize),
 			grpc.StatsHandler(&node.statsHandler),
-		)
+			grpc.ChainUnaryInterceptor(interceptors...),
+		}
+
+		if !node.tlsSetup.withInsecureChannels {
+			cert := cryptoUtil.X509ToTLS(node.tlsSetup.ownCert, node.tlsSetup.ownSk.(ed25519.PrivateKey))
+			ca := x509.NewCertPool()
+			ca.AddCert(node.tlsSetup.caCert)
+			tlsConfig := &tls.Config{
+				ClientAuth:            tls.RequireAndVerifyClientCert,
+				Certificates:          []tls.Certificate{cert},
+				ClientCAs:             ca,
+				VerifyPeerCertificate: node.VfyPeerCerts,
+				VerifyConnection:      node.VfyConn,
+				MinVersion:            tls.VersionTLS13,
+			}
+			serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+		}
+
+		node.grpcServer = grpc.NewServer(serverOpts...)
+
 		log.Printf("Node %s | started as full helium node at address %s\n", node.id, node.addr)
 	} else {
 		log.Printf("Node %s | started as light helium node\n", node.id)
@@ -218,16 +280,40 @@ func (node *Node) ConnectWithDialers(dialers map[pkg.NodeID]Dialer) (err error) 
 	for _, peer := range node.peers {
 		dialer, has := dialers[peer.id]
 		if peer.id != node.id && has && peer.HasAddress() {
+			interceptors := []grpc.UnaryClientInterceptor{
+				node.clientSigner,
+			}
+
 			opts := []grpc.DialOption{
 				grpc.WithContextDialer(dialer),
-				grpc.WithInsecure(),
 				grpc.WithBlock(),
 				grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.DefaultConfig, MinConnectTimeout: 1 * time.Second}),
 				grpc.WithDefaultCallOptions(
 					grpc.MaxCallRecvMsgSize(MaxMsgSize),
 					grpc.MaxCallSendMsgSize(MaxMsgSize)),
 				grpc.WithStatsHandler(&node.statsHandler),
+				grpc.WithChainUnaryInterceptor(interceptors...),
 			}
+
+			if !node.tlsSetup.withInsecureChannels {
+				ownCert := cryptoUtil.X509ToTLS(node.tlsSetup.ownCert, node.tlsSetup.ownSk.(ed25519.PrivateKey))
+
+				ca := x509.NewCertPool()
+				ca.AddCert(node.tlsSetup.caCert)
+				tlsConfig := &tls.Config{
+					ServerName:            string(peer.id),
+					Certificates:          []tls.Certificate{ownCert},
+					RootCAs:               ca,
+					VerifyPeerCertificate: node.VfyPeerCerts,
+					VerifyConnection:      node.VfyConn,
+					MinVersion:            tls.VersionTLS13,
+				}
+
+				opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+			} else {
+				opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			}
+
 			peer.conn, err = grpc.Dial(string(peer.addr), opts...)
 			if err != nil {
 				return fmt.Errorf("fail to dial: %w", err)
@@ -251,6 +337,12 @@ type SessionParameters struct {
 	Nodes      []pkg.NodeID
 	ShamirPks  map[pkg.NodeID]drlwe.ShamirPublicPoint
 	CRSKey     []byte
+}
+
+// SignatureParameters used to bootstrap the signature scheme.
+type SignatureParameters struct {
+	Type api.SignatureType
+	sk   []byte // todo: generalize this
 }
 
 // CreateNewSession takes an int id and creates a new rlwe session with this node and its peers and a sessionID constructed using the given id.
@@ -279,7 +371,7 @@ func (node *Node) CreateNewSession(sessParams SessionParameters) (sess *pkg.Sess
 		return sess, err
 	}
 
-	//	log.Printf("Node %s | created rlwe session with id: %s and nodes: %s \n", node.id, sess.ID, sess.Nodes)
+	log.Printf("Node %s | created rlwe session with id: %s and nodes: %s \n", node.id, sess.ID, sess.Nodes)
 
 	return sess, nil
 }

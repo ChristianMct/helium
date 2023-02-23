@@ -26,7 +26,7 @@ func (s *statsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.
 }
 
 // HandleRPC processes the RPC stats.
-func (s *statsHandler) HandleRPC(ctx context.Context, sta stats.RPCStats) {
+func (s *statsHandler) HandleRPC(_ context.Context, sta stats.RPCStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch sta := sta.(type) {
@@ -42,15 +42,16 @@ func (s *statsHandler) HandleRPC(ctx context.Context, sta stats.RPCStats) {
 // For conn stats handling, the context used in HandleConn for this
 // connection will be derived from the context returned.
 // For RPC stats handling,
-//  - On server side, the context used in HandleRPC for all RPCs on this
+//   - On server side, the context used in HandleRPC for all RPCs on this
+//
 // connection will be derived from the context returned.
-//  - On client side, the context is not derived from the context returned.
+//   - On client side, the context is not derived from the context returned.
 func (s *statsHandler) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
 	return ctx
 }
 
 // HandleConn processes the Conn stats.
-func (s *statsHandler) HandleConn(ctx context.Context, sta stats.ConnStats) {}
+func (s *statsHandler) HandleConn(_ context.Context, _ stats.ConnStats) {}
 
 func (s NetStats) String() string {
 	return fmt.Sprintf("Sent: %s, Received: %s", utils.ByteCountSI(s.dataSent), utils.ByteCountSI(s.dataRecv))

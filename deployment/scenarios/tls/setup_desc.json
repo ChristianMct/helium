@@ -1,0 +1,19 @@
+{
+	"Cpk": [
+		"node-a",
+		"node-b"
+	],
+	"GaloisKeys": [
+		{
+			"GaloisEl": 5,
+			"Receivers": [
+				"node-a",
+				"node-b"
+			]
+		}
+	],
+	"Rlk": [
+		"node-a",
+		"node-b"
+	]
+}

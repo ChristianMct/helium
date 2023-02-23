@@ -9,6 +9,7 @@ package helium_proto;
 message Ciphertext {
     bytes ciphertext = 1;
     CiphertextMetadata metadata = 2;
+    optional Signature signature = 3;
 }
 
 /* CiphertextType is a enumerate type for identifying ciphertext types */
@@ -27,6 +28,7 @@ message CiphertextMetadata {
 
 message CiphertextRequest {
     CiphertextID id = 1;
+    optional Signature signature = 2;
 }
 
 service ComputeService {

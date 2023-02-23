@@ -23,7 +23,9 @@
 # Folders
 _obj
 _test
-
+out/
+test/certs/*.key
+test/certs/*.crt
 # Architecture specific extensions/prefixes
 *.[568vq]
 [568vq].out
@@ -60,3 +62,6 @@ out
 *key
 *crt
 *csr
+
+# Config - used if debuging apps locally
+config/

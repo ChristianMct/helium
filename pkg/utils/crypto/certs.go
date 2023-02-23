@@ -1,0 +1,142 @@
+package crypto
+
+import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // sha1 is needed here
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
+	"encoding/hex"
+	"encoding/pem"
+	"fmt"
+)
+
+// A few of the possible PEM headers.
+// Based on https://github.com/openssl/openssl/blob/master/include/openssl/pem.h
+
+const PemStringX509Old = "X509 CERTIFICATE"
+const PemStringX509 = "CERTIFICATE"
+const PemStringX509Req = "CERTIFICATE REQUEST"
+const PemStringX509Crl = "X509 CRL"
+const PemStringEvpPkey = "ANY PRIVATE KEY"
+const PemStringPublic = "PUBLIC KEY"
+const PemStringRsa = "RSA PRIVATE KEY"
+const PemStringRsaPublic = "RSA PUBLIC KEY"
+const PemStringPkcs7 = "PKCS7"
+const PemStringPkcs8 = "ENCRYPTED PRIVATE KEY"
+const PemStringPkcs8inf = "PRIVATE KEY"
+const PemStringDhparams = "DH PARAMETERS"
+const PemStringSslSession = "SSL SESSION PARAMETERS"
+const PemStringDsaparams = "DSA PARAMETERS"
+const PemStringEcdsaPublic = "ECDSA PUBLIC KEY"
+const PemStringEcparameters = "EC PARAMETERS"
+const PemStringEcprivatekey = "EC PRIVATE KEY"
+const PemStringParameters = "PARAMETERS"
+
+func PEMEncode(bu []byte, blockType string) (*bytes.Buffer, error) {
+	switch blockType {
+	case PemStringX509, PemStringX509Old, PemStringPublic, PemStringPkcs8inf, PemStringEvpPkey, PemStringX509Req:
+	default:
+		return nil, fmt.Errorf("unknown type: %s", blockType)
+	}
+	pemBuf := new(bytes.Buffer)
+
+	err := pem.Encode(pemBuf, &pem.Block{
+		Type:  blockType,
+		Bytes: bu,
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("pem encode failed: %w", err)
+	}
+	return pemBuf, nil
+}
+
+func _asnSeqEncode(targets []string) []byte {
+	var elems []byte
+	byteLen := 0
+	for _, t := range targets {
+		e := []byte{0x82, uint8(len(t))}
+		e = append(e, []byte(t)...)
+		byteLen += len(e)
+		elems = append(elems, e...)
+	}
+	seq := []byte{0x30, uint8(byteLen)}
+	seq = append(seq, elems...)
+	return seq
+}
+
+func _asnSKIDEncode(pk ed25519.PublicKey) []byte {
+	asn := make([]byte, 22)
+	asn[0] = 0x04
+	asn[1] = 0x14
+	pkHash := sha1.Sum(pk) //nolint:gosec // sha1 is what the cert expects currently
+	for i, b := range pkHash {
+		asn[i+2] = b
+	}
+	return asn
+}
+
+func GenCSR(commonName string, pk ed25519.PublicKey, sk ed25519.PrivateKey) ([]byte, error) {
+	// create a signing request for the CA
+	subject := pkix.Name{
+		Organization:  []string{"Helium Node"},
+		Country:       []string{"CH"},
+		Locality:      []string{"Lausanne"},
+		StreetAddress: []string{"Bâtiment C"},
+		PostalCode:    []string{"1015"},
+		CommonName:    commonName,
+	}
+
+	keyUsage, _ := hex.DecodeString("030204F0")
+	extKeyUsage, _ := hex.DecodeString("301406082B0601050507030106082B06010505070302")
+	basicConstraints, _ := hex.DecodeString("3000")
+	dnsNames := []string{commonName, "www." + commonName}
+
+	csrTmp := x509.CertificateRequest{
+		Subject:            subject,
+		SignatureAlgorithm: x509.PureEd25519, // todo: should this be prehashed?
+		DNSNames:           dnsNames,
+		ExtraExtensions: []pkix.Extension{
+			// key usage
+			{
+				Id:       asn1.ObjectIdentifier{2, 5, 29, 15},
+				Critical: true,
+				Value:    keyUsage,
+			},
+			// extKeyUsage
+			{
+				Id:    asn1.ObjectIdentifier{2, 5, 29, 37},
+				Value: extKeyUsage,
+			},
+			// basic constraints
+			{
+				Id:    asn1.ObjectIdentifier{2, 5, 29, 19},
+				Value: basicConstraints,
+			},
+			// subjectAltName
+			{
+				Id:    asn1.ObjectIdentifier{2, 5, 29, 17},
+				Value: _asnSeqEncode(dnsNames),
+			},
+			// subjKeyIden
+			{
+				Id:    asn1.ObjectIdentifier{2, 5, 29, 14},
+				Value: _asnSKIDEncode(pk),
+			},
+		},
+	}
+
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &csrTmp, sk)
+	if err != nil {
+		return nil, fmt.Errorf("could not create cert: %w", err)
+	}
+
+	pemCSR, err := PEMEncode(csr, PemStringX509Req)
+	if err != nil {
+		return nil, fmt.Errorf("could not encode cert: %w", err)
+	}
+	return pemCSR.Bytes(), nil
+}

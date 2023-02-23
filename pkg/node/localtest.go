@@ -1,11 +1,21 @@
 package node
 
 import (
+	"crypto"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"strconv"
 	"sync"
+	"time"
+
+	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
@@ -19,10 +29,11 @@ const buffConBufferSize = 65 * 1024 * 1024
 // LocalTestConfig is a configuration structure for LocalTest types. It is used to
 // specify the number of full, light and helper nodes in the local test.
 type LocalTestConfig struct {
-	FullNodes   int // Number of full nodes in the session
-	LightNodes  int // Number of light nodes in the session
-	HelperNodes int // number of helper nodes (full nodes that are not in the session key)
-	Session     *SessionParameters
+	FullNodes        int // Number of full nodes in the session
+	LightNodes       int // Number of light nodes in the session
+	HelperNodes      int // number of helper nodes (full nodes that are not in the session key)
+	Session          *SessionParameters
+	InsecureChannels bool // are we using (m)TLS to establish the channels between nodes?
 }
 
 // LocalTest represent a local test setting with several nodes and a single
@@ -41,7 +52,6 @@ type LocalTest struct {
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
 func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
-
 	test = new(LocalTest)
 	test.NodeConfigs, test.NodesList = genNodeConfigs(config)
 	test.Nodes = make([]*Node, config.FullNodes+config.LightNodes+config.HelperNodes)
@@ -86,8 +96,34 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	nodeShamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
 
 	shamirPk := 1
+
+	// tempNodeList := pkg.NodesList{}
+	// for i := 0; i < config.FullNodes; i++ {
+	// 	tempNodeList = append(tempNodeList, struct {
+	// 		pkg.NodeID
+	// 		pkg.NodeAddress
+	// 	}{pkg.NodeID("full-" + strconv.Itoa(i)), ""})
+	// }
+	// for i := 0; i < config.LightNodes; i++ {
+	// 	tempNodeList = append(tempNodeList, struct {
+	// 		pkg.NodeID
+	// 		pkg.NodeAddress
+	// 	}{pkg.NodeID("light-" + strconv.Itoa(i)), ""})
+	// }
+	// for i := 0; i < config.HelperNodes; i++ {
+	// 	tempNodeList = append(tempNodeList, struct {
+	// 		pkg.NodeID
+	// 		pkg.NodeAddress
+	// 	}{pkg.NodeID("helper-" + strconv.Itoa(i)), ""})
+	// }
+
 	for i := 0; i < config.FullNodes; i++ {
-		nc := Config{ID: pkg.NodeID("full-" + strconv.Itoa(i)), Address: pkg.NodeAddress("local")}
+		nodeID := pkg.NodeID("full-" + strconv.Itoa(i))
+		nc := Config{
+			ID:      nodeID,
+			Address: pkg.NodeAddress("local"),
+			//TLSConfig: tlsConfigs[nodeID]
+		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
 			pkg.NodeID
@@ -101,7 +137,12 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	}
 
 	for i := 0; i < config.LightNodes; i++ {
-		nc := Config{ID: pkg.NodeID("light-" + strconv.Itoa(i))}
+		// spec := TLSSpec{InsecureChannels: config.InsecureChannels}
+		nodeID := pkg.NodeID("light-" + strconv.Itoa(i))
+		nc := Config{
+			ID: nodeID,
+			//TLSConfig: tlsConfigs[nodeID]
+		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
 			pkg.NodeID
@@ -115,13 +156,26 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	}
 
 	for i := 0; i < config.HelperNodes; i++ {
-		nc := Config{ID: pkg.NodeID("helper-" + strconv.Itoa(i)), Address: pkg.NodeAddress("local")}
+		nodeID := pkg.NodeID("helper-" + strconv.Itoa(i))
+		nc := Config{ID: nodeID,
+			Address: pkg.NodeAddress("local"),
+			//TLSConfig: tlsConfigs[nodeID],
+		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
 			pkg.NodeID
 			pkg.NodeAddress
 			DelegateID pkg.NodeID
 		}{nc.ID, nc.Address, ""})
+	}
+
+	tlsConfigs, err := createTLSConfigs(config, nl)
+	if err != nil {
+		log.Println(err)
+		panic("failed to generate tls configs - got err")
+	}
+	for i := range ncs {
+		ncs[i].TLSConfig = tlsConfigs[ncs[i].ID]
 	}
 
 	// sets session-specific variables with test values
@@ -137,6 +191,147 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	}
 
 	return ncs, nl
+}
+
+type nodeCrypto struct {
+	pubkey crypto.PublicKey
+	skey   crypto.PrivateKey
+	cert   x509.Certificate
+}
+
+func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[pkg.NodeID]TLSConfig, error) {
+
+	tlsConfigs := make(map[pkg.NodeID]TLSConfig, len(nodeList))
+
+	if testConfig.InsecureChannels {
+		for _, n := range nodeList {
+			tlsConfigs[n.NodeID] = TLSConfig{InsecureChannels: true}
+		}
+		return tlsConfigs, nil
+	}
+
+	caPubKey, caPrivKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	caCertTemp := &x509.Certificate{
+		SerialNumber: big.NewInt(1337),
+		Subject: pkix.Name{
+			Organization: []string{"Helium Cert, SA"},
+			Country:      []string{"CH"},
+			Locality:     []string{"Lausanne"},
+			CommonName:   "Helium Cert",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().AddDate(10, 0, 0),
+		IsCA:                  true,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	// create the CA
+	caBytes, err := x509.CreateCertificate(rand.Reader, caCertTemp, caCertTemp, caPubKey, caPrivKey)
+	if err != nil {
+		return nil, err
+	}
+	dummy, _ := x509.ParseCertificate(caBytes)
+	caCert := *dummy
+
+	caCertPem, err := cryptoUtil.ToPEM(caCert)
+	if err != nil {
+		return nil, err
+	}
+
+	peerCrypto := make(map[pkg.NodeID]nodeCrypto, len(nodeList))
+	// sign certs for everyone
+	for _, peer := range nodeList {
+		pubkey, skey, err := ed25519.GenerateKey(nil)
+		if err != nil {
+			return nil, err
+		}
+		csrbytes, err := cryptoUtil.GenCSR(string(peer.NodeID), pubkey, skey)
+		csrPEM, _ := pem.Decode(csrbytes)
+		csr, err := x509.ParseCertificateRequest(csrPEM.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		certTemp := x509.Certificate{
+			SerialNumber:       big.NewInt(1337),
+			Subject:            csr.Subject,
+			NotBefore:          time.Now(),
+			NotAfter:           time.Now().AddDate(10, 0, 0),
+			ExtraExtensions:    csr.Extensions,
+			DNSNames:           csr.DNSNames,
+			EmailAddresses:     csr.EmailAddresses,
+			IPAddresses:        csr.IPAddresses,
+			URIs:               csr.URIs,
+			Signature:          csr.Signature,
+			SignatureAlgorithm: csr.SignatureAlgorithm,
+
+			PublicKeyAlgorithm: csr.PublicKeyAlgorithm,
+			PublicKey:          csr.PublicKey,
+		}
+		cert, err := x509.CreateCertificate(rand.Reader, &certTemp, &caCert, pubkey, caPrivKey)
+		if err != nil {
+			return nil, err
+		}
+		certObj, err := x509.ParseCertificate(cert)
+		if err != nil {
+			return nil, err
+		}
+		peerCrypto[peer.NodeID] = nodeCrypto{
+			pubkey: pubkey,
+			skey:   skey,
+			cert:   *certObj,
+		}
+	}
+
+	// create the tls configs
+	for nodeID, nodeCrypo := range peerCrypto {
+		peerPKs := make(map[pkg.NodeID]string, len(nodeList)-1) // fully connected nodes
+		peerCerts := make(map[pkg.NodeID]string, len(nodeList)-1)
+
+		skPem, err := cryptoUtil.ToPEM(nodeCrypo.skey)
+		if err != nil {
+			return nil, err
+		}
+
+		pkPem, err := cryptoUtil.ToPEM(nodeCrypo.pubkey)
+		if err != nil {
+			return nil, err
+		}
+		certPem, err := cryptoUtil.ToPEM(nodeCrypo.cert)
+		if err != nil {
+			return nil, err
+		}
+
+		for otherNodeID, otherNodeCrypto := range peerCrypto {
+			if nodeID == otherNodeID {
+				continue
+			}
+			peerPkPem, err := cryptoUtil.ToPEM(otherNodeCrypto.pubkey)
+			if err != nil {
+				return nil, err
+			}
+			peerCertPem, err := cryptoUtil.ToPEM(otherNodeCrypto.cert)
+			if err != nil {
+				return nil, err
+			}
+			peerPKs[otherNodeID] = string(peerPkPem)
+			peerCerts[otherNodeID] = string(peerCertPem)
+		}
+
+		tlsConfigs[nodeID] = TLSConfig{
+			OwnSk:     string(skPem),
+			OwnPk:     string(pkPem),
+			OwnCert:   string(certPem),
+			PeerPKs:   peerPKs,
+			PeerCerts: peerCerts,
+			CACert:    string(caCertPem),
+		}
+	}
+	return tlsConfigs, nil
 }
 
 // Start creates some in-memory connections between the nodes and returns

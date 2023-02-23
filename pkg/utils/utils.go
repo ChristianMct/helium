@@ -2,7 +2,10 @@ package utils
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
@@ -113,6 +116,51 @@ func PrintDebugCiphertext(ct rlwe.Ciphertext) string {
 		return "nil"
 	}
 	return GetSha256Hex(ct.MarshalBinary())
+}
+
+type Triple[A, B, C any] struct {
+	Fst A
+	Snd B
+	Trd C
+}
+
+func Zip[A, B, C any](as []A, bs []B, cs []C) []Triple[A, B, C] {
+	length := len(as) * len(bs) * len(cs)
+	triples := make([]Triple[A, B, C], length)
+
+	idx := 0
+	for _, a := range as {
+		for _, b := range bs {
+			for _, c := range cs {
+				triples[idx] = Triple[A, B, C]{
+					Fst: a,
+					Snd: b,
+					Trd: c,
+				}
+				idx++
+			}
+		}
+	}
+	return triples
+}
+
+func UnmarshalFromFile(filename string, s interface{}) error {
+	confFile, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("could not open file: %w", err)
+	}
+
+	cb, err := io.ReadAll(confFile)
+	if err != nil {
+		return fmt.Errorf("could not read file: %w", err)
+	}
+
+	err = json.Unmarshal(cb, s)
+	if err != nil {
+		return fmt.Errorf("could not parse the file: %w", err)
+	}
+
+	return nil
 }
 
 func ByteCountSI(b uint64) string {

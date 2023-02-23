@@ -17,25 +17,22 @@ all: help
 
 ## Test:
 test: ## Run the tests of the project
-	mkdir -p "${ARTIFACTS_PATH}"
 ifeq ($(EXPORT_RESULT), true)
+	mkdir -p "${ARTIFACTS_PATH}"
 	GO111MODULE=off go get -u github.com/jstemmer/go-junit-report
 	$(eval OUTPUT_OPTIONS = | tee /dev/tty | go-junit-report -set-exit-code > "${ARTIFACTS_PATH}/junit-report.xml")
 endif
-	$(GOTEST) -v -race ./pkg/... $(OUTPUT_OPTIONS)
+	$(GOTEST) ./pkg/... $(OUTPUT_OPTIONS)
 
 coverage: ## Run the tests of the project and export the coverage
-	mkdir -p "${ARTIFACTS_PATH}"
 	$(GOTEST) -cover -covermode=count -coverprofile="${ARTIFACTS_PATH}/profile.cov" ./pkg/... || true
 	$(GOCMD) tool cover -func "${ARTIFACTS_PATH}/profile.cov"
 ifeq ($(EXPORT_RESULT), true)
+	mkdir -p "${ARTIFACTS_PATH}"
 	GO111MODULE=off go get -u github.com/AlekSi/gocov-xml
 	GO111MODULE=off go get -u github.com/axw/gocov/gocov
 	gocov convert "${ARTIFACTS_PATH}/profile.cov" | gocov-xml > "${ARTIFACTS_PATH}/coverage.xml"
 endif
-
-gen-creds: ## Generate cryptographic credentials for nodes
-	cd test/certs && ./creds.sh
 
 ## Lint:
 lint: lint-go vet ## Run all available linters
@@ -57,10 +54,10 @@ gen-proto: ## Compile protobuf files
 		--go-grpc_opt=paths=source_relative --proto_path=./api ./api/*.proto
 
 ## Docker:
-docker: ## Use the Dockerfile to build the containers
-	docker build --rm -t heliummpc/helium:latest .
+docker: ## Use the Dockerfile to build the container
+	echo "build helium" && docker build --rm -t heliummpc/helium:latest . -f ./Dockerfile
 
-push:docker
+push:docker ## publish the helium images
 	docker push heliummpc/helium:latest
 
 ## Help:

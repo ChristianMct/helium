@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -13,18 +11,25 @@ import (
 	"syscall"
 	"time"
 
+	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg/utils"
+
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/services/manage"
 	"github.com/ldsec/helium/pkg/services/setup"
-	pkg "github.com/ldsec/helium/pkg/session"
 )
 
 const DefaultAddress = ":40000"
 
-var addr = flag.String("address", DefaultAddress, "the address on which the node will listen")
-var configFile = flag.String("config", "/helium/config/node.json", "the node config file for this node")
-var nodeList = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
-var setupFile = flag.String("setup", "/helium/config/setup.json", "the setup description file")
+var (
+	addr             = flag.String("address", DefaultAddress, "the address on which the node will listen")
+	configFile       = flag.String("config", "/helium/config/node.json", "the node config file for this node")
+	nodeList         = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
+	setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
+	insecureChannels = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
+	tlsdir           = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
+	outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
+)
 
 // Instructions to run: go run main.go node.go -config [nodeconfigfile].
 func main() {
@@ -38,29 +43,34 @@ func main() {
 
 	var err error
 	var nc node.Config
-	if err = UnmarshalFromFile(*configFile, &nc); err != nil {
+	if err = utils.UnmarshalFromFile(*configFile, &nc); err != nil {
 		log.Println("could not read config:", err)
 		os.Exit(1)
 	}
 
 	if *addr != DefaultAddress || nc.Address == "" {
+		// CLI addr overrides config address
 		nc.Address = pkg.NodeAddress(*addr)
 	}
 
-	if nc.ID == "" {
-		log.Println("bad config: no ID")
-		os.Exit(1)
+	if *insecureChannels {
+		nc.TLSConfig.InsecureChannels = *insecureChannels
+	}
+
+	if *tlsdir != "" {
+		nc.TLSConfig.FromDirectory = *tlsdir
 	}
 
 	var nl pkg.NodesList
-	if err = UnmarshalFromFile(*nodeList, &nl); err != nil {
+	if err = utils.UnmarshalFromFile(*nodeList, &nl); err != nil {
+
 		log.Println("could not read nodelist:", err)
 		os.Exit(1)
 	}
 
 	var sd setup.Description
 	if *setupFile != "" {
-		if err = UnmarshalFromFile(*setupFile, &sd); err != nil {
+		if err = utils.UnmarshalFromFile(*setupFile, &sd); err != nil {
 			log.Printf("could not read setup description file: %s\n", err)
 			os.Exit(1)
 		}
@@ -135,40 +145,26 @@ func main() {
 	log.Printf("Node %s | execute returned after %s", nc.ID, elapsed)
 	log.Printf("Node %s | network stats: %s", nc.ID, node.GetNetworkStats())
 
-	statsJSON, err := json.MarshalIndent(map[string]string{
-		"N":        fmt.Sprint(len(nl)),
-		"T":        fmt.Sprint(nc.SessionParameters[0].T),
-		"Wall":     fmt.Sprint(elapsed),
-		"NetStats": node.GetNetworkStats().String(),
-	}, "", "\t")
-	if err != nil {
-		panic(err)
-	}
-	if errWrite := ioutil.WriteFile(fmt.Sprintf("/helium/stats/%s.json", nc.ID), statsJSON, 0600); errWrite != nil {
-		log.Println(errWrite)
+	if *outputMetrics {
+		var statsJSON []byte
+		statsJSON, err = json.MarshalIndent(map[string]string{
+			"N":        fmt.Sprint(len(nl)),
+			"T":        fmt.Sprint(nc.SessionParameters[0].T),
+			"Wall":     fmt.Sprint(elapsed),
+			"NetStats": node.GetNetworkStats().String(),
+		}, "", "\t")
+		if err != nil {
+			panic(err)
+		}
+		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s.json", nc.ID), statsJSON, 0600); errWrite != nil {
+			log.Println(errWrite)
+		}
+	} else {
+		log.Printf("Node %s | metrics disabled, skipping writing to disk", nc.ID)
 	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
 	log.Printf("Node %s | exiting.", nc.ID)
-}
-
-func UnmarshalFromFile(filename string, s interface{}) error {
-	confFile, err := os.Open(filename)
-	if err != nil {
-		return fmt.Errorf("could not open file: %w", err)
-	}
-
-	cb, err := io.ReadAll(confFile)
-	if err != nil {
-		return fmt.Errorf("could not read file: %w", err)
-	}
-
-	err = json.Unmarshal(cb, s)
-	if err != nil {
-		return fmt.Errorf("could not parse the file: %w", err)
-	}
-
-	return nil
 }

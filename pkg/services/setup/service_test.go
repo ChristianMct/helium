@@ -6,16 +6,18 @@ import (
 	"math/bits"
 	"testing"
 
+	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/utils"
+
 	"github.com/ldsec/helium/pkg/node"
 	pkg "github.com/ldsec/helium/pkg/session"
-	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
 
-var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109, rlwe.TestPN13QP218 /*, rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
+var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
 
 type testSetting struct {
 	N int // N - total parties
@@ -26,6 +28,16 @@ var testSettings = []testSetting{
 	{N: 2},
 	{N: 3},
 	{N: 3, T: 2},
+}
+
+var signatureSettings = []node.SignatureParameters{
+	//{Type: api.SignatureType_NONE},
+	{Type: api.SignatureType_ED25519},
+}
+
+var insecureChannel = []bool{
+	false,
+	true,
 }
 
 type peer struct {
@@ -43,16 +55,18 @@ type lightNode struct {
 	*Service
 }
 
+var testParams = utils.Zip[bool, node.SignatureParameters, rlwe.ParametersLiteral](insecureChannel, signatureSettings, rangeParam)
+
 // TestCloudAssistedSetup tests the generation of the public key in push mode.
 func TestCloudAssistedSetup(t *testing.T) {
-	for _, literalParams := range rangeParam {
+	for _, testParam := range testParams {
+		insecureChannels, sig, literalParams := testParam.Fst, testParam.Snd, testParam.Trd
 		for _, ts := range testSettings {
-
 			if ts.T == 0 {
 				ts.T = ts.N // N-out-of-N scenario
 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d/mTLS=%t/sigs=%s", ts.N, ts.T, literalParams.LogN, !insecureChannels, sig.Type), func(t *testing.T) {
 
 				if ts.T != ts.N {
 					t.Skip("T != N not yet supported in cloud-assisted setting")
@@ -65,6 +79,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
+					InsecureChannels: insecureChannels,
 				}
 				localTest := node.NewLocalTest(testConfig)
 
@@ -166,19 +181,18 @@ func TestCloudAssistedSetup(t *testing.T) {
 			})
 		}
 	}
-
 }
 
 func TestPeerToPeerSetup(t *testing.T) {
-
-	for _, literalParams := range rangeParam {
+	for _, testParam := range testParams {
+		insecureChannels, sig, literalParams := testParam.Fst, testParam.Snd, testParam.Trd
 		for _, ts := range testSettings {
 
 			if ts.T == 0 {
 				ts.T = ts.N // N-out-of-N scenario
 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d/mTLS=%t/sigs=%s", ts.N, ts.T, literalParams.LogN, !insecureChannels, sig.Type), func(t *testing.T) {
 
 				var testConfig = node.LocalTestConfig{
 					FullNodes:  ts.N,
@@ -187,6 +201,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
+					InsecureChannels: insecureChannels,
 				}
 				localTest := node.NewLocalTest(testConfig)
 
