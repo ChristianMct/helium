@@ -206,7 +206,7 @@ func (s *Service) checkObjectStore(protoIDtoPD ProtocolMap, sess *pkg.Session) m
 	for id, pd := range protoIDtoPD {
 		present, err := sess.ObjectStore.IsPresent(string(pd.ID))
 		// DEBUG
-		log.Printf("%s | [CheckObjectStore] IsPresent of %s returned %v", s.self, pd.ID, present)
+		log.Printf("%s | [CheckObjectStore] IsPresent of %s returned %v", pd.Type.String(), s.self, present)
 		if err != nil {
 			panic(err)
 		}
@@ -513,20 +513,18 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 		if output.Result != nil {
 			switch res := output.Result.(type) {
 			case *rlwe.PublicKey:
-				log.Printf("%s | [StoreOutput]: storing CPK under %s %v\n", s.self, output.ID, res)
-				err := sess.ObjectStore.Store(string(output.ID), res)
+				log.Printf("%s | Setup: storing CPK %v under %s \n", s.self, res, output.Type.String())
+				err := sess.ObjectStore.Store(output.Type.ProtoID(), res)
 				if err != nil {
 					log.Printf("%s | error on Collective Public Key store: %s", s.self, err)
 				}
 			case *rlwe.SwitchingKey:
-				log.Printf("%s | [StoreOutput]: storing RTG under %s %v\n", s.self, output.ID, res)
-				err := sess.ObjectStore.Store(string(output.ID), res)
+				err := sess.ObjectStore.Store(output.Type.ProtoID(output.Args["GalEl"].(uint64)), res)
 				if err != nil {
 					log.Printf("%s | error on Rotation Key Store: %s", s.self, err)
 				}
 			case *rlwe.RelinearizationKey:
-				log.Printf("%s | [StoreOutput]: storing RLK under %s %v\n", s.self, output.Type.ProtoID(), res)
-				err := sess.ObjectStore.Store(string(output.ID), res)
+				err := sess.ObjectStore.Store(output.Type.ProtoID(), res)
 				if err != nil {
 					log.Printf("%s | error on Relinearization Key store: %s", s.self, err)
 				}
