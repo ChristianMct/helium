@@ -280,59 +280,60 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 	return protosUpdatesChan
 }
 
+const parallelParticipation int = 10
+
 // participate makes every participant participate in the protocol
 // returns a channel where true is sent when all participations are done.
 func (s *Service) participate(ctx context.Context, sigList SignatureList, protoToRun chan protocols.Descriptor, sess *pkg.Session) <-chan bool {
+
+	var wg sync.WaitGroup
+	for w := 0; w < parallelParticipation; w++ {
+		wg.Add(1)
+		go func() {
+			for pd := range protoToRun {
+
+				if !sigList.Contains(pd.Signature) {
+					panic(fmt.Errorf("%s | [Participate] error: signature %s is not in the signature list", s.self, pd.Signature))
+				}
+
+				s.runningProtosMu.RLock()
+				_, running := s.runningProtos[pd.ID]
+				s.runningProtosMu.RUnlock()
+				// already running, next pd.
+				if running {
+					continue
+				}
+
+				// DEBUG
+				log.Printf("%s | [Participate] Making new protocol pd: %v\n", s.self, pd)
+				// END DEBUG
+				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
+				if err != nil {
+					panic(err)
+				}
+
+				inc := make(chan protocols.Share)
+				// add protocols to running protocols
+				s.runningProtosMu.Lock()
+				s.runningProtos[pd.ID] = struct {
+					pd       protocols.Descriptor
+					incoming chan protocols.Share
+				}{
+					pd:       pd,
+					incoming: inc,
+				}
+				s.runningProtosMu.Unlock()
+
+				<-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
+			}
+			wg.Done()
+		}()
+	}
+
 	// allPartsDone is a channel that transport the signal that the participations are done.
 	allPartsDone := make(chan bool, 1)
 	go func() {
-		wgNorm := sync.WaitGroup{}
-		for pd := range protoToRun {
-
-			if !sigList.Contains(pd.Signature) {
-				panic(fmt.Errorf("%s | [Participate] error: signature %s is not in the signature list\n", s.self, pd.Signature))
-			}
-
-			s.runningProtosMu.RLock()
-			_, running := s.runningProtos[pd.ID]
-			s.runningProtosMu.RUnlock()
-			// already running, next pd.
-			if running {
-				continue
-			}
-
-			// DEBUG
-			log.Printf("%s | [Participate] Making new protocol pd: %v\n", s.self, pd)
-			// END DEBUG
-			proto, err := protocols.NewProtocol(pd, sess, pd.ID)
-			if err != nil {
-				panic(err)
-			}
-
-			inc := make(chan protocols.Share)
-			// add protocols to running protocols
-			s.runningProtosMu.Lock()
-			s.runningProtos[pd.ID] = struct {
-				pd       protocols.Descriptor
-				incoming chan protocols.Share
-			}{
-				pd:       pd,
-				incoming: inc,
-			}
-			s.runningProtosMu.Unlock()
-
-			wgNorm.Add(1)
-			//DEBUG
-			log.Printf("%s | [Participate] Adding a goroutine to wait for pd: %v\n", s.self, pd)
-			go func() {
-				// wait for the result of the aggregation to arrive
-				<-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
-				//DEBUG
-				log.Printf("%s | [Participate] Removing a goroutine to wait for pd: %v\n", s.self, pd)
-				wgNorm.Done()
-			}()
-		}
-		wgNorm.Wait()
+		wg.Wait()
 		allPartsDone <- true
 	}()
 
@@ -345,7 +346,6 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 	protocols.Descriptor
 	protocols.Output
 }, sess *pkg.Session) <-chan bool {
-	allAggsDone := make(chan bool, 1)
 
 	var wg sync.WaitGroup
 	for w := 0; w < parallelAggregation; w++ {
@@ -427,6 +427,7 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 		}()
 	}
 
+	allAggsDone := make(chan bool, 1)
 	go func() {
 		wg.Wait()
 		close(s.transport.OutgoingProtocolUpdates())
