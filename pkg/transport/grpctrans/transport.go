@@ -250,10 +250,7 @@ func (p *Peer) ID() pkg.NodeID {
 }
 
 func (p *Peer) SendUpdate(psu protocols.StatusUpdate) {
-	apiDesc := &api.ProtocolDescriptor{ // TODO: send full desc ?
-		ProtocolID:   &api.ProtocolID{ProtocolID: string(psu.ID)},
-		Participants: make([]*api.NodeID, 0, len(psu.Participants)),
-	}
+	apiDesc := getAPIProtocolDesc(&psu.Descriptor)
 	for _, p := range psu.Participants {
 		apiDesc.Participants = append(apiDesc.Participants, &api.NodeID{NodeId: string(p)})
 	}

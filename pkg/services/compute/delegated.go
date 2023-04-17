@@ -161,16 +161,16 @@ func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, id pk
 	return out, nil
 }
 
-func (de *delegatedEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
+func (de *delegatedEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	parts := utils.NewSet(de.sess.Nodes)
-	parts.Remove(pkg.NodeID(params["target"].(string)))
-	pd := protocols.Descriptor{Type: protocols.DEC, Args: params, Aggregator: de.delegateID, Participants: parts.Elements()} // TODO receive desc from evaluator
+	parts.Remove(pkg.NodeID(params["target"]))
+	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.DEC, Args: params}, Aggregator: de.delegateID, Participants: parts.Elements()} // TODO receive desc from evaluator
 
 	return de.runKeySwitch(pd, id, in)
 }
 
-func (de *delegatedEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
-	pd := protocols.Descriptor{Type: protocols.PCKS, Args: params, Aggregator: de.delegateID, Participants: de.sess.Nodes}
+func (de *delegatedEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.PCKS, Args: params}, Aggregator: de.delegateID, Participants: de.sess.Nodes}
 	return de.runKeySwitch(pd, id, in)
 }
 

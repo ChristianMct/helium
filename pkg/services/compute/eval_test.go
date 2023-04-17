@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -54,11 +55,11 @@ var ProdCKS Circuit = func(e EvaluationContext) error {
 
 	params := e.Parameters().Parameters
 	opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-	opout, err := e.CKS("CKS-0", opres, map[string]interface{}{
+	opout, err := e.CKS("CKS-0", opres, map[string]string{
 		"target":     "node-0",
 		"aggregator": "node-0",
-		"lvl":        params.MaxLevel(),
-		"smudging":   80.0,
+		"lvl":        strconv.Itoa(params.MaxLevel()),
+		"smudging":   "80.0",
 	})
 	if err != nil {
 		return err

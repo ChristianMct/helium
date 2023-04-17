@@ -2,6 +2,7 @@ package protocols
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 
@@ -12,9 +13,8 @@ import (
 )
 
 type Descriptor struct {
-	ID           pkg.ProtocolID
-	Type         Type
-	Args         map[string]interface{}
+	ID pkg.ProtocolID
+	Signature
 	Aggregator   pkg.NodeID
 	Participants []pkg.NodeID
 }
@@ -110,6 +110,35 @@ func (t Type) Share() LattigoShare {
 	default:
 		return nil
 	}
+}
+
+type Signature struct {
+	Type Type
+	Args map[string]string
+}
+
+func (t Signature) String() string {
+	if t.Args == nil {
+		t.Args = map[string]string{} // prevents different rep for nil and empty
+	}
+	s, err := json.Marshal(t) // TODO: produce non-deterministic strings when len(Args)>1
+	if err != nil {
+		panic(err)
+	}
+	return string(s)
+}
+
+func (s Signature) Equals(other Signature) bool {
+	if s.Type != other.Type {
+		return false
+	}
+	for k, v := range s.Args {
+		vOther, has := other.Args[k]
+		if !has || v != vOther {
+			return false
+		}
+	}
+	return true
 }
 
 type protocol struct {

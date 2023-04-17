@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"strconv"
 	"testing"
 	"time"
 
@@ -505,11 +506,10 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 
 	if utils.NewSet(setup.Cpk).Contains(sess.NodeID) {
 		cpk := new(rlwe.PublicKey)
-		err := sess.ObjectStore.Load(protocols.CKG.ProtoID(), cpk)
+		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
 		if err != nil {
 			t.Fatalf("%s | CPK was not found for node %s: %s", sess.NodeID, sess.NodeID, err)
 		}
-		t.Logf("%s | SetupTest: loaded CPK %v\n", sess.NodeID, cpk)
 		log2BoundPk := bits.Len64(uint64(nParties) * params.NoiseBound() * uint64(params.N()))
 		require.True(t, rlwe.PublicKeyIsCorrect(cpk, sk, params, log2BoundPk))
 	}
@@ -517,7 +517,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 	for _, key := range setup.GaloisKeys {
 		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
 			rtk := new(rlwe.SwitchingKey)
-			err := sess.ObjectStore.Load(protocols.RTG.ProtoID(key.GaloisEl), rtk)
+			err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(key.GaloisEl, 10)}}.String(), rtk)
 			if err != nil {
 				t.Fatalf("%s | Rotation Key was not found for %s: %s", sess.NodeID, sess.NodeID, err)
 			}
@@ -531,7 +531,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 
 	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
 		rlk := new(rlwe.RelinearizationKey)
-		err := sess.ObjectStore.Load(protocols.RKG.ProtoID(), rlk)
+		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
 		if err != nil {
 			t.Fatalf("%s | RLK was not found for node %s, %s", sess.NodeID, sess.NodeID, err)
 		}

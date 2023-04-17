@@ -108,16 +108,16 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	for protoID, protoDesc := range se.cDesc.KeyOps {
 		var aggregator pkg.NodeID
 		if agg, hasAgg := protoDesc.Args["aggregator"]; hasAgg {
-			aggregator = pkg.NodeID(agg.(string))
+			aggregator = pkg.NodeID(agg)
 		} else {
-			aggregator = pkg.NodeID(protoDesc.Args["target"].(string)) // TODO: check that aggregator is full node
+			aggregator = pkg.NodeID(protoDesc.Args["target"]) // TODO: check that aggregator is full node
 		}
 
 		protoDesc.Aggregator = aggregator
 
 		part := utils.NewSet(sess.Nodes)
 		if protoDesc.Type == protocols.DEC {
-			part.Remove(pkg.NodeID(protoDesc.Args["target"].(string)))
+			part.Remove(pkg.NodeID(protoDesc.Args["target"]))
 		}
 
 		protoDesc.Participants = part.Elements() // TODO decide on exec
@@ -214,15 +214,15 @@ func (se *fullEvaluatorContext) SubCircuit(_ pkg.CircuitID, _ Circuit) (Evaluati
 	panic("not implemented") // TODO: Implement
 }
 
-func (se *fullEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
+func (se *fullEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	return se.runKeySwitch(id, in, params)
 }
 
-func (se *fullEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
+func (se *fullEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	return se.runKeySwitch(id, in, params)
 }
 
-func (se *fullEvaluatorContext) runKeySwitch(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
+func (se *fullEvaluatorContext) runKeySwitch(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	se.Set(in)
 
 	_ = params // TODO will need this for dynamic participant sets

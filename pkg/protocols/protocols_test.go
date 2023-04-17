@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"strconv"
 	"testing"
 
 	"github.com/ldsec/helium/pkg/node"
@@ -44,9 +45,9 @@ func TestProtocols(t *testing.T) {
 
 			t.Run(fmt.Sprintf("Type=%s/N=%d/T=%d/Helper=%v", pType, ts.N, ts.T, ts.Helper), func(t *testing.T) {
 				te := newTestEnvironment(ts, rlwe.TestPN12QP109)
-				pd := Descriptor{Type: pType}
+				pd := Descriptor{Signature: Signature{Type: pType}}
 				if pType == RTG {
-					pd.Args = map[string]interface{}{"GalEl": uint64(5)}
+					pd.Args = map[string]string{"GalEl": "5"}
 				}
 				if pType == SKG {
 					pd.Participants = te.SessionNodesIds()
@@ -155,7 +156,8 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 					te.Params.N() * len(swk.Value) * len(swk.Value[0]) *
 						(te.Params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
 							2*3*int(math.Floor(rlwe.DefaultSigma*6)) + te.Params.N()*3)))
-				require.True(t, rlwe.RotationKeyIsCorrect(swk, pd.Args["GalEl"].(uint64), te.SkIdeal, te.Params, log2BoundRtk), "rtk for galEl %d should be correct", pd.Args["GaloisEl"])
+				galEl, _ := strconv.ParseUint(pd.Args["GalEl"], 10, 64)
+				require.True(t, rlwe.RotationKeyIsCorrect(swk, galEl, te.SkIdeal, te.Params, log2BoundRtk), "rtk for galEl %d should be correct", pd.Args["GaloisEl"])
 			case RKG:
 				rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
 				require.True(t, isRlk)

@@ -3,6 +3,7 @@ package protocols
 import (
 	"encoding"
 	"fmt"
+	"strconv"
 
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
@@ -84,7 +85,7 @@ type CKGProtocol struct {
 	params *rlwe.Parameters
 }
 
-func NewCKGProtocol(params rlwe.Parameters, arg map[string]interface{}) (*CKGProtocol, error) {
+func NewCKGProtocol(params rlwe.Parameters, arg map[string]string) (*CKGProtocol, error) {
 	return &CKGProtocol{CKGProtocol: *drlwe.NewCKGProtocol(params), params: &params}, nil
 }
 
@@ -155,22 +156,16 @@ type RTGProtocol struct {
 	params *rlwe.Parameters
 }
 
-func NewRTGProtocol(params rlwe.Parameters, args map[string]interface{}) (*RTGProtocol, error) {
+func NewRTGProtocol(params rlwe.Parameters, args map[string]string) (*RTGProtocol, error) {
 	if _, hasArg := args["GalEl"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: GalEl")
 	}
 
-	var galEl uint64
-	switch ge := args["GalEl"].(type) {
-	case uint64:
-		galEl = ge
-	case int:
-		galEl = uint64(ge)
-	case float64:
-		galEl = uint64(ge)
-	default:
+	galEl, err := strconv.ParseUint(args["GalEl"], 10, 64)
+	if err != nil {
 		return nil, fmt.Errorf("invalid galois element type: %T instead of %T", args["GalEl"], galEl)
 	}
+
 	return &RTGProtocol{galEl: galEl, RTGProtocol: *drlwe.NewRTGProtocol(params), params: &params}, nil
 }
 
@@ -239,7 +234,7 @@ type RKGProtocol struct {
 	params *rlwe.Parameters
 }
 
-func NewRKGProtocol(params rlwe.Parameters, _ map[string]interface{}) (*RKGProtocol, error) {
+func NewRKGProtocol(params rlwe.Parameters, _ map[string]string) (*RKGProtocol, error) {
 	return &RKGProtocol{RKGProtocol: *drlwe.NewRKGProtocol(params), params: &params}, nil
 }
 
@@ -322,13 +317,14 @@ type CKSProtocol struct {
 	drlwe.CKSProtocol
 }
 
-func NewCKSProtocol(params rlwe.Parameters, args map[string]interface{}) (*CKSProtocol, error) {
+func NewCKSProtocol(params rlwe.Parameters, args map[string]string) (*CKSProtocol, error) {
 	if _, hasArg := args["smudging"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: smudging")
 	}
-	sigmaSmudging, isfloat64 := args["smudging"].(float64)
-	if !isfloat64 {
-		return nil, fmt.Errorf("invalid sigma smudging type: %T instead of %T", args["smudging"], sigmaSmudging)
+
+	sigmaSmudging, err := strconv.ParseFloat(args["smudging"], 64)
+	if err != nil {
+		return nil, fmt.Errorf("sigma smudging: %s cannot be parsed to %T", args["smudging"], sigmaSmudging)
 	}
 	return &CKSProtocol{maxLevel: params.MaxLevel(), CKSProtocol: *drlwe.NewCKSProtocol(params, sigmaSmudging)}, nil
 }
@@ -388,13 +384,13 @@ type PCKSProtocol struct {
 	drlwe.PCKSProtocol
 }
 
-func NewPCKSProtocol(params rlwe.Parameters, args map[string]interface{}) (*PCKSProtocol, error) {
+func NewPCKSProtocol(params rlwe.Parameters, args map[string]string) (*PCKSProtocol, error) {
 	if _, hasArg := args["smudging"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: smudging")
 	}
-	sigmaSmudging, isfloat64 := args["smudging"].(float64)
-	if !isfloat64 {
-		return nil, fmt.Errorf("invalid sigma smudging type: %T instead of %T", args["smudging"], sigmaSmudging)
+	sigmaSmudging, err := strconv.ParseFloat(args["smudging"], 64)
+	if err != nil {
+		return nil, fmt.Errorf("sigma smudging: %s cannot be parsed to %T", args["smudging"], sigmaSmudging)
 	}
 	return &PCKSProtocol{maxLevel: params.MaxLevel(), PCKSProtocol: *drlwe.NewPCKSProtocol(params, sigmaSmudging)}, nil
 }

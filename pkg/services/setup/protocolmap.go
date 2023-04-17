@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"strconv"
+
 	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
@@ -20,6 +22,33 @@ type ProtocolMap map[pkg.ProtocolID]protocols.Descriptor
 // type ProtoDescrList []protocols.Descriptor
 
 type PresenceMap map[pkg.ProtocolID]bool
+
+type SignatureList []protocols.Signature
+
+func DescriptionToSignatureList(sd Description) SignatureList {
+	sl := make(SignatureList, 0, 3+len(sd.GaloisKeys))
+	if len(sd.Cpk) > 0 {
+		sl = append(sl, protocols.Signature{Type: protocols.CKG})
+	}
+	for _, gk := range sd.GaloisKeys {
+		if len(gk.Receivers) > 0 {
+			sl = append(sl, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(gk.GaloisEl, 10)}})
+		}
+	}
+	if len(sd.Rlk) > 0 {
+		sl = append(sl, protocols.Signature{Type: protocols.RKG})
+	}
+	return sl
+}
+
+func (sl SignatureList) Contains(other protocols.Signature) bool {
+	for _, sig := range sl {
+		if sig.Equals(other) {
+			return true
+		}
+	}
+	return false
+}
 
 func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessNodeIds []pkg.NodeID, doThresholdSetup, assignPart bool) ProtocolMap {
 
@@ -60,7 +89,7 @@ func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessN
 
 	if len(setup.Cpk) > 0 {
 		protoID := pkg.ProtocolID(protocols.CKG.ProtoID())
-		pm[protoID] = protocols.Descriptor{ID: protoID, Type: protocols.CKG, Aggregator: minAggID(getAggreg(setup.Cpk))}
+		pm[protoID] = protocols.Descriptor{ID: protoID, Signature: protocols.Signature{Type: protocols.CKG}, Aggregator: minAggID(getAggreg(setup.Cpk))}
 	}
 
 	// var galKeyCount uint64 = 0
@@ -70,15 +99,15 @@ func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessN
 		}
 		protoID := pkg.ProtocolID(protocols.RTG.ProtoID(key.GaloisEl))
 		pm[protoID] = protocols.Descriptor{
-			ID:   protoID,
-			Type: protocols.RTG, Args: map[string]interface{}{"GalEl": key.GaloisEl},
+			ID:         protoID,
+			Signature:  protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(key.GaloisEl, 10)}},
 			Aggregator: minAggID(getAggreg(key.Receivers))}
 		// galKeyCount++
 	}
 
 	if len(setup.Rlk) > 0 {
 		protoID := pkg.ProtocolID(protocols.RKG.ProtoID())
-		pm[protoID] = protocols.Descriptor{ID: protoID, Type: protocols.RKG, Aggregator: minAggID(getAggreg(setup.Rlk))}
+		pm[protoID] = protocols.Descriptor{ID: protoID, Signature: protocols.Signature{Type: protocols.RKG}, Aggregator: minAggID(getAggreg(setup.Rlk))}
 	}
 
 	getPartListForAgg := func(agg pkg.NodeID) []pkg.NodeID {
@@ -100,7 +129,7 @@ func GenProtoMap(setup Description, nodeList pkg.NodesList, threshold int, sessN
 
 	if threshold < len(sessNodeIds) && doThresholdSetup {
 		protoID := pkg.ProtocolID(protocols.SKG.ProtoID())
-		pm[protoID] = protocols.Descriptor{ID: protoID, Type: protocols.SKG, Participants: sessNodeIds}
+		pm[protoID] = protocols.Descriptor{ID: protoID, Signature: protocols.Signature{Type: protocols.SKG}, Participants: sessNodeIds}
 	}
 
 	return pm

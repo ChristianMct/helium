@@ -27,10 +27,10 @@ type EvaluationContext interface {
 	Output(pkg.Operand, pkg.NodeID)
 
 	// CKS runs a CKS protocol over the provided operand within the context.
-	CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error)
+	CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error)
 
 	// PCKS runs a PCKS protocol over the provided operand within the context.
-	PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error)
+	PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error)
 
 	// SubCircuit evaluates a sub-circuit within the context.
 	SubCircuit(pkg.CircuitID, Circuit) (EvaluationContext, error)
@@ -156,13 +156,8 @@ func (e *circuitParserContext) registerKeyOps(id pkg.ProtocolID, pd protocols.De
 		return fmt.Errorf("protocol parameter should have a target")
 	}
 
-	targetStr, isString := target.(string)
-	if !isString {
-		return fmt.Errorf("protocol parameter should have target of string type")
-	}
-
 	if e.nodeMapping != nil {
-		pd.Args["target"] = e.nodeMapping[targetStr]
+		pd.Args["target"] = string(e.nodeMapping[target])
 	}
 
 	if _, exists := e.cDesc.KeyOps[id]; exists {
@@ -173,22 +168,22 @@ func (e *circuitParserContext) registerKeyOps(id pkg.ProtocolID, pd protocols.De
 	return nil
 }
 
-func (e *circuitParserContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
+func (e *circuitParserContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	pd := protocols.Descriptor{Type: protocols.DEC, Args: params}
+	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.DEC, Args: params}}
 	if err = e.registerKeyOps(id, pd); err != nil {
 		panic(err)
 	}
 	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))}, nil
 }
 
-func (e *circuitParserContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]interface{}) (out pkg.Operand, err error) {
+func (e *circuitParserContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	pd := protocols.Descriptor{Type: protocols.PCKS, Args: params}
+	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.PCKS, Args: params}}
 	if err = e.registerKeyOps(id, pd); err != nil {
 		panic(err)
 	}

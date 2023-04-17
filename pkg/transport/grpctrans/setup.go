@@ -128,19 +128,46 @@ func (t *setupTransport) RegisterForSetupAt(ctx context.Context, peerID pkg.Node
 				}
 				return
 			}
-			desc := protocols.Descriptor{
-				ID:           pkg.ProtocolID(pu.ProtocolDescriptor.ProtocolID.ProtocolID),
-				Participants: make([]pkg.NodeID, 0, len(pu.ProtocolDescriptor.Participants)),
-			}
-			for _, p := range pu.ProtocolDescriptor.Participants {
-				desc.Participants = append(desc.Participants, pkg.NodeID(p.NodeId))
-			}
-			descStream <- protocols.StatusUpdate{Descriptor: desc, Status: protocols.Status(pu.ProtocolStatus)}
+			desc := getProtocolDescFromAPI(pu.ProtocolDescriptor)
+			descStream <- protocols.StatusUpdate{Descriptor: *desc, Status: protocols.Status(pu.ProtocolStatus)}
 		}
 
 	}()
 
 	return descStream, nil
+}
+
+func getAPIProtocolDesc(pd *protocols.Descriptor) *api.ProtocolDescriptor {
+	apiDesc := &api.ProtocolDescriptor{
+		ProtocolID:   &api.ProtocolID{ProtocolID: string(pd.ID)},
+		ProtocolType: api.ProtocolType(pd.Type),
+		Args:         make(map[string]string, len(pd.Args)),
+		Aggregator:   &api.NodeID{NodeId: string(pd.Aggregator)},
+		Participants: make([]*api.NodeID, 0, len(pd.Participants)),
+	}
+	for k, v := range pd.Args {
+		apiDesc.Args[k] = v
+	}
+	for _, p := range pd.Participants {
+		apiDesc.Participants = append(apiDesc.Participants, &api.NodeID{NodeId: string(p)})
+	}
+	return apiDesc
+}
+
+func getProtocolDescFromAPI(apiPD *api.ProtocolDescriptor) *protocols.Descriptor {
+	desc := &protocols.Descriptor{
+		ID:           pkg.ProtocolID(apiPD.ProtocolID.ProtocolID),
+		Signature:    protocols.Signature{Type: protocols.Type(apiPD.ProtocolType), Args: make(map[string]string)},
+		Aggregator:   pkg.NodeID(apiPD.Aggregator.NodeId),
+		Participants: make([]pkg.NodeID, 0, len(apiPD.Participants)),
+	}
+	for k, v := range apiPD.Args {
+		desc.Args[k] = v
+	}
+	for _, p := range apiPD.Participants {
+		desc.Participants = append(desc.Participants, pkg.NodeID(p.NodeId))
+	}
+	return desc
 }
 
 func (t *setupTransport) GetAggregationFrom(ctx context.Context, nid pkg.NodeID, pid pkg.ProtocolID) (*protocols.AggregationOutput, error) {

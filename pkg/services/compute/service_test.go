@@ -3,6 +3,7 @@ package compute_test
 import (
 	"crypto/sha256"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/ldsec/helium/pkg/node"
@@ -81,11 +82,11 @@ var TestCircuits = map[string]Circuit{
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-		opout, err := e.CKS("CKS-0", opres, map[string]interface{}{
+		opout, err := e.CKS("CKS-0", opres, map[string]string{
 			"target":     "full-0",
 			"aggregator": "full-0",
-			"lvl":        params.MaxLevel(),
-			"smudging":   1.0,
+			"lvl":        strconv.Itoa(params.MaxLevel()),
+			"smudging":   "1.0",
 		})
 		if err != nil {
 			return err
@@ -126,11 +127,11 @@ var TestCircuits = map[string]Circuit{
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-		opout, err := e.PCKS("PCKS-0", opres, map[string]interface{}{
+		opout, err := e.PCKS("PCKS-0", opres, map[string]string{
 			"target":     "full-0",
 			"aggregator": "full-0",
-			"lvl":        params.MaxLevel(),
-			"smudging":   1.0,
+			"lvl":        strconv.Itoa(params.MaxLevel()),
+			"smudging":   "1.0",
 		})
 		if err != nil {
 			return err
@@ -179,11 +180,11 @@ var TestCircuits = map[string]Circuit{
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: res}
-		opout, err := e.CKS("DEC-0", opres, map[string]interface{}{
+		opout, err := e.CKS("DEC-0", opres, map[string]string{
 			"target":     "light-0",
 			"aggregator": "helper-0",
-			"lvl":        params.MaxLevel(),
-			"smudging":   1.0,
+			"lvl":        strconv.Itoa(params.MaxLevel()),
+			"smudging":   "1.0",
 		})
 		if err != nil {
 			return err

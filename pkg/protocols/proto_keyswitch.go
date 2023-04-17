@@ -25,7 +25,7 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (
 	if _, hasArg := pd.Args["target"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: target")
 	}
-	target, isString := pd.Args["target"].(string)
+	target, isString := pd.Args["target"]
 	if !isString {
 		return nil, fmt.Errorf("invalid target type %T instead of %T", pd.Args["target"], target)
 	}
