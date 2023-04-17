@@ -352,7 +352,7 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 		wg.Add(1)
 		go func() {
 			// for every protocol for which the current node is aggregator
-			for pd := range pdAggs {
+			for pd := range pdAggs { // TODO NEXT: this could be a priority queue of struct{Descriptor, Context} and retries are simply a new Descriptor with higher priority (the first protocol to succeed cancels the context)
 
 				// select participants for this aggregation
 				switch {
