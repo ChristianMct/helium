@@ -339,63 +339,65 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 	return allPartsDone
 }
 
+const parallelAggregation int = 10
+
 func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descriptor, outputs chan struct {
 	protocols.Descriptor
 	protocols.Output
 }, sess *pkg.Session) <-chan bool {
 	allAggsDone := make(chan bool, 1)
-	go func() {
-		wgAgg := sync.WaitGroup{}
-		// for every protocol for which the current node is aggregator
-		for pd := range pdAggs {
 
-			// select participants for this aggregation
-			switch {
-			case len(pd.Participants) > 0:
-			// select a subset of T participants
-			case len(pd.Participants) == 0 && sess.T < len(sess.Nodes):
-				partSet := utils.NewEmptySet[pkg.NodeID]()
-				if sess.Contains(s.self) {
-					partSet.Add(s.self)
+	var wg sync.WaitGroup
+	for w := 0; w < parallelAggregation; w++ {
+		wg.Add(1)
+		go func() {
+			// for every protocol for which the current node is aggregator
+			for pd := range pdAggs {
+
+				// select participants for this aggregation
+				switch {
+				case len(pd.Participants) > 0:
+				// select a subset of T participants
+				case len(pd.Participants) == 0 && sess.T < len(sess.Nodes):
+					partSet := utils.NewEmptySet[pkg.NodeID]()
+					if sess.Contains(s.self) {
+						partSet.Add(s.self)
+					}
+					// Wait for at least T parties to connect
+					online, err := s.waitForRegisteredIDSet(context.Background(), sess.T-len(partSet))
+					if err != nil {
+						panic(err)
+					}
+					partSet.AddAll(online)
+					// select T parties at random
+					pd.Participants = pkg.GetRandomClientSlice(sess.T, partSet.Elements())
+				// default puts all the nodes in the participant list of the protocol
+				default:
+					pd.Participants = make([]pkg.NodeID, len(sess.Nodes))
+					copy(pd.Participants, sess.Nodes)
 				}
-				// Wait for at least T parties to connect
-				online, err := s.waitForRegisteredIDSet(context.Background(), sess.T-len(partSet))
+
+				// DEBUG
+				log.Printf("%s | [Aggregate] Making new protocol pd: %v\n", s.self, pd)
+				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
 				if err != nil {
 					panic(err)
 				}
-				partSet.AddAll(online)
-				// select T parties at random
-				pd.Participants = pkg.GetRandomClientSlice(sess.T, partSet.Elements())
-			// default puts all the nodes in the participant list of the protocol
-			default:
-				pd.Participants = make([]pkg.NodeID, len(sess.Nodes))
-				copy(pd.Participants, sess.Nodes)
-			}
 
-			// DEBUG
-			log.Printf("%s | [Aggregate] Making new protocol pd: %v\n", s.self, pd)
-			proto, err := protocols.NewProtocol(pd, sess, pd.ID)
-			if err != nil {
-				panic(err)
-			}
+				inc := make(chan protocols.Share)
+				s.runningProtosMu.Lock()
+				s.runningProtos[pd.ID] = struct {
+					pd       protocols.Descriptor
+					incoming chan protocols.Share
+				}{
+					pd:       pd,
+					incoming: inc,
+				}
+				s.runningProtosMu.Unlock()
 
-			inc := make(chan protocols.Share)
-			s.runningProtosMu.Lock()
-			s.runningProtos[pd.ID] = struct {
-				pd       protocols.Descriptor
-				incoming chan protocols.Share
-			}{
-				pd:       pd,
-				incoming: inc,
-			}
-			s.runningProtosMu.Unlock()
+				// sending pd to list of chosen parties.
+				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running}
 
-			// sending pd to list of chosen parties.
-			s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running}
-
-			pd := pd
-			wgAgg.Add(1)
-			go func() {
 				// blocking, returns the result of the aggregation.
 				aggOut := <-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
@@ -404,14 +406,33 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 
 				s.saveAggOut(aggOut, pd, proto, outputs)
 
-				wgAgg.Done()
-			}()
+				s.completedProtoMu.Lock()
+				s.completedProtos = append(s.completedProtos, pd)
+				s.completedProtoMu.Unlock()
 
-		}
-		wgAgg.Wait()
+				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)}
+
+				// block until it gets a value from the channel
+				out := <-proto.Output(aggOut)
+
+				outputs <- struct {
+					protocols.Descriptor
+					protocols.Output
+				}{
+					pd,
+					out,
+				}
+			}
+			wg.Done()
+		}()
+	}
+
+	go func() {
+		wg.Wait()
 		close(s.transport.OutgoingProtocolUpdates())
 		allAggsDone <- true
 	}()
+
 	return allAggsDone
 }
 
