@@ -82,7 +82,7 @@ func main() {
 
 	// TODO assumes single-session nodes
 	if len(nc.SessionParameters) != 1 {
-		panic("multi-session nodes implemented")
+		panic("multi-session nodes not implemented")
 	}
 
 	if errConn := node.Connect(); errConn != nil {

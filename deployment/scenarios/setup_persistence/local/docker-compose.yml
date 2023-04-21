@@ -1,0 +1,38 @@
+version: '3.0'
+services:
+  cloud:
+    image: heliummpc/helium:latest
+    container_name: cloud
+    command: -setup /helium/config/setup_desc.json
+    volumes:
+      - ../cloud.json:/helium/config/node.json
+      - ../setup_desc.json:/helium/config/setup_desc.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # No persistency, cloud is always online.
+
+  node-a:
+    image: heliummpc/helium:latest
+    container_name: node-a
+    command: -setup /helium/config/setup_desc.json
+    volumes:
+      - ../nodeA.json:/helium/config/node.json
+      - ../setup_desc.json:/helium/config/setup_desc.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # Persistent data across container reboots.
+      - node-a-data:/helium/data
+
+  node-b:
+    image: heliummpc/helium:latest
+    container_name: node-b
+    command: -setup /helium/config/setup_desc.json
+    volumes:
+      - ../nodeB.json:/helium/config/node.json
+      - ../setup_desc.json:/helium/config/setup_desc.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # No persistency.
+
+volumes:
+  node-a-data:

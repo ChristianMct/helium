@@ -32,7 +32,7 @@ type LocalTestConfig struct {
 	FullNodes        int // Number of full nodes in the session
 	LightNodes       int // Number of light nodes in the session
 	HelperNodes      int // number of helper nodes (full nodes that are not in the session key)
-	Session          *SessionParameters
+	Session          *pkg.SessionParameters
 	DoThresholdSetup bool
 	InsecureChannels bool // are we using (m)TLS to establish the channels between nodes?
 }
@@ -182,7 +182,7 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 		config.Session.CRSKey = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
 
 		for i := range ncs {
-			ncs[i].SessionParameters = []SessionParameters{*config.Session}
+			ncs[i].SessionParameters = []pkg.SessionParameters{*config.Session}
 			ncs[i].SessionParameters[0].ShamirPks = nodeShamirPks // forces the Shamir pts
 		}
 	}

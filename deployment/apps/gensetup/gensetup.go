@@ -55,7 +55,7 @@ func main() {
 	var testConfig = node.LocalTestConfig{
 		FullNodes:  n,
 		LightNodes: 0,
-		Session: &node.SessionParameters{
+		Session: &pkg.SessionParameters{
 			RLWEParams: rlwe.ParametersLiteral{
 				LogN: 14,
 				LogQ: []int{52, 47, 47, 47, 47, 47, 47},

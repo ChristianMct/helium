@@ -32,7 +32,7 @@ func TestCloudDataTransfers(t *testing.T) {
 				var testConfig = node.LocalTestConfig{
 					HelperNodes: 1,
 					LightNodes:  4,
-					Session: &node.SessionParameters{
+					Session: &pkg.SessionParameters{
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},

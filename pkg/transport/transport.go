@@ -55,7 +55,7 @@ type SetupServiceTransport interface {
 	ShareTransport
 }
 
-// ComputeServiceTransport is an interface for the transport layer supporting the setup service.
+// ComputeServiceTransport is an interface for the transport layer supporting the compute service.
 type ComputeServiceTransport interface {
 
 	// GetCiphertext queries the transport for the designated ciphertext

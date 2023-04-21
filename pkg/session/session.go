@@ -6,6 +6,10 @@ import (
 	"log"
 	"math/rand"
 
+	"github.com/ldsec/helium/pkg/session/objectstore"
+	"github.com/ldsec/helium/pkg/session/objectstore/badgerobjectstore"
+	"github.com/ldsec/helium/pkg/session/objectstore/memobjectstore"
+	"github.com/ldsec/helium/pkg/session/objectstore/nullobjectstore"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"google.golang.org/grpc/metadata"
@@ -118,9 +122,12 @@ func (na NodeAddress) String() string {
 	return string(na)
 }
 
+// Session is the context of an MPC protocol execution.
 type Session struct {
 	*drlwe.Combiner
 	*CiphertextStore
+
+	objectstore.ObjectStore
 
 	ID     SessionID
 	NodeID NodeID
@@ -144,6 +151,18 @@ type Session struct {
 	mutex sync.RWMutex
 }
 
+// SessionParameters contains data used to initialize a Session.
+type SessionParameters struct {
+	ID         SessionID
+	RLWEParams rlwe.ParametersLiteral
+	T          int
+	Nodes      []NodeID
+	ShamirPks  map[NodeID]drlwe.ShamirPublicPoint
+	CRSKey     []byte
+
+	ObjectStoreConfig objectstore.Config
+}
+
 type SessionProvider interface {
 	GetSessionFromID(sessionID SessionID) (*Session, bool)
 	GetSessionFromContext(ctx context.Context) (*Session, bool)
@@ -161,7 +180,7 @@ func NewSessionStore() *SessionStore {
 	return ss
 }
 
-func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
+func NewSession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
 
 	sess = new(Session)
 	sess.ID = sessionID
@@ -192,16 +211,46 @@ func NewSession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, node
 	sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
 	sess.CiphertextStore = NewCiphertextStore()
 
+	switch sessParams.ObjectStoreConfig.BackendName {
+	case "null":
+		sess.ObjectStore = nullobjectstore.NewObjectStore()
+		break
+
+	case "mem":
+		sess.ObjectStore = memobjectstore.NewObjectStore()
+		break
+
+	case "badgerdb":
+		// TODO remove hardcoded manipulation of DB path.
+		sessParams.ObjectStoreConfig.DBPath += string(sess.NodeID)
+		// END TODO.
+
+		sess.ObjectStore, err = badgerobjectstore.NewObjectStore(&sessParams.ObjectStoreConfig)
+		if err != nil {
+			return nil, err
+		}
+		break
+
+	// use in-memory backend as default case.
+	default:
+		log.Printf("Node %s | using default ObjectStore backend for session creation\n", sess.NodeID)
+		sess.ObjectStore = memobjectstore.NewObjectStore()
+		break
+	}
+
 	return sess, err
 }
 
-func (s *SessionStore) NewRLWESession(params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPks map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
+func (s *SessionStore) NewRLWESession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPks map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
 
 	if _, exists := s.sessions[sessionID]; exists {
 		return nil, fmt.Errorf("session id already exists: %s", sessionID)
 	}
 
-	sess, err = NewSession(params, sk, crsKey, nodeID, nodes, t, shamirPks, sessionID)
+	sess, err = NewSession(sessParams, params, sk, crsKey, nodeID, nodes, t, shamirPks, sessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	s.sessions[sess.ID] = sess
 

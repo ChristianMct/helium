@@ -77,7 +77,7 @@ func newTestEnvironment(ts testSetting, params rlwe.ParametersLiteral) *testEnvi
 	}
 	tc := node.LocalTestConfig{
 		FullNodes: ts.N,
-		Session: &node.SessionParameters{
+		Session: &pkg.SessionParameters{
 			RLWEParams: params,
 			T:          ts.T,
 		},

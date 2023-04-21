@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/session/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/ldsec/helium/pkg/node"
@@ -17,6 +19,8 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
+
+var DBPath = "./SetupProtocolDB"
 
 var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
 
@@ -58,15 +62,24 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
+				var testname = fmt.Sprintf("TestCloudAssistedSetup-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
+
+				var objstoreconf = objectstore.Config{
+					BackendName: "mem",
+					DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
+				}
+				var sessParams = &pkg.SessionParameters{
+					RLWEParams:        literalParams,
+					T:                 ts.T,
+					ObjectStoreConfig: objstoreconf,
+				}
 				var testConfig = node.LocalTestConfig{
-					HelperNodes: 1, // the cloud
-					LightNodes:  ts.N,
-					Session: &node.SessionParameters{
-						RLWEParams: literalParams,
-						T:          ts.T,
-					},
+					HelperNodes:      1, // the cloud
+					LightNodes:       ts.N,
+					Session:          sessParams,
 					DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 				}
+
 				localTest := node.NewLocalTest(testConfig)
 
 				var err error
@@ -190,6 +203,194 @@ func TestCloudAssistedSetup(t *testing.T) {
 	}
 }
 
+// TestCloudAssistedSetupSkinny tests the setup service in cloud-assisted mode with one helper and N light nodes.
+// This test is a simplified version of the TestCloudAssistedSetup test.
+func TestSkinnyCloudAssistedSetup(t *testing.T) {
+	for _, literalParams := range rangeParam {
+		for _, ts := range testSettings {
+			if ts.T == 0 {
+				ts.T = ts.N // N-out-of-N scenario
+			}
+
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+
+				var testname = fmt.Sprintf("TestCloudAssistedSetupSkinny-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
+
+				var objstoreconf = objectstore.Config{
+					BackendName: "mem",
+					DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
+				}
+
+				var sessParams = &pkg.SessionParameters{
+					RLWEParams:        literalParams,
+					T:                 ts.T,
+					ObjectStoreConfig: objstoreconf,
+				}
+				var testConfig = node.LocalTestConfig{
+					HelperNodes:      1, // the cloud
+					LightNodes:       ts.N,
+					Session:          sessParams,
+					DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+				}
+				localTest := node.NewLocalTest(testConfig)
+
+				var err error
+				cloud := localTest.HelperNodes[0]
+				clients := localTest.SessionNodes()
+
+				setup := setup.Description{
+					Cpk: localTest.SessionNodesIds(),
+					GaloisKeys: []struct {
+						GaloisEl  uint64
+						Receivers []pkg.NodeID
+					}{
+						{5, []pkg.NodeID{cloud.ID()}},
+						{25, []pkg.NodeID{cloud.ID()}},
+						{125, []pkg.NodeID{cloud.ID()}},
+					},
+					Rlk: []pkg.NodeID{cloud.ID()},
+				}
+
+				localTest.Start()
+
+				// Start public key generation
+				t.Run("FullSetup", func(t *testing.T) {
+
+					g := new(errgroup.Group)
+
+					// runs the cloud
+					g.Go(func() error {
+						errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
+						if errExec != nil {
+							errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
+						}
+						return errExec
+					})
+
+					// runs the online clients
+					for _, client := range clients {
+						client := client
+						g.Go(func() error {
+							errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
+							if errExec != nil {
+								errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
+							}
+							return errExec
+						})
+					}
+
+					// if T < N, the online parties should be able to complete the setup
+					// by themselves, so we wait for them to finish and check their
+					// sessions. Otherwise, we wait for a bit before running the others.
+					// if len(online) >= ts.T {
+					err = g.Wait()
+					if err != nil {
+						t.Fatal(err)
+					}
+					cloudss, ok := cloud.GetSessionFromID("test-session")
+					if !ok {
+						t.Fatal("session should exist")
+					}
+					checkKeyGenProt(t, localTest, setup, cloudss)
+
+					for _, client := range clients {
+						clientss, ok := client.GetSessionFromID("test-session")
+						if !ok {
+							t.Fatal("session should exist")
+						}
+						checkKeyGenProt(t, localTest, setup, clientss)
+					}
+				})
+			})
+		}
+	}
+}
+
+// TestSimpleSetup executes the setup protocol with one client and the cloud. In this test, only the CPK is generated.
+func TestSimpleSetup(t *testing.T) {
+	literalParams := rangeParam[0]
+	ts := testSetting{
+		N: 1,
+		T: 1,
+	}
+
+	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+
+		var testname = fmt.Sprintf("TestSimpleSetup-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
+
+		var objstoreconf = objectstore.Config{
+			BackendName: "mem",
+			DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
+		}
+
+		var sessParams = &pkg.SessionParameters{
+			RLWEParams:        literalParams,
+			T:                 ts.T,
+			ObjectStoreConfig: objstoreconf,
+		}
+		var testConfig = node.LocalTestConfig{
+			HelperNodes:      1, // the cloud
+			LightNodes:       ts.N,
+			Session:          sessParams,
+			DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+		}
+		localTest := node.NewLocalTest(testConfig)
+
+		var err error
+		cloud := localTest.HelperNodes[0]
+		client := localTest.SessionNodes()[0]
+
+		setup := setup.Description{
+			Cpk: localTest.SessionNodesIds(),
+		}
+
+		localTest.Start()
+
+		// Start public key generation
+		t.Run("FullSetup", func(t *testing.T) {
+
+			g := new(errgroup.Group)
+
+			// run the cloud
+			g.Go(func() error {
+				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
+				if errExec != nil {
+					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
+				}
+				return errExec
+			})
+
+			// run the client
+			g.Go(func() error {
+				errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
+				if errExec != nil {
+					errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
+				}
+				return errExec
+			})
+
+			// wait for cloud and client to finish running the setup
+			err = g.Wait()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// check if setup material was correctly generated
+			cloudss, ok := cloud.GetSessionFromID("test-session")
+			if !ok {
+				t.Fatal("session should exist")
+			}
+			checkKeyGenProt(t, localTest, setup, cloudss)
+
+			clientss, ok := client.GetSessionFromID("test-session")
+			if !ok {
+				t.Fatal("session should exist")
+			}
+			checkKeyGenProt(t, localTest, setup, clientss)
+		})
+	})
+}
+
 // TestPeerToPeerSetup tests the peer to peer setup with N full nodes.
 func TestPeerToPeerSetup(t *testing.T) {
 
@@ -207,7 +408,7 @@ func TestPeerToPeerSetup(t *testing.T) {
 				var testConfig = node.LocalTestConfig{
 					FullNodes:  ts.N,
 					LightNodes: 0,
-					Session: &node.SessionParameters{
+					Session: &pkg.SessionParameters{
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
@@ -303,19 +504,22 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 	nParties := len(lt.SessionNodes())
 
 	if utils.NewSet(setup.Cpk).Contains(sess.NodeID) {
-		pk := sess.PublicKey
-		if pk == nil {
-			t.Fatalf("pk was not generated for node %s", sess.NodeID)
+		cpk := new(rlwe.PublicKey)
+		err := sess.ObjectStore.Load(protocols.CKG.ProtoID(), cpk)
+		if err != nil {
+			t.Fatalf("%s | CPK was not found for node %s: %s", sess.NodeID, sess.NodeID, err)
 		}
+		t.Logf("%s | SetupTest: loaded CPK %v\n", sess.NodeID, cpk)
 		log2BoundPk := bits.Len64(uint64(nParties) * params.NoiseBound() * uint64(params.N()))
-		require.True(t, rlwe.PublicKeyIsCorrect(pk, sk, params, log2BoundPk))
+		require.True(t, rlwe.PublicKeyIsCorrect(cpk, sk, params, log2BoundPk))
 	}
 
 	for _, key := range setup.GaloisKeys {
 		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
-			rtk, isGen := sess.EvaluationKey.Rtks.Keys[key.GaloisEl]
-			if !isGen {
-				t.Fatalf("rtk was not generated for node %s", sess.NodeID)
+			rtk := new(rlwe.SwitchingKey)
+			err := sess.ObjectStore.Load(protocols.RTG.ProtoID(key.GaloisEl), rtk)
+			if err != nil {
+				t.Fatalf("%s | Rotation Key was not found for %s: %s", sess.NodeID, sess.NodeID, err)
 			}
 			log2BoundRtk := bits.Len64(uint64(
 				params.N() * len(rtk.Value) * len(rtk.Value[0]) *
@@ -326,9 +530,10 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 	}
 
 	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
-		rlk := sess.RelinearizationKey
-		if rlk == nil {
-			t.Fatalf("rlk was not generated for node %s", sess.NodeID)
+		rlk := new(rlwe.RelinearizationKey)
+		err := sess.ObjectStore.Load(protocols.RKG.ProtoID(), rlk)
+		if err != nil {
+			t.Fatalf("%s | RLK was not found for node %s, %s", sess.NodeID, sess.NodeID, err)
 		}
 
 		levelQ, levelP := params.QCount()-1, params.PCount()-1

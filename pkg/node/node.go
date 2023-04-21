@@ -11,7 +11,6 @@ import (
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -56,7 +55,7 @@ type Config struct {
 	ID                pkg.NodeID
 	Address           pkg.NodeAddress
 	Peers             map[pkg.NodeID]pkg.NodeAddress
-	SessionParameters []SessionParameters
+	SessionParameters []pkg.SessionParameters
 	TLSConfig         grpctrans.TLSConfig
 }
 
@@ -174,22 +173,13 @@ func (node *Node) IsFullNode() bool {
 	return node.HasAddress()
 }
 
-type SessionParameters struct {
-	ID         pkg.SessionID
-	RLWEParams rlwe.ParametersLiteral
-	T          int
-	Nodes      []pkg.NodeID
-	ShamirPks  map[pkg.NodeID]drlwe.ShamirPublicPoint
-	CRSKey     []byte
-}
-
 // SignatureParameters used to bootstrap the signature scheme.
 type SignatureParameters struct {
 	Type api.SignatureType
 }
 
 // CreateNewSession takes an int id and creates a new rlwe session with this node and its peers and a sessionID constructed using the given id.
-func (node *Node) CreateNewSession(sessParams SessionParameters) (sess *pkg.Session, err error) {
+func (node *Node) CreateNewSession(sessParams pkg.SessionParameters) (sess *pkg.Session, err error) {
 	// sessionID = "p2p" + node.addr + "." + fmt.Sprint(id)
 	// peerAddr := getAddrOfPeers(node.peers)
 
@@ -209,7 +199,7 @@ func (node *Node) CreateNewSession(sessParams SessionParameters) (sess *pkg.Sess
 		sk = kg.GenSecretKey()
 	}
 
-	sess, err = node.sessions.NewRLWESession(&fheParams, sk, sessParams.CRSKey, node.id, sessParams.Nodes, sessParams.T, sessParams.ShamirPks, sessParams.ID)
+	sess, err = node.sessions.NewRLWESession(&sessParams, &fheParams, sk, sessParams.CRSKey, node.id, sessParams.Nodes, sessParams.T, sessParams.ShamirPks, sessParams.ID)
 	if err != nil {
 		return sess, err
 	}

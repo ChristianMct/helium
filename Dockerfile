@@ -14,7 +14,7 @@ RUN go mod download
 COPY pkg ./pkg
 COPY apps ./apps
 
-RUN go build ./apps/node
+RUN CGO_ENABLED=0 go build ./apps/node
 
 #########################################
 #  Image                                #

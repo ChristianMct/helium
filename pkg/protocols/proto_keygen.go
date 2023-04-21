@@ -84,6 +84,15 @@ func (t Type) String() string {
 	return typeToString[t]
 }
 
+// ProtoID converts a protocol type into a string.
+func (t Type) ProtoID(galKeyCount ...uint64) string {
+	s := t.String()
+	if t == RTG {
+		return fmt.Sprintf("%s[%d]", s, galKeyCount)
+	}
+	return s
+}
+
 func (t Type) Share() LattigoShare {
 	switch t {
 	case SKG:
@@ -538,6 +547,11 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 
 func (p *protocol) IsAggregator() bool {
 	return p.Descriptor.Aggregator == p.self || p.Descriptor.Type == SKG
+}
+
+func (pd Descriptor) String() string {
+	return fmt.Sprintf("{ID: %v, Type: %v, Args: %v, Aggregator: %v, Participants: %v}",
+		pd.ID, pd.Type, pd.Args, pd.Aggregator, pd.Participants)
 }
 
 func (s Share) Copy() Share {

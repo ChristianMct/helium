@@ -157,7 +157,7 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 		}
 		op := evalCtx.Get(pkg.OperandLabel(ctURL.String()))
 		ct = &pkg.Ciphertext{Ciphertext: *op.Ciphertext}
-	} else if ct, exists = sess.Load(ctID); !exists {
+	} else if ct, exists = sess.CiphertextStore.Load(ctID); !exists {
 		return nil, fmt.Errorf("ciphertext with id %s not found in session", ctID)
 	}
 
@@ -204,7 +204,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 	} else {
 
 		// stores the ciphertext
-		err = sess.Store(ct)
+		err = sess.CiphertextStore.Store(ct)
 		if err != nil {
 			return err
 		}
