@@ -1,0 +1,124 @@
+..rios/setup_persistence/local❯ docker compose up                                                                         helium/git/dev_persistent-storage !
+[+] Running 5/5
+ ⠿ Network setup_persistence_default       Created                                                                                                       0.0s
+ ⠿ Volume "setup_persistence_node-a-data"  Created                                                                                                       0.0s
+ ⠿ Container node-b                        Created                                                                                                       0.3s
+ ⠿ Container cloud                         Created                                                                                                       0.3s
+ ⠿ Container node-a                        Created                                                                                                       0.3s
+Attaching to cloud, node-a, node-b
+node-a  | badger 2023/04/27 14:41:17 INFO: All 0 tables opened in 0s
+node-a  | badger 2023/04/27 14:41:17 INFO: Discard stats nextEmptySlot: 0
+node-a  | badger 2023/04/27 14:41:17 INFO: Set nextTxnTs to 0
+node-a  | 2023/04/27 14:41:17 Node node-a | created rlwe session with id: test-session and nodes: [cloud node-a node-b] 
+cloud   | badger 2023/04/27 14:41:17 INFO: All 0 tables opened in 0s
+cloud   | badger 2023/04/27 14:41:17 INFO: Discard stats nextEmptySlot: 0
+cloud   | badger 2023/04/27 14:41:17 INFO: Set nextTxnTs to 0
+cloud   | 2023/04/27 14:41:17 Node cloud | created rlwe session with id: test-session and nodes: [cloud node-a node-b] 
+node-b  | 2023/04/27 14:41:17 Node node-b | created rlwe session with id: test-session and nodes: [cloud node-a node-b] 
+node-b  | 2023/04/27 14:41:17 node-b | is connected to 2 peers
+node-b  | 2023/04/27 14:41:17 node-b | started Execute with protocols
+node-b  | 2023/04/27 14:41:17 node-b | Setup.Execute parameters
+node-b  | sd: {[] [] [cloud node-a node-b]}
+node-b  | nl: [cloud:40000 node-a:40000 node-b:40000]
+node-b  | sess: {
+node-b  |               ID: test-session,
+node-b  |               NodeID: node-b,
+node-b  |               Nodes: [cloud node-a node-b],
+node-b  |               T: 3,
+node-b  |               CRSKey: [108 97 116 116 105 103 48],
+node-b  |       }
+node-b  | 2023/04/27 14:41:17 node-b | [CheckObjectStore] IsPresent of RKG returned false
+node-b  | 2023/04/27 14:41:17 node-b | registering to aggregator cloud
+node-b  | 2023/04/27 14:41:17 node-b | completed all aggregations
+cloud   | 2023/04/27 14:41:17 cloud | peer node-b registered for setup
+node-a  | 2023/04/27 14:41:18 node-a | is connected to 2 peers
+node-b  | 2023/04/27 14:41:18 node-b | handling stream with node-a
+node-a  | 2023/04/27 14:41:18 node-a | opened stream with node-b
+node-a  | 2023/04/27 14:41:18 node-a | handling stream with cloud
+node-b  | 2023/04/27 14:41:18 node-b | handling stream with node-a
+node-a  | 2023/04/27 14:41:18 node-a | opened stream with node-b
+node-a  | 2023/04/27 14:41:18 node-a | started Execute with protocols
+node-a  | 2023/04/27 14:41:18 node-a | Setup.Execute parameters
+node-a  | sd: {[] [] [cloud node-a node-b]}
+node-a  | nl: [cloud:40000 node-a:40000 node-b:40000]
+node-a  | sess: {
+node-a  |               ID: test-session,
+node-a  |               NodeID: node-a,
+node-a  |               Nodes: [cloud node-a node-b],
+node-a  |               T: 3,
+node-a  |               CRSKey: [108 97 116 116 105 103 48],
+node-a  |       }
+node-a  | 2023/04/27 14:41:18 node-a | handling stream with node-b
+node-a  | 2023/04/27 14:41:18 node-a | [CheckObjectStore] IsPresent of RKG returned false
+node-a  | 2023/04/27 14:41:18 node-a | registering to aggregator cloud
+node-a  | 2023/04/27 14:41:18 node-a | completed all aggregations
+cloud   | 2023/04/27 14:41:18 cloud | peer node-a registered for setup
+cloud   | 2023/04/27 14:41:18 cloud | is connected to 2 peers
+node-a  | 2023/04/27 14:41:18 node-a | handling stream with cloud
+cloud   | 2023/04/27 14:41:18 cloud | opened stream with node-a
+cloud   | 2023/04/27 14:41:18 cloud | handling stream with node-b
+node-b  | 2023/04/27 14:41:18 node-b | handling stream with cloud
+cloud   | 2023/04/27 14:41:18 cloud | opened stream with node-b
+cloud   | 2023/04/27 14:41:18 cloud | handling stream with node-b
+node-a  | 2023/04/27 14:41:18 node-a | handling stream with cloud
+cloud   | 2023/04/27 14:41:18 cloud | opened stream with node-a
+cloud   | 2023/04/27 14:41:18 cloud | handling stream with node-b
+node-b  | 2023/04/27 14:41:18 node-b | handling stream with cloud
+cloud   | 2023/04/27 14:41:18 cloud | opened stream with node-b
+cloud   | 2023/04/27 14:41:18 cloud | started Execute with protocols
+cloud   | 2023/04/27 14:41:18 cloud | Setup.Execute parameters
+cloud   | sd: {[] [] [cloud node-a node-b]}
+cloud   | nl: [cloud:40000 node-a:40000 node-b:40000]
+cloud   | sess: {
+cloud   |               ID: test-session,
+cloud   |               NodeID: cloud,
+cloud   |               Nodes: [cloud node-a node-b],
+cloud   |               T: 3,
+cloud   |               CRSKey: [108 97 116 116 105 103 48],
+cloud   |       }
+cloud   | 2023/04/27 14:41:18 cloud | [CheckObjectStore] IsPresent of RKG returned false
+cloud   | 2023/04/27 14:41:18 cloud | handling stream with node-b
+cloud   | 2023/04/27 14:41:18 cloud | registration to all aggregators done
+cloud   | 2023/04/27 14:41:18 cloud | [Aggregate] Making new protocol pd: {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+cloud   | 2023/04/27 14:41:18 cloud | [RKG] started running with {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-b  | 2023/04/27 14:41:18 node-b | [Participate] Making new protocol pd: {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-a  | 2023/04/27 14:41:18 node-a | [Participate] Making new protocol pd: {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-b  | 2023/04/27 14:41:18 node-b | [Participate] Adding a goroutine to wait for pd: {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-b  | 2023/04/27 14:41:18 node-b | [RKG] started running with {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-a  | 2023/04/27 14:41:18 node-a | [Participate] Adding a goroutine to wait for pd: {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-a  | 2023/04/27 14:41:18 node-a | [RKG] started running with {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-b  | 2023/04/27 14:41:18 node-b | set of share providers: map[cloud:{} node-a:{} node-b:{}]
+node-b  | 2023/04/27 14:41:18 node-b | this node is a share provider {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-a  | 2023/04/27 14:41:18 node-a | set of share providers: map[cloud:{} node-a:{} node-b:{}]
+node-a  | 2023/04/27 14:41:18 node-a | this node is a share provider {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+node-b  | 2023/04/27 14:41:18 WE WILL NOT GET HERE
+cloud   | 2023/04/27 14:41:18 cloud | [RKG] new share from node-b
+node-b  | 2023/04/27 14:41:18 node-b | [RKG] completed aggregation
+node-b  | 2023/04/27 14:41:18 node-b | [Participate] Removing a goroutine to wait for pd: {ID: RKG, Type: RKG, Args: map[], Aggregator: cloud, Participants: [cloud node-a node-b]}
+cloud   | 2023/04/27 14:41:18 cloud | [RKG] new share from node-b
+cloud   | 2023/04/27 14:41:18 cloud | [RKG] failed: non-disjoint aggregate
+cloud   | panic: non-disjoint aggregate
+cloud   | 
+cloud   | goroutine 75 [running]:
+cloud   | github.com/ldsec/helium/pkg/services/setup.(*Service).aggregate.func1.1()
+cloud   |       /helium/pkg/services/setup/service.go:405 +0x25c
+cloud   | created by github.com/ldsec/helium/pkg/services/setup.(*Service).aggregate.func1
+cloud   |       /helium/pkg/services/setup/service.go:401 +0x905
+node-b  | panic: rpc error: code = Unavailable desc = error reading from server: EOF
+node-b  | 
+node-b  | goroutine 95 [running]:
+node-b  | github.com/ldsec/helium/pkg/transport/grpctrans.(*setupTransport).RegisterForSetupAt.func1()
+node-b  |       /helium/pkg/transport/grpctrans/setup.go:127 +0x205
+node-b  | created by github.com/ldsec/helium/pkg/transport/grpctrans.(*setupTransport).RegisterForSetupAt
+node-b  |       /helium/pkg/transport/grpctrans/setup.go:120 +0x18a
+node-a  | panic: rpc error: code = Unavailable desc = error reading from server: EOF
+node-a  | 
+node-a  | goroutine 131 [running]:
+node-a  | github.com/ldsec/helium/pkg/transport/grpctrans.(*setupTransport).RegisterForSetupAt.func1()
+node-a  |       /helium/pkg/transport/grpctrans/setup.go:127 +0x205
+node-a  | created by github.com/ldsec/helium/pkg/transport/grpctrans.(*setupTransport).RegisterForSetupAt
+node-a  |       /helium/pkg/transport/grpctrans/setup.go:120 +0x18a
+cloud exited with code 2
+node-a exited with code 2
+node-b exited with code 2
+..rios/setup_persistence/local❯                                                                                           helium/git/dev_persistent-storage !

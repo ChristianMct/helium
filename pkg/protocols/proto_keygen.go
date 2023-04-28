@@ -447,6 +447,8 @@ func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 	}
 
 	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
+		// DEBUG
+		log.Printf("%s | sending shareR1\n", p.self)
 		env.OutgoingShares() <- shareR1
 	}
 
@@ -454,13 +456,22 @@ func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 
 	var aggR1 Share
 
+	// DEBUG
+	log.Printf("%s | set of share providers: %v\n", p.self, p.shareProviders)
+
 	if p.shareProviders.Contains(p.self) {
+		// DEBUG
+		log.Printf("%s | this node is a share provider %v\n", p.self, p)
 		select {
 		case aggR1 = <-env.IncomingShares():
+			// DEBUG
+			log.Printf("%s | received aggregation for round 1", p.self)
 		case <-ctx.Done():
 			log.Println("timeout while aggregating shares")
 		}
 	}
+	// DEBUG
+	log.Println("POINT")
 
 	if p.shareProviders.Contains(p.self) {
 
@@ -502,6 +513,8 @@ func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 	}
 
 	if p.shareProviders.Contains(p.self) {
+		// DEBUG
+		log.Printf("%s | sending shareR2\n", p.self)
 		env.OutgoingShares() <- shareR2
 	}
 	log.Printf("%s | [%s] completed aggregation\n", p.self, p.ID())

@@ -74,6 +74,8 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		panic("test session does not exist")
 	}
 
+	log.Printf("%s | Setup.Execute parameters\nsd: %v\nnl: %v\nsess: %v\n", s.self, sd, nl, sess)
+
 	// 1. INITIALIZATION: generate the list of protocols signatures to execute
 	sigList := DescriptionToSignatureList(sd)
 
