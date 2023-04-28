@@ -251,10 +251,11 @@ func (p *Peer) ID() pkg.NodeID {
 
 func (p *Peer) SendUpdate(psu protocols.StatusUpdate) {
 	apiDesc := getAPIProtocolDesc(&psu.Descriptor)
-	for _, p := range psu.Participants {
-		apiDesc.Participants = append(apiDesc.Participants, &api.NodeID{NodeId: string(p)})
-	}
-
+	// log.Printf("%s | transport got apiPD: %v", p.ID(), apiDesc)
+	// for _, p := range psu.Participants {
+	// 	apiDesc.Participants = append(apiDesc.Participants, &api.NodeID{NodeId: string(p)})
+	// }
+	// log.Printf("%s | after append transport got apiPD: %v", p.ID(), apiDesc)
 	err := p.protoUpdateStream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(psu.Status)})
 	if err != nil {
 		p.protoUpdateStreamDone <- true

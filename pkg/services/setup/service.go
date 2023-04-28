@@ -76,15 +76,8 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 
 	// 1. INITIALIZATION: generate the list of protocols signatures to execute
 	sigList := DescriptionToSignatureList(sd)
-	//doThresholdSetup := !sess.HasTSK()
-
-	// From setup descriptor and session, generate a list of protocols to execute.
-	// list of protocols descriptors.
-	// if the result for a protocol is already in the key-store, than that protocol is
-	//protoIDtoPD := GenProtoMap(sd, nl, sess.T, sess.Nodes, doThresholdSetup, false)
 
 	// keep track of protocols whose results are already available
-	//protoIDtoResultPresent := s.checkObjectStore(protoIDtoPD, sess)
 	sigListNoResult, _ := s.filterSignatureList(sigList, sess)
 
 	// set of full nodes (that might be aggregators/helpers)
@@ -217,22 +210,6 @@ func (s *Service) filterSignatureList(sl SignatureList, sess *pkg.Session) (noRe
 	return
 }
 
-func (s *Service) checkObjectStore(protoIDtoPD ProtocolMap, sess *pkg.Session) map[pkg.ProtocolID]bool {
-	protoIDtoResultPresent := make(map[pkg.ProtocolID]bool)
-
-	for id, pd := range protoIDtoPD {
-		present, err := sess.ObjectStore.IsPresent(pd.Signature.String())
-		// DEBUG
-		log.Printf("%s | [CheckObjectStore] IsPresent of %s returned %v", pd.Signature.String(), s.self, present)
-		if err != nil {
-			panic(err)
-		}
-		protoIDtoResultPresent[id] = present
-	}
-
-	return protoIDtoResultPresent
-}
-
 // registerToAggregatorsForSetup registers the caller to all the aggregators and returns a channel where protocols updates are sent.
 func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeID], outCtx context.Context) <-chan protocols.StatusUpdate {
 	// channel that carries protocol updates (for all protocols).
@@ -248,7 +225,6 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 		go func() {
 			// DEBUG
 			log.Printf("%s | registering to aggregator %s\n", s.self, agg)
-			// END DEBUG
 			// register aggregator to the transport for the setup protocol.
 			protoUpdateChannel, err := s.transport.RegisterForSetupAt(outCtx, agg)
 			if err != nil {
@@ -306,7 +282,6 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 
 				// DEBUG
 				log.Printf("%s | [Participate] Making new protocol pd: %v\n", s.self, pd)
-				// END DEBUG
 				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
 				if err != nil {
 					panic(err)
