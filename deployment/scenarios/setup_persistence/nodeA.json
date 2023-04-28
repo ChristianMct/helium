@@ -16,7 +16,7 @@
             "P":     [549755904001],
             "Sigma": 3.2
         },
-        "Nodes": ["cloud", "node-a", "node-b"],
+        "Nodes": ["node-a", "node-b"],
 		"CRSKey": "bGF0dGlnMA==",
         "ObjectStoreConfig": {
             "BackendName": "badgerdb",

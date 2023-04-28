@@ -62,8 +62,8 @@ docker compose logs -t node-b &> ${SECOND_DIR}/node-b.log
 docker compose logs -t cloud &> ${SECOND_DIR}/cloud.log
 # docker-compose logs -f > ${LOG_DIR}/second_setup.log &
 # sleep $TIME_TO_SAVE_LOGS
-echo "Second phase completed, killing all containers"
-docker compose down
+echo "Second phase completed, killing all containers and removing volumes"
+docker compose down -v
 
-echo "Cleaning up volumes in the container"
-docker volume rm setup_persistence_node-a-data
+# echo "Cleaning up volumes in the container"
+# docker volume rm setup_persistence_node-a-data
