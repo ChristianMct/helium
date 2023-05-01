@@ -1,0 +1,89 @@
+cloud  | badger 2023/05/01 15:23:32 INFO: All 0 tables opened in 0s
+cloud  | badger 2023/05/01 15:23:32 INFO: Discard stats nextEmptySlot: 0
+cloud  | badger 2023/05/01 15:23:32 INFO: Set nextTxnTs to 0
+cloud  | 2023/05/01 15:23:32 Node cloud | created rlwe session with id: test-session and nodes: [node-a node-b] 
+cloud  | 2023/05/01 15:23:32 cloud | is connected to 0 peers
+cloud  | 2023/05/01 15:23:32 cloud | started Execute
+cloud  | 2023/05/01 15:23:32 cloud | Setup.Execute parameters
+cloud  | sd: {[cloud node-a node-b] [{5 [cloud]} {10 [cloud]}] [cloud]}
+cloud  | nl: [cloud:40000  ]
+cloud  | sess: {
+cloud  | 		ID: test-session,
+cloud  | 		NodeID: cloud,
+cloud  | 		Nodes: [node-a node-b],
+cloud  | 		T: 2,
+cloud  | 		CRSKey: [108 97 116 116 105 103 48],
+cloud  | 	}
+cloud  | 2023/05/01 15:23:32 cloud | registration to all aggregators done
+cloud  | 2023/05/01 15:23:32 cloud | [Aggregate] Making new protocol pd: {ID: CKG-0, Type: CKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:32 cloud | [CKG-0] started running with {ID: CKG-0, Type: CKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:32 cloud | [Aggregate] Making new protocol pd: {ID: RTG-1, Type: RTG, Args: map[GalEl:5], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:32 cloud | [Aggregate] Making new protocol pd: {ID: RTG-2, Type: RTG, Args: map[GalEl:10], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:32 cloud | [Aggregate] Making new protocol pd: {ID: RKG-3, Type: RKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:32 cloud | [RTG-2] started running with {ID: RTG-2, Type: RTG, Args: map[GalEl:10], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:32 cloud | [RTG-1] started running with {ID: RTG-1, Type: RTG, Args: map[GalEl:5], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:32 cloud | [RKG-3] started running with {ID: RKG-3, Type: RKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+cloud  | 2023/05/01 15:23:34 cloud | handling stream with node-b
+cloud  | 2023/05/01 15:23:34 cloud | handling stream with node-b
+cloud  | 2023/05/01 15:23:34 cloud | peer node-b registered for setup
+cloud  | 2023/05/01 15:23:34 cloud | [CKG-0] new share from node-b
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] new share from node-b
+cloud  | 2023/05/01 15:23:34 cloud | [RTG-2] new share from node-b
+cloud  | 2023/05/01 15:23:34 cloud | [RTG-1] new share from node-b
+cloud  | 2023/05/01 15:23:34 cloud | handling stream with node-a
+cloud  | 2023/05/01 15:23:34 cloud | handling stream with node-a
+cloud  | 2023/05/01 15:23:34 cloud | peer node-a registered for setup
+cloud  | 2023/05/01 15:23:34 cloud | [RTG-1] new share from node-a
+cloud  | 2023/05/01 15:23:34 cloud | [RTG-1] finalized protocol
+cloud  | 2023/05/01 15:23:34 cloud | [Store] Storing output for protocol RTG-1 under {"Type":4,"Args":{"GalEl":"5"}}
+cloud  | 2023/05/01 15:23:34 cloud | [CKG-0] new share from node-a
+cloud  | 2023/05/01 15:23:34 cloud | [CKG-0] finalized protocol
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output RTG-1 query from node-b
+cloud  | 2023/05/01 15:23:34 cloud | [Store] Storing output for protocol CKG-0 under {"Type":2,"Args":{}}
+cloud  | 2023/05/01 15:23:34 cloud | [RTG-2] new share from node-a
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output RTG-1 query from node-a
+cloud  | 2023/05/01 15:23:34 cloud | [RTG-2] finalized protocol
+cloud  | 2023/05/01 15:23:34 cloud | [Store] Storing output for protocol RTG-2 under {"Type":4,"Args":{"GalEl":"10"}}
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] new share from node-a
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output CKG-0 query from node-b
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] completed round 1 aggregation
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output RTG-2 query from node-b
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output CKG-0 query from node-a
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output RTG-2 query from node-a
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] new share from node-b
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] new share from node-a
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] completed round 2 aggregation
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] completed aggregation
+cloud  | 2023/05/01 15:23:34 cloud | [RKG-3] finalized protocol
+cloud  | 2023/05/01 15:23:34 cloud | completed all aggregations
+cloud  | 2023/05/01 15:23:34 cloud | completed all participations
+cloud  | 2023/05/01 15:23:34 cloud | completed all queries
+cloud  | 2023/05/01 15:23:34 cloud | [Store] Storing output for protocol RKG-3 under {"Type":3,"Args":{}}
+cloud  | 2023/05/01 15:23:34 cloud | peer node-b unregistered
+cloud  | 2023/05/01 15:23:34 cloud | peer node-a unregistered
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output RKG-3 query from node-a
+cloud  | 2023/05/01 15:23:34 cloud | aggregation output RKG-3 query from node-b
+cloud  | 2023/05/01 15:23:34 cloud | execute returned
+cloud  | 2023/05/01 15:23:34 cloud | finished setup for N=3 T=0
+cloud  | 2023/05/01 15:23:34 cloud | execute returned after 1.942528039s
+cloud  | 2023/05/01 15:23:34 cloud | network stats: Sent: 3.3 MB, Received: 2.6 MB
+cloud  | 2023/05/01 15:23:39 cloud | error while receiving share: rpc error: code = Canceled desc = context canceled
+cloud  | 2023/05/01 15:23:39 cloud | error while receiving share: rpc error: code = Canceled desc = context canceled
+cloud  | 2023/05/01 15:23:39 cloud | error while receiving share: rpc error: code = Canceled desc = context canceled
+cloud  | 2023/05/01 15:23:39 cloud | error while receiving share: rpc error: code = Canceled desc = context canceled
+cloud  | 2023/05/01 15:23:40 cloud | handling stream with node-b
+cloud  | 2023/05/01 15:23:40 cloud | handling stream with node-b
+cloud  | 2023/05/01 15:23:40 cloud | peer node-b was already registered
+cloud  | 2023/05/01 15:23:40 cloud | peer node-b registered for setup
+cloud  | 2023/05/01 15:23:40 cloud | peer node-b unregistered
+cloud  | 2023/05/01 15:23:40 cloud | aggregation output RTG-1 query from node-b
+cloud  | 2023/05/01 15:23:40 cloud | aggregation output CKG-0 query from node-b
+cloud  | 2023/05/01 15:23:40 cloud | aggregation output RTG-2 query from node-b
+cloud  | 2023/05/01 15:23:40 cloud | aggregation output RKG-3 query from node-b
+cloud  | 2023/05/01 15:23:41 cloud | handling stream with node-a
+cloud  | 2023/05/01 15:23:41 cloud | handling stream with node-a
+cloud  | 2023/05/01 15:23:41 cloud | peer node-a was already registered
+cloud  | 2023/05/01 15:23:41 cloud | peer node-a registered for setup
+cloud  | 2023/05/01 15:23:41 cloud | peer node-a unregistered
+cloud  | 2023/05/01 15:23:46 cloud | exiting.
+cloud exited with code 0

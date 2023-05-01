@@ -30,48 +30,30 @@
 SETUP_DURATION=5
 TIME_TO_SAVE_LOGS=1
 LOG_DIR="./out"
-LOG_FILE=$LOG_DIR/setup.log
-# FIRST_DIR=$LOG_DIR/first_setup
-# SECOND_DIR=$LOG_DIR/second_setup
+LOG_FILE_CLOUD=$LOG_DIR/setup_cloud.log
+LOG_FILE_CLIENTS=$LOG_DIR/setup_clients.log
 
 mkdir -p $LOG_DIR
-# mkdir -p $FIRST_DIR
-# mkdir -p $SECOND_DIR
 
-echo "Starting Phase 1: Setup"
-echo "FIRST PHASE\n\n" > $LOG_FILE
-docker compose up --detach
+echo "STARTING PHASE 1..."
 
-docker-compose logs -f >> $LOG_FILE &
+docker compose --profile cloud up --detach
+docker compose --profile cloud logs -f > ${LOG_FILE_CLOUD} &
+sleep 1
 
-echo "Waiting $SETUP_DURATION seconds for the setup to complete..."
+echo "FIRST PHASE \n\n" > ${LOG_FILE_CLIENTS}
+docker compose --profile clients up --detach
+docker compose --profile clients logs -f >> ${LOG_FILE_CLIENTS} &
 sleep $SETUP_DURATION
-# echo "Saving compose logs"
-# docker compose logs -f &> ${LOG_DIR}/first_setup.log &
-# docker compose logs -t node-a &> ${FIRST_DIR}/node-a.log
-# docker compose logs -t node-b &> ${FIRST_DIR}/node-b.log
-# docker compose logs -t cloud &> ${FIRST_DIR}/cloud.log
-# sleep $TIME_TO_SAVE_LOGS
-# kill log background process
-# kill %% 
 
-echo "\n\nSECOND PHASE\n\n" >> $LOG_FILE 2>&1
-echo "First setup completed, restarting clients (simulate both clients crashing)"
-docker compose restart node-a node-b
+echo "RESTARTING CLIENTS..."
+docker compose --profile clients down
+echo "STARTING PHASE 2..."
 
-echo "Starting Phase 2: Clients wake up"
-# docker compose up --detach
-echo "Waiting $SETUP_DURATION seconds for the setup to complete..."
+docker compose --profile clients up --detach
+echo "\n\n SECOND PHASE \n\n" >> ${LOG_FILE_CLIENTS}
+docker compose --profile clients logs -f >> ${LOG_FILE_CLIENTS} &
 sleep $SETUP_DURATION
-echo "Saving compose logs"
-# docker compose logs -t node-a &> ${SECOND_DIR}/node-a.log
-# docker compose logs -t node-b &> ${SECOND_DIR}/node-b.log
-# docker compose logs -t cloud &> ${SECOND_DIR}/cloud.log
-# docker-compose logs -f &>> $LOG_FILE &
-# sleep $TIME_TO_SAVE_LOGS
-# kill log background process
-# kill %%  
-
 
 echo "Second phase completed, killing all containers and removing volumes"
-docker compose down -v
+docker compose --profile all down -v

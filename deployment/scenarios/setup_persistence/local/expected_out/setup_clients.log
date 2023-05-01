@@ -1,0 +1,232 @@
+FIRST PHASE 
+
+
+node-b  | 2023/05/01 15:23:34 Node node-b | created rlwe session with id: test-session and nodes: [node-a node-b] 
+node-b  | 2023/05/01 15:23:34 node-b | is connected to 1 peers
+node-b  | 2023/05/01 15:23:34 node-b | opened stream with cloud
+node-b  | 2023/05/01 15:23:34 node-b | handling stream with cloud
+node-b  | 2023/05/01 15:23:34 node-b | opened stream with cloud
+node-b  | 2023/05/01 15:23:34 node-b | handling stream with cloud
+node-b  | 2023/05/01 15:23:34 node-b | started Execute
+node-b  | 2023/05/01 15:23:34 node-b | Setup.Execute parameters
+node-b  | sd: {[cloud node-a node-b] [{5 [cloud]} {10 [cloud]}] [cloud]}
+node-b  | nl: [cloud:40000  ]
+node-b  | sess: {
+node-b  | 		ID: test-session,
+node-b  | 		NodeID: node-b,
+node-b  | 		Nodes: [node-a node-b],
+node-b  | 		T: 2,
+node-a  | badger 2023/05/01 15:23:34 INFO: All 0 tables opened in 0s
+node-a  | badger 2023/05/01 15:23:34 INFO: Discard stats nextEmptySlot: 0
+node-a  | badger 2023/05/01 15:23:34 INFO: Set nextTxnTs to 0
+node-a  | 2023/05/01 15:23:34 Node node-a | created rlwe session with id: test-session and nodes: [node-a node-b] 
+node-a  | 2023/05/01 15:23:34 node-a | is connected to 1 peers
+node-a  | 2023/05/01 15:23:34 node-a | opened stream with cloud
+node-a  | 2023/05/01 15:23:34 node-a | handling stream with cloud
+node-a  | 2023/05/01 15:23:34 node-a | opened stream with cloud
+node-a  | 2023/05/01 15:23:34 node-a | started Execute
+node-a  | 2023/05/01 15:23:34 node-a | Setup.Execute parameters
+node-a  | sd: {[cloud node-a node-b] [{5 [cloud]} {10 [cloud]}] [cloud]}
+node-b  | 		CRSKey: [108 97 116 116 105 103 48],
+node-b  | 	}
+node-b  | 2023/05/01 15:23:34 node-b | registering to aggregator cloud
+node-b  | 2023/05/01 15:23:34 node-b | completed all aggregations
+node-a  | nl: [cloud:40000  ]
+node-a  | sess: {
+node-a  | 		ID: test-session,
+node-a  | 		NodeID: node-a,
+node-a  | 		Nodes: [node-a node-b],
+node-a  | 		T: 2,
+node-a  | 		CRSKey: [108 97 116 116 105 103 48],
+node-a  | 	}
+node-a  | 2023/05/01 15:23:34 node-a | handling stream with cloud
+node-a  | 2023/05/01 15:23:34 node-a | registering to aggregator cloud
+node-a  | 2023/05/01 15:23:34 node-a | completed all aggregations
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol RTG-2 : status: 1 
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol RTG-1 : status: 1 
+node-a  | 2023/05/01 15:23:34 node-a | [Participate] Making new protocol pd: {ID: RTG-1, Type: RTG, Args: map[GalEl:5], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [RTG-1] started running with {ID: RTG-1, Type: RTG, Args: map[GalEl:5], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [Participate] Making new protocol pd: {ID: RTG-2, Type: RTG, Args: map[GalEl:10], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [RTG-2] started running with {ID: RTG-2, Type: RTG, Args: map[GalEl:10], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol RKG-3 : status: 1 
+node-a  | 2023/05/01 15:23:34 node-a | [Participate] Making new protocol pd: {ID: RKG-3, Type: RKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol CKG-0 : status: 1 
+node-a  | 2023/05/01 15:23:34 node-a | [RKG-3] started running with {ID: RKG-3, Type: RKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [Participate] Making new protocol pd: {ID: CKG-0, Type: CKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [CKG-0] started running with {ID: CKG-0, Type: CKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [RTG-1] completed aggregation
+node-a  | 2023/05/01 15:23:34 node-a | [CKG-0] completed aggregation
+node-a  | 2023/05/01 15:23:34 node-a | [RTG-2] completed aggregation
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol RTG-1 : status: 0 
+node-a  | 2023/05/01 15:23:34 node-a | [QueryForOutput] [RTG-1] received aggregated completed
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol CKG-0 : status: 0 
+node-a  | 2023/05/01 15:23:34 node-a | queried node cloud for the protocol RTG-1 output
+node-a  | 2023/05/01 15:23:34 node-a | [RTG-1] finalized protocol
+node-a  | 2023/05/01 15:23:34 node-a | [QueryForOutput] [CKG-0] received aggregated completed
+node-a  | 2023/05/01 15:23:34 node-a | [Store] Storing output for protocol RTG-1 under {"Type":4,"Args":{"GalEl":"5"}}
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol RTG-2 : status: 0 
+node-a  | 2023/05/01 15:23:34 node-a | queried node cloud for the protocol CKG-0 output
+node-a  | 2023/05/01 15:23:34 node-a | [CKG-0] finalized protocol
+node-a  | 2023/05/01 15:23:34 node-a | [QueryForOutput] [RTG-2] received aggregated completed
+node-a  | 2023/05/01 15:23:34 node-a | [Store] Storing output for protocol CKG-0 under {"Type":2,"Args":{}}
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol CKG-0 : status: 1 
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol RTG-2 : status: 1 
+node-b  | 2023/05/01 15:23:34 node-b | [Participate] Making new protocol pd: {ID: RTG-2, Type: RTG, Args: map[GalEl:10], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [RKG-3] completed aggregation
+node-a  | 2023/05/01 15:23:34 node-a | queried node cloud for the protocol RTG-2 output
+node-a  | 2023/05/01 15:23:34 node-a | [RTG-2] finalized protocol
+node-a  | 2023/05/01 15:23:34 node-a | [Store] Storing output for protocol RTG-2 under {"Type":4,"Args":{"GalEl":"10"}}
+node-a  | 2023/05/01 15:23:34 node-a | go protocol update for protocol RKG-3 : status: 0 
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol RTG-1 : status: 1 
+node-b  | 2023/05/01 15:23:34 node-b | [Participate] Making new protocol pd: {ID: RTG-1, Type: RTG, Args: map[GalEl:5], Aggregator: cloud, Participants: [node-a node-b]}
+node-b  | 2023/05/01 15:23:34 node-b | [RTG-2] started running with {ID: RTG-2, Type: RTG, Args: map[GalEl:10], Aggregator: cloud, Participants: [node-a node-b]}
+node-b  | 2023/05/01 15:23:34 node-b | [Participate] Making new protocol pd: {ID: CKG-0, Type: CKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol RKG-3 : status: 1 
+node-b  | 2023/05/01 15:23:34 node-b | [RTG-1] started running with {ID: RTG-1, Type: RTG, Args: map[GalEl:5], Aggregator: cloud, Participants: [node-a node-b]}
+node-a  | 2023/05/01 15:23:34 node-a | [QueryForOutput] [RKG-3] received aggregated completed
+node-a  | 2023/05/01 15:23:34 node-a | aggregator cloud done
+node-a  | 2023/05/01 15:23:34 node-a | registration to all aggregators done
+node-a  | 2023/05/01 15:23:34 node-a | completed all participations
+node-a  | 2023/05/01 15:23:34 node-a | queried node cloud for the protocol RKG-3 output
+node-b  | 2023/05/01 15:23:34 node-b | [Participate] Making new protocol pd: {ID: RKG-3, Type: RKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-b  | 2023/05/01 15:23:34 node-b | [RKG-3] started running with {ID: RKG-3, Type: RKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-b  | 2023/05/01 15:23:34 node-b | [CKG-0] started running with {ID: CKG-0, Type: CKG, Args: map[], Aggregator: cloud, Participants: [node-a node-b]}
+node-b  | 2023/05/01 15:23:34 node-b | [CKG-0] completed aggregation
+node-b  | 2023/05/01 15:23:34 node-b | [RTG-2] completed aggregation
+node-b  | 2023/05/01 15:23:34 node-b | [RTG-1] completed aggregation
+node-a  | 2023/05/01 15:23:34 node-a | [RKG-3] finalized protocol
+node-a  | 2023/05/01 15:23:34 node-a | completed all queries
+node-a  | 2023/05/01 15:23:34 node-a | [Store] Storing output for protocol RKG-3 under {"Type":3,"Args":{}}
+node-a  | 2023/05/01 15:23:34 node-a | execute returned
+node-a  | 2023/05/01 15:23:34 node-a | finished setup for N=3 T=0
+node-a  | 2023/05/01 15:23:34 node-a | execute returned after 49.089423ms
+node-a  | 2023/05/01 15:23:34 node-a | network stats: Sent: 1.3 MB, Received: 1.7 MB
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol RTG-1 : status: 0 
+node-b  | 2023/05/01 15:23:34 node-b | [QueryForOutput] [RTG-1] received aggregated completed
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol CKG-0 : status: 0 
+node-b  | 2023/05/01 15:23:34 node-b | queried node cloud for the protocol RTG-1 output
+node-b  | 2023/05/01 15:23:34 node-b | [RTG-1] finalized protocol
+node-b  | 2023/05/01 15:23:34 node-b | [QueryForOutput] [CKG-0] received aggregated completed
+node-b  | 2023/05/01 15:23:34 node-b | [Store] Storing output for protocol RTG-1 under {"Type":4,"Args":{"GalEl":"5"}}
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol RTG-2 : status: 0 
+node-b  | 2023/05/01 15:23:34 node-b | queried node cloud for the protocol CKG-0 output
+node-b  | 2023/05/01 15:23:34 node-b | [CKG-0] finalized protocol
+node-b  | 2023/05/01 15:23:34 node-b | [QueryForOutput] [RTG-2] received aggregated completed
+node-b  | 2023/05/01 15:23:34 node-b | [Store] Storing output for protocol CKG-0 under {"Type":2,"Args":{}}
+node-b  | 2023/05/01 15:23:34 node-b | [RKG-3] completed aggregation
+node-b  | 2023/05/01 15:23:34 node-b | queried node cloud for the protocol RTG-2 output
+node-b  | 2023/05/01 15:23:34 node-b | [RTG-2] finalized protocol
+node-b  | 2023/05/01 15:23:34 node-b | [Store] Storing output for protocol RTG-2 under {"Type":4,"Args":{"GalEl":"10"}}
+node-b  | 2023/05/01 15:23:34 node-b | aggregator cloud done
+node-b  | 2023/05/01 15:23:34 node-b | registration to all aggregators done
+node-b  | 2023/05/01 15:23:34 node-b | go protocol update for protocol RKG-3 : status: 0 
+node-b  | 2023/05/01 15:23:34 node-b | [QueryForOutput] [RKG-3] received aggregated completed
+node-b  | 2023/05/01 15:23:34 node-b | completed all participations
+node-b  | 2023/05/01 15:23:34 node-b | queried node cloud for the protocol RKG-3 output
+node-b  | 2023/05/01 15:23:34 node-b | [RKG-3] finalized protocol
+node-b  | 2023/05/01 15:23:34 node-b | completed all queries
+node-b  | 2023/05/01 15:23:34 node-b | [Store] Storing output for protocol RKG-3 under {"Type":3,"Args":{}}
+node-b  | 2023/05/01 15:23:34 node-b | execute returned
+node-b  | 2023/05/01 15:23:34 node-b | finished setup for N=3 T=0
+node-b  | 2023/05/01 15:23:34 node-b | execute returned after 150.995838ms
+node-b  | 2023/05/01 15:23:34 node-b | network stats: Sent: 1.3 MB, Received: 1.7 MB
+node-b  | 2023/05/01 15:23:39 node-b | exiting.
+node-a  | 2023/05/01 15:23:39 node-a | exiting.
+node-a exited with code 0
+node-b exited with code 0
+
+
+ SECOND PHASE 
+
+
+node-b  | 2023/05/01 15:23:40 Node node-b | created rlwe session with id: test-session and nodes: [node-a node-b] 
+node-b  | 2023/05/01 15:23:40 node-b | is connected to 1 peers
+node-b  | 2023/05/01 15:23:40 node-b | opened stream with cloud
+node-b  | 2023/05/01 15:23:40 node-b | handling stream with cloud
+node-b  | 2023/05/01 15:23:40 node-b | opened stream with cloud
+node-b  | 2023/05/01 15:23:40 node-b | started Execute
+node-b  | 2023/05/01 15:23:40 node-b | Setup.Execute parameters
+node-b  | sd: {[cloud node-a node-b] [{5 [cloud]} {10 [cloud]}] [cloud]}
+node-b  | nl: [cloud:40000  ]
+node-b  | sess: {
+node-b  | 		ID: test-session,
+node-b  | 		NodeID: node-b,
+node-b  | 		Nodes: [node-a node-b],
+node-b  | 		T: 2,
+node-b  | 		CRSKey: [108 97 116 116 105 103 48],
+node-b  | 	}
+node-b  | 2023/05/01 15:23:40 node-b | handling stream with cloud
+node-b  | 2023/05/01 15:23:40 node-b | registering to aggregator cloud
+node-b  | 2023/05/01 15:23:40 node-b | completed all aggregations
+node-b  | 2023/05/01 15:23:40 node-b | go protocol update for protocol RTG-1 : status: 0 
+node-b  | 2023/05/01 15:23:40 node-b | go protocol update for protocol CKG-0 : status: 0 
+node-b  | 2023/05/01 15:23:40 node-b | [QueryForOutput] [RTG-1] received aggregated completed
+node-b  | 2023/05/01 15:23:40 node-b | queried node cloud for the protocol RTG-1 output
+node-b  | 2023/05/01 15:23:40 node-b | [RTG-1] finalized protocol
+node-b  | 2023/05/01 15:23:40 node-b | [QueryForOutput] [CKG-0] received aggregated completed
+node-b  | 2023/05/01 15:23:40 node-b | go protocol update for protocol RTG-2 : status: 0 
+node-b  | 2023/05/01 15:23:40 node-b | [Store] Storing output for protocol RTG-1 under {"Type":4,"Args":{"GalEl":"5"}}
+node-b  | 2023/05/01 15:23:40 node-b | queried node cloud for the protocol CKG-0 output
+node-b  | 2023/05/01 15:23:40 node-b | [CKG-0] finalized protocol
+node-b  | 2023/05/01 15:23:40 node-b | [QueryForOutput] [RTG-2] received aggregated completed
+node-b  | 2023/05/01 15:23:40 node-b | go protocol update for protocol RKG-3 : status: 0 
+node-b  | 2023/05/01 15:23:40 node-b | aggregator cloud done
+node-b  | 2023/05/01 15:23:40 node-b | registration to all aggregators done
+node-b  | 2023/05/01 15:23:40 node-b | [Store] Storing output for protocol CKG-0 under {"Type":2,"Args":{}}
+node-b  | 2023/05/01 15:23:40 node-b | queried node cloud for the protocol RTG-2 output
+node-b  | 2023/05/01 15:23:40 node-b | [RTG-2] finalized protocol
+node-b  | 2023/05/01 15:23:40 node-b | [QueryForOutput] [RKG-3] received aggregated completed
+node-b  | 2023/05/01 15:23:40 node-b | [Store] Storing output for protocol RTG-2 under {"Type":4,"Args":{"GalEl":"10"}}
+node-b  | 2023/05/01 15:23:40 node-b | completed all participations
+node-b  | 2023/05/01 15:23:40 node-b | queried node cloud for the protocol RKG-3 output
+node-b  | 2023/05/01 15:23:40 node-b | [RKG-3] finalized protocol
+node-b  | 2023/05/01 15:23:40 node-b | completed all queries
+node-b  | 2023/05/01 15:23:40 node-b | [Store] Storing output for protocol RKG-3 under {"Type":3,"Args":{}}
+node-b  | 2023/05/01 15:23:40 node-b | execute returned
+node-b  | 2023/05/01 15:23:40 node-b | finished setup for N=3 T=0
+node-b  | 2023/05/01 15:23:40 node-b | execute returned after 17.1242ms
+node-b  | 2023/05/01 15:23:40 node-b | network stats: Sent: 53 B, Received: 1.3 MB
+node-a  | badger 2023/05/01 15:23:41 INFO: All 0 tables opened in 0s
+node-a  | badger 2023/05/01 15:23:41 INFO: Discard stats nextEmptySlot: 0
+node-a  | badger 2023/05/01 15:23:41 INFO: Set nextTxnTs to 4
+node-a  | 2023/05/01 15:23:41 Node node-a | created rlwe session with id: test-session and nodes: [node-a node-b] 
+node-a  | 2023/05/01 15:23:41 node-a | is connected to 1 peers
+node-a  | 2023/05/01 15:23:41 node-a | opened stream with cloud
+node-a  | 2023/05/01 15:23:41 node-a | handling stream with cloud
+node-a  | 2023/05/01 15:23:41 node-a | opened stream with cloud
+node-a  | 2023/05/01 15:23:41 node-a | started Execute
+node-a  | 2023/05/01 15:23:41 node-a | Setup.Execute parameters
+node-a  | sd: {[cloud node-a node-b] [{5 [cloud]} {10 [cloud]}] [cloud]}
+node-a  | nl: [cloud:40000  ]
+node-a  | sess: {
+node-a  | 		ID: test-session,
+node-a  | 		NodeID: node-a,
+node-a  | 		Nodes: [node-a node-b],
+node-a  | 		T: 2,
+node-a  | 		CRSKey: [108 97 116 116 105 103 48],
+node-a  | 	}
+node-a  | 2023/05/01 15:23:41 node-a | handling stream with cloud
+node-a  | 2023/05/01 15:23:41 node-a | registering to aggregator cloud
+node-a  | 2023/05/01 15:23:41 node-a | completed all aggregations
+node-a  | 2023/05/01 15:23:41 node-a | go protocol update for protocol RTG-1 : status: 0 
+node-a  | 2023/05/01 15:23:41 node-a | go protocol update for protocol CKG-0 : status: 0 
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] [RTG-1] received aggregated completed
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] not querying known output for protocol RTG-1
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] [CKG-0] received aggregated completed
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] not querying known output for protocol CKG-0
+node-a  | 2023/05/01 15:23:41 node-a | go protocol update for protocol RTG-2 : status: 0 
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] [RTG-2] received aggregated completed
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] not querying known output for protocol RTG-2
+node-a  | 2023/05/01 15:23:41 node-a | go protocol update for protocol RKG-3 : status: 0 
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] [RKG-3] received aggregated completed
+node-a  | 2023/05/01 15:23:41 node-a | [QueryForOutput] not querying known output for protocol RKG-3
+node-a  | 2023/05/01 15:23:41 node-a | aggregator cloud done
+node-a  | 2023/05/01 15:23:41 node-a | registration to all aggregators done
+node-a  | 2023/05/01 15:23:41 node-a | completed all participations
+node-a  | 2023/05/01 15:23:41 node-a | completed all queries
+node-a  | 2023/05/01 15:23:41 node-a | execute returned
+node-a  | 2023/05/01 15:23:41 node-a | finished setup for N=3 T=0
+node-a  | 2023/05/01 15:23:41 node-a | execute returned after 4.56977ms
+node-a  | 2023/05/01 15:23:41 node-a | network stats: Sent: 5 B, Received: 213 B
+node-a  | 2023/05/01 15:23:46 node-a | exiting.
+node-b  | 2023/05/01 15:23:46 node-b | exiting.

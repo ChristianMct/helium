@@ -490,7 +490,7 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 	protocols.Output
 }, sess *pkg.Session) {
 	for output := range outputs {
-		//log.Printf("%s | got output for protocol %s\n", s.self, output.ID)
+		log.Printf("%s | [Store] Storing output for protocol %s under %s\n", s.self, output.Descriptor.ID, output.Signature.String())
 
 		if output.Result != nil {
 			switch res := output.Result.(type) {
