@@ -9,7 +9,8 @@ services:
       - ../setup_desc.json:/helium/config/setup_desc.json
       - ./nodelist.json:/helium/config/nodelist.json
 
-      # No persistency, cloud is always online.
+      - cloud-data:/helium/data
+    profiles: ["all", "cloud"]
 
   node-a:
     image: heliummpc/helium:latest
@@ -22,6 +23,7 @@ services:
 
       # Persistent data across container reboots.
       - node-a-data:/helium/data
+    profiles: ["all", "clients"]
 
   node-b:
     image: heliummpc/helium:latest
@@ -33,6 +35,8 @@ services:
       - ./nodelist.json:/helium/config/nodelist.json
 
       # No persistency.
+    profiles: ["all", "clients"]
 
 volumes:
+  cloud-data:
   node-a-data:

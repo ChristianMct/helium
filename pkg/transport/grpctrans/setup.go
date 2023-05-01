@@ -251,6 +251,9 @@ func (t *setupTransport) GetAggregationOutput(ctx context.Context, pid *api.Prot
 		}
 	}
 
+	peerID := pkg.SenderIDFromIncomingContext(ctx)
+	log.Printf("%s | aggregation output %s query from %s", t.id, pid.ProtocolID, peerID)
+
 	return apiOut, nil
 }
 
