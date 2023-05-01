@@ -29,7 +29,8 @@ func (a *shareAggregator) PutShare(share Share) (bool, error) {
 		return false, fmt.Errorf("unexpected share in aggregate")
 	}
 	if !a.share.AggregateFor.Disjoint(share.AggregateFor) {
-		return false, fmt.Errorf("non-disjoint aggregate")
+		//return false, fmt.Errorf("non-disjoint aggregate") // TODO: error matching for non-panic on this one
+		return a.Complete(), nil
 	}
 	err := a.aggFunc(a.share, share)
 	if err != nil {
