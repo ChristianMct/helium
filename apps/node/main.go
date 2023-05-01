@@ -17,7 +17,7 @@ import (
 	"github.com/ldsec/helium/pkg/services/setup"
 )
 
-const DefaultAddress = ":40000"
+const DefaultAddress = ""
 
 var (
 	addr             = flag.String("address", DefaultAddress, "the address on which the node will listen")
@@ -95,9 +95,9 @@ func main() {
 		log.Printf("Node %s | execute returned an error: %s", nc.ID, err)
 	}
 	elapsed := time.Since(start)
-	log.Printf("Node %s | finished setup for N=%d T=%d", nc.ID, len(nl), nc.SessionParameters[0].T)
-	log.Printf("Node %s | execute returned after %s", nc.ID, elapsed)
-	log.Printf("Node %s | network stats: %s", nc.ID, node.GetTransport().GetNetworkStats())
+	log.Printf("%s | finished setup for N=%d T=%d", nc.ID, len(nl), nc.SessionParameters[0].T)
+	log.Printf("%s | execute returned after %s", nc.ID, elapsed)
+	log.Printf("%s | network stats: %s", nc.ID, node.GetTransport().GetNetworkStats())
 
 	if *outputMetrics {
 		var statsJSON []byte

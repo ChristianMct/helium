@@ -65,7 +65,7 @@ func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transpor
 // protocol and aggregating the shares.
 func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 
-	log.Printf("%s | started Execute with protocols\n", s.self)
+	log.Printf("%s | started Execute\n", s.self)
 
 	sessID := pkg.SessionID("test-session") // TODO non-hardcoded session
 
@@ -269,7 +269,7 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 			for pd := range protoToRun {
 
 				if !sigList.Contains(pd.Signature) {
-					panic(fmt.Errorf("%s | [Participate] error: signature %s is not in the signature list", s.self, pd.Signature))
+					panic(fmt.Errorf("%s | [Participate] error: protocol descriptor %s signature %s is not in the signature list", s.self, pd, pd.Signature))
 				}
 
 				s.runningProtosMu.RLock()
@@ -381,6 +381,10 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 
 				s.saveAggOut(aggOut, pd, proto, outputs)
 
+				s.runningProtosMu.Lock()
+				delete(s.runningProtos, pd.ID)
+				s.runningProtosMu.Unlock()
+
 				s.completedProtoMu.Lock()
 				s.completedProtos = append(s.completedProtos, pd)
 				s.completedProtoMu.Unlock()
@@ -426,23 +430,6 @@ func (s *Service) saveAggOut(aggOut protocols.AggregationOutput,
 	}
 	s.aggOutputs[pd.ID] = &aggOut
 	s.outLock.Unlock()
-
-	s.completedProtoMu.Lock()
-	s.completedProtos = append(s.completedProtos, pd)
-	s.completedProtoMu.Unlock()
-
-	s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)}
-
-	// block until it gets a value from the channel
-	out := <-proto.Output(aggOut)
-
-	outputs <- struct {
-		protocols.Descriptor
-		protocols.Output
-	}{
-		pd,
-		out,
-	}
 }
 
 // queryForOutput accepts a channel where to send outputs
@@ -469,6 +456,8 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 				log.Printf("%s | [QueryForOutput] [%s] got error on output query: %s\n", s.self, pd.ID, err)
 				panic(err)
 			}
+
+			log.Printf("%s | queried node %s for the protocol %s output", s.self, pd.Aggregator, pd.ID)
 
 			var proto protocols.Instance
 			proto, err = protocols.NewProtocol(pd, sess, pd.ID) // TODO this resamples the CRP (could be done while waiting for agg)
@@ -498,12 +487,12 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 	protocols.Output
 }, sess *pkg.Session) {
 	for output := range outputs {
-		log.Printf("%s | got output for protocol %s\n", s.self, output.ID)
+		//log.Printf("%s | got output for protocol %s\n", s.self, output.ID)
 
 		if output.Result != nil {
 			switch res := output.Result.(type) {
 			case *rlwe.PublicKey:
-				log.Printf("%s | Setup: storing CPK %v under %s \n", s.self, res, output.Signature.String())
+				//log.Printf("%s | Setup: storing CPK %v under %s \n", s.self, res, output.Signature.String())
 				err := sess.ObjectStore.Store(output.Signature.String(), res)
 				if err != nil {
 					log.Printf("%s | error on Collective Public Key store: %s", s.self, err)

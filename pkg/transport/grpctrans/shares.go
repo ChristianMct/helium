@@ -2,7 +2,9 @@ package grpctrans
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -179,7 +181,9 @@ func (st *ShareTransport) handleShareStream(peerID pkg.NodeID, stream ShareStrea
 		for {
 			incShare, err := stream.Recv()
 			if err != nil {
-				log.Printf("%s | error while receiving share: %v", st.id, err)
+				if !errors.Is(err, io.EOF) {
+					log.Printf("%s | error while receiving share: %v", st.id, err)
+				}
 				break
 			}
 
