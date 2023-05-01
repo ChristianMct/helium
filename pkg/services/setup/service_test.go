@@ -392,6 +392,129 @@ func TestSimpleSetup(t *testing.T) {
 	})
 }
 
+// TestQuery executes the setup protocol with one client and the cloud. Then checks that each party queries ONLY the keys specified in
+// the setup descriptor.
+func TestQuery(t *testing.T) {
+	literalParams := rangeParam[0]
+	ts := testSetting{
+		N: 2,
+		T: 2,
+	}
+
+	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+
+		// var testname = fmt.Sprintf("TestSimpleSetup-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
+
+		// var objstoreconf = objectstore.Config{
+		// 	BackendName: "mem",
+		// 	DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
+		// }
+
+		var sessParams = &pkg.SessionParameters{
+			RLWEParams: literalParams,
+			T:          ts.T,
+			// ObjectStoreConfig: objstoreconf,
+		}
+		var testConfig = node.LocalTestConfig{
+			HelperNodes:      1,
+			LightNodes:       ts.N,
+			Session:          sessParams,
+			DoThresholdSetup: true,
+		}
+		localTest := node.NewLocalTest(testConfig)
+
+		var err error
+		cloud := localTest.HelperNodes[0]
+		clients := localTest.SessionNodes()
+
+		setup := setup.Description{
+			Cpk: []pkg.NodeID{clients[0].ID()},
+			Rlk: localTest.SessionNodesIds(),
+			GaloisKeys: []struct {
+				GaloisEl  uint64
+				Receivers []pkg.NodeID
+			}{
+				{5, []pkg.NodeID{clients[1].ID()}},
+				{25, []pkg.NodeID{cloud.ID()}},
+				{125, localTest.SessionNodesIds()},
+			},
+		}
+
+		localTest.Start()
+
+		// Start public key generation
+		t.Run("FullSetup", func(t *testing.T) {
+
+			g := new(errgroup.Group)
+
+			// run the cloud
+			g.Go(func() error {
+				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
+				if errExec != nil {
+					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
+				}
+				return errExec
+			})
+
+			// run the client
+			for _, client := range clients {
+				client := client
+				g.Go(func() error {
+					errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
+					if errExec != nil {
+						errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
+					}
+					return errExec
+				})
+			}
+
+			// wait for cloud and client to finish running the setup
+			err = g.Wait()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			light0Sess, ok := clients[0].GetSessionFromID("test-session")
+			if !ok {
+				t.Fatal("session should exist")
+			}
+			light1Sess, ok := clients[1].GetSessionFromID("test-session")
+			if !ok {
+				t.Fatal("session should exist")
+			}
+
+			// cpk: {light-0}
+			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.CKG}, true)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.CKG}, false)
+
+			// rlk: {light-0, light-1}
+			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RKG}, true)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RKG}, true)
+
+			// rtk[5]: {light-1}
+			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, false)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, true)
+
+			// rtk[25]: {}
+			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(25, 10)}}, false)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(25, 10)}}, false)
+
+			// rtk[125]: {light-0, light-1}
+			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(125, 10)}}, true)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(125, 10)}}, true)
+		})
+	})
+}
+
+func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signature, expectedPresence bool) {
+	present, err := sess.IsPresent(sign.String())
+	if err != nil {
+		panic("Error in IsPresent")
+	}
+
+	require.Equal(t, present, expectedPresence)
+}
+
 // TestPeerToPeerSetup tests the peer to peer setup with N full nodes.
 func TestPeerToPeerSetup(t *testing.T) {
 

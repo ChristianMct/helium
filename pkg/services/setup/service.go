@@ -76,8 +76,8 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 
 	log.Printf("%s | Setup.Execute parameters\nsd: %v\nnl: %v\nsess: %v\n", s.self, sd, nl, sess)
 
-	// 1. INITIALIZATION: generate the list of protocols signatures to execute
-	sigList := DescriptionToSignatureList(sd)
+	// 1. INITIALIZATION: generate the list of protocols signatures to execute and relative receivers
+	sigList, sigToReceiverSet := DescriptionToSignatureList(sd)
 
 	// keep track of protocols whose results are already available
 	sigListNoResult, _ := s.filterSignatureList(sigList, sess)
@@ -177,7 +177,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 	allAggsDone := s.aggregate(ctx, pdAggs, outputs, sess)
 
 	// 4. FINALIZE: query completed protocols for output
-	outQueriesDone := s.queryForOutput(ctx, sigListNoResult, protoCompleted, sess, outputs)
+	outQueriesDone := s.queryForOutput(ctx, sigListNoResult, sigToReceiverSet, protoCompleted, sess, outputs)
 
 	// close the output channel and print status.
 	go func() {
@@ -259,7 +259,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 	return protosUpdatesChan
 }
 
-const parallelParticipation int = 10
+const parallelParticipation int = 1
 
 // participate makes every participant participate in the protocol
 // returns a channel where true is sent when all participations are done.
@@ -318,7 +318,7 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 	return allPartsDone
 }
 
-const parallelAggregation int = 10
+const parallelAggregation int = 1
 
 func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descriptor, outputs chan struct {
 	protocols.Descriptor
@@ -437,7 +437,7 @@ func (s *Service) saveAggOut(aggOut protocols.AggregationOutput,
 
 // queryForOutput accepts a channel where to send outputs
 // and returns a channel `outQueriesDone` where true will be sent when all the outputs for a protocol.
-func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureList, protoCompleted <-chan protocols.Descriptor, sess *pkg.Session, outputs chan<- struct {
+func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureList, sigToReceiverSet ReceiversMap, protoCompleted <-chan protocols.Descriptor, sess *pkg.Session, outputs chan<- struct {
 	protocols.Descriptor
 	protocols.Output
 }) <-chan bool {
@@ -446,6 +446,12 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 	go func() {
 		// every completed protocol yields a result.
 		for pd := range protoCompleted {
+
+			// this node is not in the set of receivers for this output
+			if !sigToReceiverSet[pd.Signature.String()].Contains(s.self) {
+				continue
+			}
+
 			log.Printf("%s | [QueryForOutput] [%s] received aggregated completed\n", s.self, pd.ID)
 
 			if !sigListNoResult.Contains(pd.Signature) {
@@ -460,7 +466,7 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 				panic(err)
 			}
 
-			log.Printf("%s | queried node %s for the protocol %s output", s.self, pd.Aggregator, pd.ID)
+			log.Printf("%s | [QueryForOutput] queried node %s for the protocol %s output", s.self, pd.Aggregator, pd.ID)
 
 			var proto protocols.Instance
 			proto, err = protocols.NewProtocol(pd, sess, pd.ID) // TODO this resamples the CRP (could be done while waiting for agg)
