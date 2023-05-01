@@ -8,23 +8,17 @@
 		{
 			"GaloisEl": 5,
 			"Receivers": [
-				"cloud",
-				"node-a",
-				"node-b"
+				"cloud"
 			]
 		},
 		{
 			"GaloisEl": 10,
 			"Receivers": [
-				"cloud",
-				"node-a",
-				"node-b"
+				"cloud"
 			]
 		}
 	],
 	"Rlk": [
-		"cloud",
-		"node-a",
-		"node-b"
+		"cloud"
 	]
 }

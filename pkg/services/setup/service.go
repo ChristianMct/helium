@@ -110,6 +110,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		// every time it receives a protocol update, puts the protocol descriptor
 		// in the protocols to run or in the protocols completed
 		for protoUpdate := range protosUpdatesChan {
+			log.Printf("%s | go protocol update for protocol %s : status: %v \n", s.self, protoUpdate.ID, protoUpdate.Status)
 			switch protoUpdate.Status {
 			case protocols.OK:
 				protoCompleted <- protoUpdate.Descriptor
@@ -446,7 +447,7 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 			log.Printf("%s | [QueryForOutput] [%s] received aggregated completed\n", s.self, pd.ID)
 
 			if !sigListNoResult.Contains(pd.Signature) {
-				log.Printf("%s | [QueryForOutput] skipped unexpected protocol completion update %s\n", s.self, pd)
+				log.Printf("%s | [QueryForOutput] not querying known output for protocol %s\n", s.self, pd.ID)
 				continue
 			}
 

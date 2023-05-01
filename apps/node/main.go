@@ -113,12 +113,10 @@ func main() {
 		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s.json", nc.ID), statsJSON, 0600); errWrite != nil {
 			log.Println(errWrite)
 		}
-	} else {
-		log.Printf("Node %s | metrics disabled, skipping writing to disk", nc.ID)
 	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
-	log.Printf("Node %s | exiting.", nc.ID)
+	log.Printf("%s | exiting.", nc.ID)
 }
