@@ -1,7 +1,7 @@
 # This scripts performs a persistence test of the setup protocol.
 # It runs three nodes, `cloud`, `node-a`, and `node-b` inside a Docker compose.
 # The node `cloud` is the aggregator for all sub-protocols, `node-a` and `node-b`
-# are be the clients.
+# are the clients.
 #
 # The cloud is always online.
 # The first client (`node-a`) is configured to store data on the persistent storage.
@@ -24,31 +24,38 @@
 # Cleanup:
 # After the two phases are executed, the volume inside the docker compose is removed. 
 #
-# Both setups are logs are saved on the host machine for inspection.
+# Both setup logs are saved on the host machine for inspection.
 
 #!/bin/sh
-SETUP_DURATION=10
+SETUP_DURATION=5
 TIME_TO_SAVE_LOGS=1
 LOG_DIR="./out"
-FIRST_DIR=$LOG_DIR/first_setup
-SECOND_DIR=$LOG_DIR/second_setup
+LOG_FILE=$LOG_DIR/setup.log
+# FIRST_DIR=$LOG_DIR/first_setup
+# SECOND_DIR=$LOG_DIR/second_setup
 
-# mkdir -p $LOG_DIR
-mkdir -p $FIRST_DIR
-mkdir -p $SECOND_DIR
+mkdir -p $LOG_DIR
+# mkdir -p $FIRST_DIR
+# mkdir -p $SECOND_DIR
 
 echo "Starting Phase 1: Setup"
+echo "FIRST PHASE\n\n" > $LOG_FILE
 docker compose up --detach
+
+docker-compose logs -f >> $LOG_FILE &
+
 echo "Waiting $SETUP_DURATION seconds for the setup to complete..."
 sleep $SETUP_DURATION
-echo "Saving compose logs"
-docker compose logs -t node-a &> ${FIRST_DIR}/node-a.log
-docker compose logs -t node-b &> ${FIRST_DIR}/node-b.log
-docker compose logs -t cloud &> ${FIRST_DIR}/cloud.log
-
+# echo "Saving compose logs"
+# docker compose logs -f &> ${LOG_DIR}/first_setup.log &
+# docker compose logs -t node-a &> ${FIRST_DIR}/node-a.log
+# docker compose logs -t node-b &> ${FIRST_DIR}/node-b.log
+# docker compose logs -t cloud &> ${FIRST_DIR}/cloud.log
 # sleep $TIME_TO_SAVE_LOGS
-# echo "First setup completed, killing containers"
-# docker compose down
+# kill log background process
+# kill %% 
+
+echo "\n\nSECOND PHASE\n\n" >> $LOG_FILE 2>&1
 echo "First setup completed, restarting clients (simulate both clients crashing)"
 docker compose restart node-a node-b
 
@@ -57,13 +64,14 @@ echo "Starting Phase 2: Clients wake up"
 echo "Waiting $SETUP_DURATION seconds for the setup to complete..."
 sleep $SETUP_DURATION
 echo "Saving compose logs"
-docker compose logs -t node-a &> ${SECOND_DIR}/node-a.log
-docker compose logs -t node-b &> ${SECOND_DIR}/node-b.log
-docker compose logs -t cloud &> ${SECOND_DIR}/cloud.log
-# docker-compose logs -f > ${LOG_DIR}/second_setup.log &
+# docker compose logs -t node-a &> ${SECOND_DIR}/node-a.log
+# docker compose logs -t node-b &> ${SECOND_DIR}/node-b.log
+# docker compose logs -t cloud &> ${SECOND_DIR}/cloud.log
+# docker-compose logs -f &>> $LOG_FILE &
 # sleep $TIME_TO_SAVE_LOGS
+# kill log background process
+# kill %%  
+
+
 echo "Second phase completed, killing all containers and removing volumes"
 docker compose down -v
-
-# echo "Cleaning up volumes in the container"
-# docker volume rm setup_persistence_node-a-data
