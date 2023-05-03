@@ -25,3 +25,5 @@ func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarsh
 func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
 	return false, errors.New("IsPresent: ObjectStore backend is NULL")
 }
+
+func (objstore *ObjectStore) Close() error { return nil }

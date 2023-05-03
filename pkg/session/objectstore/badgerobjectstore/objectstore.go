@@ -5,6 +5,7 @@ import (
 	"encoding"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/ldsec/helium/pkg/session/objectstore"
@@ -12,7 +13,8 @@ import (
 
 // ObjectStore is a type implementing the objectstore.ObjectStore interface with a permanent storage backend.
 type ObjectStore struct {
-	db *badger.DB
+	db          *badger.DB
+	bytesStored int
 }
 
 // NewObjectStore creates a new ObjectStore instance.
@@ -25,7 +27,7 @@ func NewObjectStore(conf *objectstore.Config) (ks *ObjectStore, err error) {
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("Could not instantiate BadgerDB: %s\n", err))
 	}
-	return &ObjectStore{db: db}, nil
+	return &ObjectStore{db: db, bytesStored: 0}, nil
 }
 
 func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarshaler) error {
@@ -33,6 +35,7 @@ func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarsha
 	if err != nil {
 		return err
 	}
+	objstore.bytesStored += len(encodedObject)
 	err = objstore.db.Update(func(txn *badger.Txn) error {
 		err := txn.Set([]byte(objectID), encodedObject)
 		if err != nil {
@@ -90,4 +93,9 @@ func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
 	}
 
 	return present, nil
+}
+
+func (objstore *ObjectStore) Close() error {
+	log.Printf("Total bytes stored: %dB\n", objstore.bytesStored)
+	return objstore.db.Close()
 }

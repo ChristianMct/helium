@@ -230,3 +230,8 @@ func (node *Node) GetSessionFromIncomingContext(ctx context.Context) (*pkg.Sessi
 	sessID := pkg.SessionIDFromIncomingContext(ctx)
 	return node.GetSessionFromID(sessID)
 }
+
+// Close releases all the resources allocated by the node.
+func (node *Node) Close() error {
+	return node.sessions.Close()
+}

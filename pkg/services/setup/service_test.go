@@ -82,6 +82,12 @@ func TestCloudAssistedSetup(t *testing.T) {
 				}
 
 				localTest := node.NewLocalTest(testConfig)
+				defer func() {
+					err := localTest.Close()
+					if err != nil {
+						panic(err)
+					}
+				}()
 
 				var err error
 				var ok bool
@@ -234,6 +240,12 @@ func TestSkinnyCloudAssistedSetup(t *testing.T) {
 					DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 				}
 				localTest := node.NewLocalTest(testConfig)
+				defer func() {
+					err := localTest.Close()
+					if err != nil {
+						panic(err)
+					}
+				}()
 
 				var err error
 				cloud := localTest.HelperNodes[0]
@@ -336,6 +348,12 @@ func TestSimpleSetup(t *testing.T) {
 			DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 		}
 		localTest := node.NewLocalTest(testConfig)
+		defer func() {
+			err := localTest.Close()
+			if err != nil {
+				panic(err)
+			}
+		}()
 
 		var err error
 		cloud := localTest.HelperNodes[0]
@@ -422,6 +440,12 @@ func TestQuery(t *testing.T) {
 			DoThresholdSetup: true,
 		}
 		localTest := node.NewLocalTest(testConfig)
+		defer func() {
+			err := localTest.Close()
+			if err != nil {
+				panic(err)
+			}
+		}()
 
 		var err error
 		cloud := localTest.HelperNodes[0]
@@ -539,6 +563,12 @@ func TestPeerToPeerSetup(t *testing.T) {
 					DoThresholdSetup: true,
 				}
 				localTest := node.NewLocalTest(testConfig)
+				defer func() {
+					err := localTest.Close()
+					if err != nil {
+						panic(err)
+					}
+				}()
 
 				params := localTest.Params
 				peerIds := localTest.NodeIds()

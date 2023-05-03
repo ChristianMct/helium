@@ -264,6 +264,17 @@ func (s *SessionStore) GetSessionFromID(id SessionID) (*Session, bool) {
 	return sess, ok
 }
 
+// Close releases the resources allocated all the sessions in the SessionStore.
+func (s *SessionStore) Close() error {
+	for _, session := range s.sessions {
+		err := session.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Session) GetRelinKey() ([]byte, error) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()

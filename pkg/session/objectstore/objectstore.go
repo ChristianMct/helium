@@ -5,12 +5,6 @@ import (
 	"encoding"
 )
 
-// const (
-// 	CPK = "CPK"
-// 	RLK = "RLK"
-// 	RTK = "RTK"
-// )
-
 // Config represents the ObjectStore configuration.
 type Config struct {
 	BackendName string // BackendName is a string defining the ObjectStore implementation to use.
@@ -28,4 +22,7 @@ type ObjectStore interface {
 
 	// IsPresent checks if the object indexed with the string `objectID` is present in the ObjectStore.
 	IsPresent(objectID string) (bool, error)
+
+	// Close releases the resources allocated by the ObjectStore.
+	Close() error
 }

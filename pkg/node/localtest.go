@@ -389,3 +389,14 @@ func (lc LocalTest) NodeIds() []pkg.NodeID {
 	}
 	return ids
 }
+
+// Close releases all the resources allocated by a localtest.
+func (lc LocalTest) Close() error {
+	for _, node := range lc.Nodes {
+		err := node.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

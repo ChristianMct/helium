@@ -79,6 +79,12 @@ func main() {
 		log.Println(err)
 		os.Exit(1)
 	}
+	defer func() {
+		err := node.Close()
+		if err != nil {
+			panic(err)
+		}
+	}()
 
 	// TODO assumes single-session nodes
 	if len(nc.SessionParameters) != 1 {

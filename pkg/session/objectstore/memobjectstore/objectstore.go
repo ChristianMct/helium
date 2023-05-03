@@ -81,3 +81,5 @@ func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
 
 	return ok, nil
 }
+
+func (objstore *ObjectStore) Close() error { return nil }

@@ -1,6 +1,5 @@
 {
 	"Cpk": [
-		"cloud",
 		"node-a",
 		"node-b"
 	],
@@ -8,17 +7,20 @@
 		{
 			"GaloisEl": 5,
 			"Receivers": [
-				"cloud"
+				"node-a",
+				"node-b"
 			]
 		},
 		{
 			"GaloisEl": 10,
 			"Receivers": [
-				"cloud"
+				"node-a",
+				"node-b"
 			]
 		}
 	],
 	"Rlk": [
-		"cloud"
+		"node-a",
+		"node-b"
 	]
 }
