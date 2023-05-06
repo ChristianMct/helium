@@ -22,7 +22,11 @@ func NewObjectStore(conf *objectstore.Config) (ks *ObjectStore, err error) {
 	if conf == nil {
 		return nil, errors.New("BadgerDB ObjectStore requires a Config")
 	}
-	opt := badger.DefaultOptions(conf.DBPath)
+	// SynchWrites writes any change to disk immediately.
+	// Maximum size of a single log file = 10MB
+	// Maximum size of memtable table = 5MB
+	// Value Threshold for an entry to be stored in the log file = 0.5MB
+	opt := badger.DefaultOptions(conf.DBPath).WithValueLogFileSize(10 * (1 << 20)).WithMemTableSize(5 * (1 << 20)).WithValueThreshold(1 << 19)
 	db, err := badger.Open(opt)
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("Could not instantiate BadgerDB: %s\n", err))
