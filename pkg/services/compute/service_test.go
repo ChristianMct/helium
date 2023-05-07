@@ -339,7 +339,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 							decryptor := bfv.NewDecryptor(bfvParams, cliSess.Sk)
 
 							ptdec := decryptor.DecryptNew(out[0].Ciphertext)
-							// fmt.Println(decoder.DecodeUintNew(ptdec)[:6])
+							fmt.Println(decoder.DecodeUintNew(ptdec))
 							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, decoder.DecodeUintNew(ptdec)[:6])
 						}
 						return nil

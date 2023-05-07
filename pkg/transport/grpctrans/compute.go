@@ -70,6 +70,9 @@ func (env *computeTransport) GetCiphertext(ctx context.Context, ctID pkg.Ciphert
 		return nil, fmt.Errorf("peer with id %s does not exist", host)
 	}
 
+	// DEBUG
+	log.Printf("[GetCipherText] fetching ctID %v, host: %v, peer: %v", ctID, host, peer)
+
 	if peer == nil {
 		return nil, fmt.Errorf("peer with id %s is a light node", host)
 	}

@@ -266,6 +266,8 @@ func (se *fullEvaluatorContext) resolveRemoteInputs(ctx context.Context, ins uti
 	go func() {
 		for in := range ins {
 
+			// DEBUG
+			log.Printf("[ResolveRemoteInputs] fetching %v", in)
 			var op pkg.Operand
 
 			inURL := pkg.NewURL(string(in))
