@@ -1,0 +1,10 @@
+{
+	"Cpk": [
+		"node-a",
+		"node-b"
+	],
+	"Rlk": [
+		"node-a",
+		"node-b"
+	]
+}
