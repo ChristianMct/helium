@@ -36,6 +36,14 @@ var (
 	computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
 )
 
+type App struct {
+	nc   node.Config
+	nl   pkg.NodesList
+	sd   setup.Description
+	node *node.Node
+	sess *pkg.Session
+}
+
 // Instructions to run: go run main.go node.go -config [nodeconfigfile].
 func main() {
 
@@ -46,142 +54,130 @@ func main() {
 		os.Exit(1)
 	}
 
+	// app holds all data relative to the node execution.
+	app := App{}
+
 	var err error
-	var nc node.Config
-	if err = utils.UnmarshalFromFile(*configFile, &nc); err != nil {
+	// var nc node.Config
+	if err = utils.UnmarshalFromFile(*configFile, &app.nc); err != nil {
 		log.Println("could not read config:", err)
 		os.Exit(1)
 	}
 
-	if *addr != DefaultAddress || nc.Address == "" {
+	if *addr != DefaultAddress || app.nc.Address == "" {
 		// CLI addr overrides config address
-		nc.Address = pkg.NodeAddress(*addr)
+		app.nc.Address = pkg.NodeAddress(*addr)
 	}
 
 	if *insecureChannels {
-		nc.TLSConfig.InsecureChannels = *insecureChannels
+		app.nc.TLSConfig.InsecureChannels = *insecureChannels
 	}
 
 	if *tlsdir != "" {
-		nc.TLSConfig.FromDirectory = *tlsdir
+		app.nc.TLSConfig.FromDirectory = *tlsdir
 	}
 
-	var nl pkg.NodesList
-	if err = utils.UnmarshalFromFile(*nodeList, &nl); err != nil {
+	// var nl pkg.NodesList
+	if err = utils.UnmarshalFromFile(*nodeList, &app.nl); err != nil {
 
 		log.Println("could not read nodelist:", err)
 		os.Exit(1)
 	}
 
-	var sd setup.Description
+	// var sd setup.Description
 	if *setupFile != "" {
-		if err = utils.UnmarshalFromFile(*setupFile, &sd); err != nil {
+		if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
 			log.Printf("could not read setup description file: %s\n", err)
 			os.Exit(1)
 		}
 	}
 
-	node, err := node.NewNode(nc, nl)
+	app.node, err = node.NewNode(app.nc, app.nl)
 	if err != nil {
 		log.Println(err)
 		os.Exit(1)
 	}
 	defer func() {
-		err := node.Close()
+		err := app.node.Close()
 		if err != nil {
 			panic(err)
 		}
 	}()
 
 	// TODO assumes single-session nodes
-	if len(nc.SessionParameters) != 1 {
+	if len(app.nc.SessionParameters) != 1 {
 		panic("multi-session nodes not implemented")
 	}
 
-	if errConn := node.Connect(); errConn != nil {
+	if errConn := app.node.Connect(); errConn != nil {
 		panic(errConn)
 	}
 
-	setupPhase(node, nc, sd, nl)
+	sessionID := pkg.SessionID(app.nc.SessionParameters[0].ID)
+	var exists bool
+	app.sess, exists = app.node.GetSessionFromID(sessionID)
+	if !exists {
+		panic(fmt.Errorf("No session found for ID: %s", sessionID))
+	}
+
+	app.setupPhase()
 
 	if *docompute {
-		computePhase(node, nc, sd, nl)
+		app.computePhase()
 	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
-	log.Printf("%s | exiting.", nc.ID)
+	log.Printf("%s | exiting.", app.nc.ID)
 }
 
-func setupPhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.NodesList) {
+// setupPhase executes the setup phase of Helium.
+func (a *App) setupPhase() {
 	start := time.Now()
-	err := node.GetSetupService().Execute(sd, nl)
+	err := a.node.GetSetupService().Execute(a.sd, a.nl)
 	if err != nil {
-		log.Printf("Node %s | SetupService.Execute() returned an error: %s", nc.ID, err)
+		log.Printf("Node %s | SetupService.Execute() returned an error: %s", a.nc.ID, err)
 	}
 	elapsed := time.Since(start)
-	outputStats(node, nc, sd, nl, elapsed)
+	a.outputStats(elapsed)
 }
 
-func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.NodesList) {
+// computePhase executes the computational phase of Helium.
+func (a *App) computePhase() {
 	// register all circuits in the global state of the compute service
 	registerCircuits()
 
-	cloudID := nl[0].NodeID
+	cloudID := a.nl[0].NodeID
 	var cSign = compute.Signature{
 		CircuitName: "PSI",
 		Delegate:    cloudID,
 	}
 
 	cLabel := pkg.CircuitID("test-circuit-0")
-	sessionID := pkg.SessionID(nc.SessionParameters[0].ID)
-	sess, exists := node.GetSessionFromID(sessionID)
-	if !exists {
-		panic(fmt.Errorf("No session found for ID: %s", sessionID))
-	}
-	ctx := pkg.NewContext(&sessionID, nil)
+	ctx := pkg.NewContext(&a.sess.ID, nil)
 
-	computeService := node.GetComputeService()
+	computeService := a.node.GetComputeService()
 	err := computeService.LoadCircuit(ctx, cSign, cLabel)
 	if err != nil {
 		panic(err)
 	}
 
-	bfvParams, err := bfv.NewParameters(*sess.Params, 65537)
+	bfvParams, err := bfv.NewParameters(*a.sess.Params, 65537)
 	if err != nil {
 		panic(err)
 	}
-	kg := rlwe.NewKeyGenerator(*sess.Params)
+	kg := rlwe.NewKeyGenerator(*a.sess.Params)
 	_, recPk := kg.GenKeyPair()
-	sess.RegisterPkForNode("node-a", *recPk)
+	a.sess.RegisterPkForNode("node-a", *recPk)
 
 	encoder := bfv.NewEncoder(bfvParams)
 
 	ops := []pkg.Operand{}
 
 	// clients
-	if node.ID() != cloudID {
-		cpk := new(rlwe.PublicKey)
-		err = sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
-		if err != nil {
-			panic(fmt.Errorf("%s | CPK was not found for node %s: %s", sess.NodeID, sess.NodeID, err))
-		}
-		encryptor := bfv.NewEncryptor(bfvParams, cpk)
-
-		// craft input
-		var inData []uint64
-		if node.ID() == "node-a" {
-			inData = []uint64{1, 1, 1, 0, 0}
-		} else {
-			inData = []uint64{0, 0, 1, 1, 1}
-		}
-		inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
-		inCt := encryptor.EncryptNew(inPt)
-
-		// "//nodeID//circuitID/inputID"
-		opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", node.ID(), cLabel))
-		ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
+	if a.node.ID() != cloudID {
+		ops = a.getClientOperands(bfvParams, encoder, cLabel)
 	}
 
 	// execute
@@ -191,7 +187,7 @@ func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.
 		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %s", err))
 	}
 	elapsed := time.Since(start)
-	outputStats(node, nc, sd, nl, elapsed)
+	a.outputStats(elapsed)
 
 	// retrieve output
 	if len(outCtList) <= 0 {
@@ -203,16 +199,44 @@ func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.
 		panic(fmt.Errorf("Output ciphertext is nil"))
 	}
 	log.Printf("[Compute] Got encrypted output: %v", outCt)
-	if sess.Sk == nil {
+	if a.sess.Sk == nil {
 		log.Printf("Refusing to decrypt output: the session secret key is nil. Is this node supposed to have it?\n")
 		return
 	}
-	decryptor := bfv.NewDecryptor(bfvParams, sess.Sk)
+	decryptor := bfv.NewDecryptor(bfvParams, a.sess.Sk)
 	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:5]
 
 	log.Printf("[Compute] Retrieved output: %v\n", outPt)
 }
 
+// getClientOperands returns the operands that this client node will input into the computation.
+func (a *App) getClientOperands(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+	ops := []pkg.Operand{}
+	cpk := new(rlwe.PublicKey)
+	err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
+	if err != nil {
+		panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
+	}
+	encryptor := bfv.NewEncryptor(bfvParams, cpk)
+
+	// craft input
+	var inData []uint64
+	if a.node.ID() == "node-a" {
+		inData = []uint64{1, 1, 1, 0, 0}
+	} else {
+		inData = []uint64{0, 0, 1, 1, 1}
+	}
+	inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
+	inCt := encryptor.EncryptNew(inPt)
+
+	// "//nodeID//circuitID/inputID"
+	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
+	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
+
+	return ops
+}
+
+// registerCircuits registers some predefined circuits in the global state of the compute service.
 func registerCircuits() {
 	testCircuits := map[string]compute.Circuit{
 		"Identity": func(ec compute.EvaluationContext) error {
@@ -270,23 +294,24 @@ func registerCircuits() {
 	}
 }
 
-func outputStats(node *node.Node, nc node.Config, sd setup.Description, nl pkg.NodesList, elapsed time.Duration) {
-	log.Printf("%s | finished setup for N=%d T=%d", nc.ID, len(nl), nc.SessionParameters[0].T)
-	log.Printf("%s | execute returned after %s", nc.ID, elapsed)
-	log.Printf("%s | network stats: %s", nc.ID, node.GetTransport().GetNetworkStats())
+// outputStats outputs the total network usage and time take to execute a protocol phase.
+func (a *App) outputStats(elapsed time.Duration) {
+	log.Printf("%s | finished setup for N=%d T=%d", a.nc.ID, len(a.nl), a.nc.SessionParameters[0].T)
+	log.Printf("%s | execute returned after %s", a.nc.ID, elapsed)
+	log.Printf("%s | network stats: %s", a.nc.ID, a.node.GetTransport().GetNetworkStats())
 
 	if *outputMetrics {
 		var statsJSON []byte
 		statsJSON, err := json.MarshalIndent(map[string]string{
-			"N":        fmt.Sprint(len(nl)),
-			"T":        fmt.Sprint(nc.SessionParameters[0].T),
+			"N":        fmt.Sprint(len(a.nl)),
+			"T":        fmt.Sprint(a.nc.SessionParameters[0].T),
 			"Wall":     fmt.Sprint(elapsed),
-			"NetStats": node.GetTransport().GetNetworkStats().String(),
+			"NetStats": a.node.GetTransport().GetNetworkStats().String(),
 		}, "", "\t")
 		if err != nil {
 			panic(err)
 		}
-		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s.json", nc.ID), statsJSON, 0600); errWrite != nil {
+		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s.json", a.nc.ID), statsJSON, 0600); errWrite != nil {
 			log.Println(errWrite)
 		}
 	}
