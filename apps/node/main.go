@@ -130,7 +130,7 @@ func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.
 
 	cloudID := nl[0].NodeID
 	var cSign = compute.Signature{
-		CircuitName: "Identity",
+		CircuitName: "PSI",
 		Delegate:    cloudID,
 	}
 
@@ -148,11 +148,6 @@ func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.
 		panic(err)
 	}
 
-	// set cryptographic environment
-	// rlweParams, err := rlwe.NewParametersFromLiteral(nc.SessionParameters[0].RLWEParams)
-	// if err != nil {
-	// 	panic(err)
-	// }
 	bfvParams, err := bfv.NewParameters(*sess.Params, 65537)
 	if err != nil {
 		panic(err)
@@ -163,9 +158,10 @@ func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.
 
 	encoder := bfv.NewEncoder(bfvParams)
 
-	var outCtList []pkg.Operand
-	// client executes
-	if node.ID() == "node-a" {
+	ops := []pkg.Operand{}
+
+	// clients
+	if node.ID() != cloudID {
 		cpk := new(rlwe.PublicKey)
 		err = sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
 		if err != nil {
@@ -174,32 +170,28 @@ func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.
 		encryptor := bfv.NewEncryptor(bfvParams, cpk)
 
 		// craft input
-		inData := []uint64{42}
+		var inData []uint64
+		if node.ID() == "node-a" {
+			inData = []uint64{1, 1, 1, 0, 0}
+		} else {
+			inData = []uint64{0, 0, 1, 1, 1}
+		}
 		inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
 		inCt := encryptor.EncryptNew(inPt)
+
 		// "//nodeID//circuitID/inputID"
 		opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", node.ID(), cLabel))
-		op := pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt}
-
-		// execute
-		start := time.Now()
-		outCtList, err = computeService.Execute(ctx, cLabel, op)
-		if err != nil {
-			panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %s", err))
-		}
-		elapsed := time.Since(start)
-		outputStats(node, nc, sd, nl, elapsed)
-
-	} else {
-		// cloud and node-b execute
-		start := time.Now()
-		outCtList, err = computeService.Execute(ctx, cLabel)
-		if err != nil {
-			panic(fmt.Errorf("[Compute] Cloud ComputeService.Execute() returned an error: %s", err))
-		}
-		elapsed := time.Since(start)
-		outputStats(node, nc, sd, nl, elapsed)
+		ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
 	}
+
+	// execute
+	start := time.Now()
+	outCtList, err := computeService.Execute(ctx, cLabel, ops...)
+	if err != nil {
+		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %s", err))
+	}
+	elapsed := time.Since(start)
+	outputStats(node, nc, sd, nl, elapsed)
 
 	// retrieve output
 	if len(outCtList) <= 0 {
@@ -216,7 +208,7 @@ func computePhase(node *node.Node, nc node.Config, sd setup.Description, nl pkg.
 		return
 	}
 	decryptor := bfv.NewDecryptor(bfvParams, sess.Sk)
-	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))
+	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:5]
 
 	log.Printf("[Compute] Retrieved output: %v\n", outPt)
 }
@@ -226,6 +218,7 @@ func registerCircuits() {
 		"Identity": func(ec compute.EvaluationContext) error {
 			// input from node-a
 			opIn := ec.Input("//node-a/in-0")
+			_ = ec.Input("//node-b/in-0")
 
 			// output encrypted under CPK
 			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
@@ -243,6 +236,29 @@ func registerCircuits() {
 			}
 
 			// output encrypted under node-a public key
+			ec.Output(opOut, "node-a")
+			return nil
+		},
+		"PSI": func(ec compute.EvaluationContext) error {
+			opIn1 := ec.Input("//node-a/in-0")
+			opIn2 := ec.Input("//node-b/in-0")
+
+			// ev := ec.ShallowCopy()
+			res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+			ec.Relinearize(res, res)
+			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+
+			params := ec.Parameters().Parameters
+			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
+				"target":     "node-a",
+				"aggregator": "cloud",
+				"lvl":        strconv.Itoa(params.MaxLevel()),
+				"smudging":   "1.0",
+			})
+			if err != nil {
+				return err
+			}
+
 			ec.Output(opOut, "node-a")
 			return nil
 		},
