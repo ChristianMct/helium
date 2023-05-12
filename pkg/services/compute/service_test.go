@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/protocols"
 	. "github.com/ldsec/helium/pkg/services/compute"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
@@ -274,7 +275,15 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 				clou.Session.Sk = sk.CopyNew()
 				clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
+				err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.CKG}.String(), kg.GenPublicKey(sk.CopyNew()))
+				if err != nil {
+					t.Fatal(err)
+				}
 				clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
+				err = clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
+				if err != nil {
+					t.Fatal(err)
+				}
 
 				localtest.Start()
 
@@ -346,7 +355,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 					})
 				}
 
-				err := g.Wait()
+				err = g.Wait()
 				if err != nil {
 					t.Fatal(err)
 				}

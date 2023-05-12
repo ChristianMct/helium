@@ -73,7 +73,12 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	se.sess = sess
 
 	se.params, _ = bfv.NewParameters(*sess.Params, 65537)
-	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: sess.Rlk})
+	rlk := new(rlwe.RelinearizationKey)
+	err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
+	if err != nil {
+		panic(fmt.Errorf("%s | rlk was not found for node %s: %s", sess.NodeID, sess.NodeID, err))
+	}
+	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk})
 	se.Evaluator = eval
 
 	se.isLight = make(map[pkg.NodeID]bool)
