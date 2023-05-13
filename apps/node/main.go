@@ -40,6 +40,7 @@ type App struct {
 	nc   node.Config
 	nl   pkg.NodesList
 	sd   setup.Description
+	cd   compute.Description
 	node *node.Node
 	sess *pkg.Session
 }
@@ -58,7 +59,6 @@ func main() {
 	app := App{}
 
 	var err error
-	// var nc node.Config
 	if err = utils.UnmarshalFromFile(*configFile, &app.nc); err != nil {
 		log.Println("could not read config:", err)
 		os.Exit(1)
@@ -77,17 +77,22 @@ func main() {
 		app.nc.TLSConfig.FromDirectory = *tlsdir
 	}
 
-	// var nl pkg.NodesList
 	if err = utils.UnmarshalFromFile(*nodeList, &app.nl); err != nil {
 
 		log.Println("could not read nodelist:", err)
 		os.Exit(1)
 	}
 
-	// var sd setup.Description
 	if *setupFile != "" {
 		if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
 			log.Printf("could not read setup description file: %s\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if *computeFile != "" {
+		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
+			log.Printf("could not read compute description file: %s\n", err)
 			os.Exit(1)
 		}
 	}
@@ -145,12 +150,11 @@ func (a *App) setupPhase() {
 
 // computePhase executes the computational phase of Helium.
 func (a *App) computePhase() {
-	// register all circuits in the global state of the compute service
 	registerCircuits()
 
 	cloudID := a.nl[0].NodeID
 	var cSign = compute.Signature{
-		CircuitName: "PSI",
+		CircuitName: a.cd.CircuitName,
 		Delegate:    cloudID,
 	}
 
@@ -175,9 +179,15 @@ func (a *App) computePhase() {
 
 	ops := []pkg.Operand{}
 
-	// clients
+	// craft input for clients
 	if a.node.ID() != cloudID {
-		ops = a.getClientOperands(bfvParams, encoder, cLabel)
+		switch cSign.CircuitName {
+		case "PSI":
+			ops = a.getClientOperandsPSI(bfvParams, encoder, cLabel)
+			break
+		case "PIR":
+			ops = a.getClientOperandsPIR(bfvParams, encoder, cLabel)
+		}
 	}
 
 	// execute
@@ -210,7 +220,7 @@ func (a *App) computePhase() {
 }
 
 // getClientOperands returns the operands that this client node will input into the computation.
-func (a *App) getClientOperands(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
 	cpk := new(rlwe.PublicKey)
 	err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
@@ -225,6 +235,32 @@ func (a *App) getClientOperands(bfvParams bfv.Parameters, encoder bfv.Encoder, c
 		inData = []uint64{1, 1, 1, 0, 0}
 	} else {
 		inData = []uint64{0, 0, 1, 1, 1}
+	}
+	inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
+	inCt := encryptor.EncryptNew(inPt)
+
+	// "//nodeID//circuitID/inputID"
+	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
+	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
+
+	return ops
+}
+
+func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+	ops := []pkg.Operand{}
+	cpk := new(rlwe.PublicKey)
+	err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
+	if err != nil {
+		panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
+	}
+	encryptor := bfv.NewEncryptor(bfvParams, cpk)
+
+	// craft input
+	var inData []uint64
+	if a.node.ID() == "node-a" {
+		inData = []uint64{42, 1, 1, 0, 0}
+	} else {
+		inData = []uint64{}
 	}
 	inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
 	inCt := encryptor.EncryptNew(inPt)
@@ -283,6 +319,32 @@ func registerCircuits() {
 				return err
 			}
 
+			ec.Output(opOut, "node-a")
+			return nil
+		},
+		"PIR": func(ec compute.EvaluationContext) error {
+			// input from node-a
+			opIn := ec.Input("//node-a/in-0")
+
+			// ignore input from node-b
+			_ = ec.Input("//node-b/in-0")
+
+			// output encrypted under CPK
+			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
+
+			// collective key switching
+			params := ec.Parameters().Parameters
+			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
+				"target":     "node-a",
+				"aggregator": "cloud",
+				"lvl":        strconv.Itoa(params.MaxLevel()),
+				"smudging":   "1.0",
+			})
+			if err != nil {
+				return err
+			}
+
+			// output encrypted under node-a public key
 			ec.Output(opOut, "node-a")
 			return nil
 		},
