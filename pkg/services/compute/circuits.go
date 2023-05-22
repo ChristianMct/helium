@@ -50,6 +50,7 @@ type CircuitDescription struct {
 	OutputsFor               map[pkg.NodeID]utils.Set[pkg.OperandLabel]
 	KeyOps                   map[pkg.ProtocolID]protocols.Descriptor
 	NeedRlk                  bool
+	GaloisKeys               utils.Set[uint64]
 }
 
 type circuitParserContext struct {
@@ -63,18 +64,21 @@ type circuitParserContext struct {
 }
 
 func newCircuitParserCtx(cid pkg.CircuitID, params bfv.Parameters, nodeMapping map[string]pkg.NodeID) *circuitParserContext {
-	cpc := &circuitParserContext{circID: cid,
+	cpc := &circuitParserContext{
+		circID: cid,
 		cDesc: CircuitDescription{
 			InputSet:   utils.NewEmptySet[pkg.OperandLabel](),
 			Ops:        utils.NewEmptySet[pkg.OperandLabel](),
 			OutputSet:  utils.NewEmptySet[pkg.OperandLabel](),
 			OutputsFor: make(map[pkg.NodeID]utils.Set[pkg.OperandLabel]),
 			KeyOps:     make(map[pkg.ProtocolID]protocols.Descriptor),
+			GaloisKeys: make(utils.Set[uint64]),
 		},
 		SubCtx:      make(map[pkg.CircuitID]*circuitParserContext, 0),
 		params:      params,
 		nodeMapping: nodeMapping,
 	}
+	cpc.dummyEvaluator.ctx = cpc
 	return cpc
 }
 
@@ -209,7 +213,7 @@ func (e *circuitParserContext) RelinearizeNew(ctIn *rlwe.Ciphertext) (ctOut *rlw
 	return nil
 }
 
-type dummyEvaluator struct{}
+type dummyEvaluator struct{ ctx *circuitParserContext }
 
 func (de dummyEvaluator) Add(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
 
@@ -270,9 +274,17 @@ func (de dummyEvaluator) MulNew(ctIn *rlwe.Ciphertext, op1 rlwe.Operand) (ctOut 
 
 func (de dummyEvaluator) MulAndAdd(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
 
-func (de dummyEvaluator) Relinearize(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {}
+func (de dummyEvaluator) Relinearize(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {
+	if de.ctx != nil {
+		de.ctx.cDesc.NeedRlk = true
+	}
+
+}
 
 func (de dummyEvaluator) RelinearizeNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphertext) {
+	if de.ctx != nil {
+		de.ctx.cDesc.NeedRlk = true
+	}
 	return nil
 }
 
@@ -303,7 +315,11 @@ func (de dummyEvaluator) RotateRowsNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphe
 	return nil
 }
 
-func (de dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {}
+func (de dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {
+	if de.ctx != nil {
+		de.ctx.cDesc.GaloisKeys.AddAll(utils.NewSet(de.ctx.params.GaloisElementsForRowInnerSum()))
+	}
+}
 
 func (de dummyEvaluator) ShallowCopy() bfv.Evaluator {
 	return de

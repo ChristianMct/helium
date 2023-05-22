@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -128,6 +129,11 @@ func main() {
 	app.setupPhase()
 
 	if *docompute {
+
+		if !app.node.IsFullNode() {
+			<-time.After(time.Second)
+		}
+
 		app.computePhase()
 	}
 
@@ -145,7 +151,7 @@ func (a *App) setupPhase() {
 		log.Printf("Node %s | SetupService.Execute() returned an error: %s", a.nc.ID, err)
 	}
 	elapsed := time.Since(start)
-	a.outputStats(elapsed)
+	a.outputStats("setup", elapsed)
 }
 
 // computePhase executes the computational phase of Helium.
@@ -171,9 +177,9 @@ func (a *App) computePhase() {
 	if err != nil {
 		panic(err)
 	}
-	kg := rlwe.NewKeyGenerator(*a.sess.Params)
-	_, recPk := kg.GenKeyPair()
-	a.sess.RegisterPkForNode("node-a", *recPk)
+	// kg := rlwe.NewKeyGenerator(*a.sess.Params)
+	// _, recPk := kg.GenKeyPair()
+	// a.sess.RegisterPkForNode("receiver", *recPk)
 
 	encoder := bfv.NewEncoder(bfvParams)
 
@@ -182,13 +188,16 @@ func (a *App) computePhase() {
 	// craft input for clients
 	if a.node.ID() != cloudID {
 		switch cSign.CircuitName {
-		case "PSI":
+		case "psi-2":
 			ops = a.getClientOperandsPSI(bfvParams, encoder, cLabel)
-			break
-		case "PIR":
+		case "pir-3":
 			ops = a.getClientOperandsPIR(bfvParams, encoder, cLabel)
+		default:
+			panic(fmt.Errorf("unknown circuit name: %s", cSign.CircuitName))
 		}
 	}
+
+	log.Println(ops)
 
 	// execute
 	start := time.Now()
@@ -197,7 +206,7 @@ func (a *App) computePhase() {
 		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %s", err))
 	}
 	elapsed := time.Since(start)
-	a.outputStats(elapsed)
+	a.outputStats("compute", elapsed)
 
 	// retrieve output
 	if len(outCtList) <= 0 {
@@ -254,13 +263,21 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder
 		panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
 	}
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
-
+	inData := make([]uint64, bfvParams.N())
 	// craft input
-	var inData []uint64
-	if a.node.ID() == "node-a" {
-		inData = []uint64{42, 1, 1, 0, 0}
+
+	reqFromNode := 2
+
+	if a.node.ID() == "node-0" {
+		inData[reqFromNode] = 1
 	} else {
-		inData = []uint64{}
+		val, err := strconv.Atoi(strings.Split(string(a.node.ID()), "-")[1])
+		if err != nil {
+			panic(err)
+		}
+		for i := range inData {
+			inData[i] = uint64(val)
+		}
 	}
 	inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
 	inCt := encryptor.EncryptNew(inPt)
@@ -299,7 +316,7 @@ func registerCircuits() {
 			ec.Output(opOut, "node-a")
 			return nil
 		},
-		"PSI": func(ec compute.EvaluationContext) error {
+		"psi-2": func(ec compute.EvaluationContext) error {
 			opIn1 := ec.Input("//node-a/in-0")
 			opIn2 := ec.Input("//node-b/in-0")
 
@@ -322,20 +339,73 @@ func registerCircuits() {
 			ec.Output(opOut, "node-a")
 			return nil
 		},
-		"PIR": func(ec compute.EvaluationContext) error {
-			// input from node-a
-			opIn := ec.Input("//node-a/in-0")
 
-			// ignore input from node-b
-			_ = ec.Input("//node-b/in-0")
+		"pir-3": func(ec compute.EvaluationContext) error {
 
+			params := ec.Parameters()
+
+			inops := make(chan struct {
+				i    int
+				op   pkg.Operand
+				mask *bfv.PlaintextMul
+			}, 3)
+
+			reqOpChan := make(chan pkg.Operand, 1)
+
+			encoder := bfv.NewEncoder(params)
+			for i := 0; i < 3; i++ {
+
+				maskCoeffs := make([]uint64, params.N())
+				maskCoeffs[i] = 1
+				mask := encoder.EncodeMulNew(maskCoeffs, params.MaxLevel())
+
+				opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
+
+				if i != 0 {
+					inops <- struct {
+						i    int
+						op   pkg.Operand
+						mask *bfv.PlaintextMul
+					}{i, opIn, mask}
+				} else {
+					reqOpChan <- opIn
+				}
+			}
+			close(inops)
+
+			reqOp := <-reqOpChan
+
+			evaluator := ec.ShallowCopy() // creates a shallow evaluator copy for this goroutine
+			tmp := bfv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
+
+			maskedOps := make(chan pkg.Operand, 3)
+
+			for op := range inops {
+				// 1) Multiplication of the query with the plaintext mask
+				evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
+
+				// 2) Inner sum (populate all the slots with the sum of all the slots)
+				evaluator.InnerSum(tmp, tmp)
+
+				// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
+				maskedCt := evaluator.MulNew(tmp, op.op.Ciphertext)
+				maskedOps <- pkg.Operand{Ciphertext: maskedCt}
+			}
+			close(maskedOps)
+
+			tmpAdd := bfv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
+			c := 0
+			for maskedOp := range maskedOps {
+				evaluator.Add(maskedOp.Ciphertext, tmpAdd, tmpAdd)
+				c++
+			}
+
+			res := evaluator.RelinearizeNew(tmpAdd)
 			// output encrypted under CPK
-			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
+			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 
-			// collective key switching
-			params := ec.Parameters().Parameters
 			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-				"target":     "node-a",
+				"target":     "node-0",
 				"aggregator": "cloud",
 				"lvl":        strconv.Itoa(params.MaxLevel()),
 				"smudging":   "1.0",
@@ -345,7 +415,7 @@ func registerCircuits() {
 			}
 
 			// output encrypted under node-a public key
-			ec.Output(opOut, "node-a")
+			ec.Output(opOut, "node-0")
 			return nil
 		},
 	}
@@ -357,10 +427,11 @@ func registerCircuits() {
 }
 
 // outputStats outputs the total network usage and time take to execute a protocol phase.
-func (a *App) outputStats(elapsed time.Duration) {
+func (a *App) outputStats(phase string, elapsed time.Duration) {
+	log.Println("==============", phase, "phase ==============")
 	log.Printf("%s | finished setup for N=%d T=%d", a.nc.ID, len(a.nl), a.nc.SessionParameters[0].T)
 	log.Printf("%s | execute returned after %s", a.nc.ID, elapsed)
-	log.Printf("%s | network stats: %s", a.nc.ID, a.node.GetTransport().GetNetworkStats())
+	log.Printf("%s | network stats: %s\n", a.nc.ID, a.node.GetTransport().GetNetworkStats())
 
 	if *outputMetrics {
 		var statsJSON []byte

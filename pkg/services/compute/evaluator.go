@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/protocols"
@@ -73,13 +74,6 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	se.sess = sess
 
 	se.params, _ = bfv.NewParameters(*sess.Params, 65537)
-	rlk := new(rlwe.RelinearizationKey)
-	err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
-	if err != nil {
-		panic(fmt.Errorf("%s | rlk was not found for node %s: %s", sess.NodeID, sess.NodeID, err))
-	}
-	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk})
-	se.Evaluator = eval
 
 	se.isLight = make(map[pkg.NodeID]bool)
 
@@ -88,6 +82,25 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 		panic(err)
 	}
 	se.cDesc = dummyCtx.cDesc
+
+	rlk := new(rlwe.RelinearizationKey)
+	if se.cDesc.NeedRlk {
+		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
+		if err != nil {
+			panic(fmt.Errorf("%s | rlk was not found for node %s: %s", sess.NodeID, sess.NodeID, err))
+		}
+	}
+
+	rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
+	for galEl := range se.cDesc.GaloisKeys {
+		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(galEl, 10)}}.String(), rtks.Keys[galEl])
+		if err != nil {
+			panic(fmt.Errorf("%s | rtk for galEl %d was not found: %s", sess.NodeID, galEl, err))
+		}
+	}
+
+	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk, Rtks: rtks})
+	se.Evaluator = eval
 
 	se.inputOps = make(map[pkg.OperandLabel]*FutureOperand)
 	se.ops = make(map[pkg.OperandLabel]*FutureOperand)
@@ -272,7 +285,7 @@ func (se *fullEvaluatorContext) resolveRemoteInputs(ctx context.Context, ins uti
 		for in := range ins {
 
 			// DEBUG
-			log.Printf("[ResolveRemoteInputs] fetching %v", in)
+			//log.Printf("[ResolveRemoteInputs] fetching %v", in)
 			var op pkg.Operand
 
 			inURL := pkg.NewURL(string(in))
