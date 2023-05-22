@@ -78,7 +78,7 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	if err != nil {
 		panic(fmt.Errorf("%s | rlk was not found for node %s: %s", sess.NodeID, sess.NodeID, err))
 	}
-	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk})
+	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk, Rtks: sess.Rtks})
 	se.Evaluator = eval
 
 	se.isLight = make(map[pkg.NodeID]bool)
