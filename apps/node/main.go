@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -342,57 +343,84 @@ func registerCircuits() {
 
 		"pir-3": func(ec compute.EvaluationContext) error {
 
+			// number of clients
+			N := 3
+
 			params := ec.Parameters()
 
 			inops := make(chan struct {
 				i    int
 				op   pkg.Operand
 				mask *bfv.PlaintextMul
-			}, 3)
+			}, N)
 
 			reqOpChan := make(chan pkg.Operand, 1)
 
-			encoder := bfv.NewEncoder(params)
-			for i := 0; i < 3; i++ {
+			inWorkers := &sync.WaitGroup{}
+			inWorkers.Add(N)
+			for i := 0; i < N; i++ {
+				// each input is provided by a goroutine
+				go func(i int) {
+					encoder := bfv.NewEncoder(params)
+					maskCoeffs := make([]uint64, params.N())
+					maskCoeffs[i] = 1
+					mask := encoder.EncodeMulNew(maskCoeffs, params.MaxLevel())
 
-				maskCoeffs := make([]uint64, params.N())
-				maskCoeffs[i] = 1
-				mask := encoder.EncodeMulNew(maskCoeffs, params.MaxLevel())
+					opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
 
-				opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
-
-				if i != 0 {
-					inops <- struct {
-						i    int
-						op   pkg.Operand
-						mask *bfv.PlaintextMul
-					}{i, opIn, mask}
-				} else {
-					reqOpChan <- opIn
-				}
+					if i != 0 {
+						inops <- struct {
+							i    int
+							op   pkg.Operand
+							mask *bfv.PlaintextMul
+						}{i, opIn, mask}
+					} else {
+						reqOpChan <- opIn
+					}
+					inWorkers.Done()
+				}(i)
 			}
-			close(inops)
 
+			// close input channel when all input operands have been provided
+			go func() {
+				inWorkers.Wait()
+				close(inops)
+			}()
+
+			// wait for the query ciphertext to be generated
 			reqOp := <-reqOpChan
 
-			evaluator := ec.ShallowCopy() // creates a shallow evaluator copy for this goroutine
-			tmp := bfv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
+			// each received input operand can be processed by one of the NGoRoutine
+			NGoRoutine := 8
+			maskedOps := make(chan pkg.Operand, N)
+			maskWorkers := &sync.WaitGroup{}
+			maskWorkers.Add(NGoRoutine)
+			for i := 0; i < NGoRoutine; i++ {
+				go func() {
+					evaluator := ec.ShallowCopy() // creates a shallow evaluator copy for this goroutine
+					tmp := bfv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
+					for op := range inops {
+						// 1) Multiplication of the query with the plaintext mask
+						evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
 
-			maskedOps := make(chan pkg.Operand, 3)
+						// 2) Inner sum (populate all the slots with the sum of all the slots)
+						evaluator.InnerSum(tmp, tmp)
 
-			for op := range inops {
-				// 1) Multiplication of the query with the plaintext mask
-				evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
-
-				// 2) Inner sum (populate all the slots with the sum of all the slots)
-				evaluator.InnerSum(tmp, tmp)
-
-				// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
-				maskedCt := evaluator.MulNew(tmp, op.op.Ciphertext)
-				maskedOps <- pkg.Operand{Ciphertext: maskedCt}
+						// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
+						maskedCt := evaluator.MulNew(tmp, op.op.Ciphertext)
+						maskedOps <- pkg.Operand{Ciphertext: maskedCt}
+					}
+					maskWorkers.Done()
+				}()
 			}
-			close(maskedOps)
 
+			// close input processing channel when all input have been processed
+			go func() {
+				maskWorkers.Wait()
+				close(maskedOps)
+			}()
+
+			evaluator := ec.ShallowCopy()
 			tmpAdd := bfv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
 			c := 0
 			for maskedOp := range maskedOps {
