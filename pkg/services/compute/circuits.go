@@ -317,6 +317,8 @@ func (de dummyEvaluator) RotateRowsNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphe
 
 func (de dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {
 	if de.ctx != nil {
+		de.ctx.l.Lock()
+		defer de.ctx.l.Unlock()
 		de.ctx.cDesc.GaloisKeys.AddAll(utils.NewSet(de.ctx.params.GaloisElementsForRowInnerSum()))
 	}
 }
