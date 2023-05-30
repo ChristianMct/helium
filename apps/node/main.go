@@ -137,6 +137,8 @@ func main() {
 		panic(err)
 	}
 
+	log.Printf("%s | connecting...\n", app.nc.ID)
+
 	if errConn := app.node.Connect(); errConn != nil {
 		panic(errConn)
 	}
@@ -240,14 +242,12 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
 
 	// craft input
-	var inData [8]uint64
+	inData := [8]uint64{1, 1, 1, 1, 1, 1, 1, 1}
 	val, err := strconv.Atoi(strings.Split(string(a.node.ID()), "-")[1])
 	if err != nil {
 		panic(err)
 	}
-	for i := 0; i <= val; i++ {
-		inData[i] = 1
-	}
+	inData[val] = uint64(val)
 	inPt := encoder.EncodeNew(inData[:], bfvParams.MaxLevel())
 	inCt := encryptor.EncryptNew(inPt)
 
@@ -361,12 +361,67 @@ func registerCircuits() {
 					opIn2 := <-inOps
 					res := ev1.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
 					ev1.Relinearize(res, res)
-					lvl1 <- pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+					lvl1 <- pkg.Operand{Ciphertext: res}
 				}()
 			}
 
 			opIn1 := <-lvl1
 			opIn2 := <-lvl1
+			res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+			ec.Relinearize(res, res)
+			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+
+			params := ec.Parameters().Parameters
+			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
+				"target":     "node-0",
+				"aggregator": "cloud",
+				"lvl":        strconv.Itoa(params.MaxLevel()),
+				"smudging":   "1.0",
+			})
+			if err != nil {
+				return err
+			}
+
+			ec.Output(opOut, "node-0")
+			return nil
+		},
+
+		"psi-8": func(ec compute.EvaluationContext) error {
+
+			inOps := make(chan pkg.Operand, 8)
+			for i := 0; i < 8; i++ {
+				i := i
+				go func() {
+					inOps <- ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
+				}()
+			}
+
+			lvl1 := make(chan pkg.Operand, 4)
+			for i := 0; i < 4; i++ {
+				go func() {
+					ev1 := ec.ShallowCopy()
+					opIn1 := <-inOps
+					opIn2 := <-inOps
+					res := ev1.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+					ev1.Relinearize(res, res)
+					lvl1 <- pkg.Operand{Ciphertext: res}
+				}()
+			}
+
+			lvl2 := make(chan pkg.Operand, 2)
+			for i := 0; i < 2; i++ {
+				go func() {
+					ev1 := ec.ShallowCopy()
+					opIn1 := <-lvl1
+					opIn2 := <-lvl1
+					res := ev1.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+					ev1.Relinearize(res, res)
+					lvl2 <- pkg.Operand{Ciphertext: res}
+				}()
+			}
+
+			opIn1 := <-lvl2
+			opIn2 := <-lvl2
 			res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
 			ec.Relinearize(res, res)
 			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
