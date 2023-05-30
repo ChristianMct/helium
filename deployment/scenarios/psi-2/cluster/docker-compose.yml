@@ -1,0 +1,47 @@
+version: '3.0'
+services:
+  cloud:
+    image: heliummpc/helium:latest
+    container_name: cloud
+    command: -docompute
+    volumes:
+      - ../cloud.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # - cloud-data:/helium/data
+    profiles: ["all", "cloud"]
+    ports:
+          - "40000:40000"
+
+  node-a:
+    image: heliummpc/helium:latest
+    container_name: node-a
+    command: -docompute
+    volumes:
+      - ../nodeA.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # Persistent data across container reboots.
+      # - node-a-data:/helium/data
+    profiles: ["all", "clients"]
+
+  node-b:
+    image: heliummpc/helium:latest
+    container_name: node-b
+    command: -docompute
+    volumes:
+      - ../nodeB.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # No persistency.
+    profiles: ["all", "clients"]
+
+# volumes:
+  # cloud-data:
+  # node-a-data:

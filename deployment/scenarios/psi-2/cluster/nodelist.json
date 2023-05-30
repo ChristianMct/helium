@@ -1,0 +1,5 @@
+[
+  {"NodeID": "cloud", "NodeAddress": "iccluster087.iccluster.epfl.ch:40000"}, 
+  {"NodeID": "node-a"},
+  {"NodeID": "node-b"}
+]

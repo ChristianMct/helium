@@ -60,6 +60,12 @@ docker: ## Use the Dockerfile to build the container
 push:docker ## publish the helium images
 	docker push heliummpc/helium:latest
 
+push-exps:
+	rsync -r deployment/scenarios root@iccluster086.iccluster.epfl.ch:~
+	rsync -r deployment/scenarios root@iccluster087.iccluster.epfl.ch:~
+
+setexp: push push-exps
+
 ## Help:
 help: ## Show this help.
 	@echo 'Helium'

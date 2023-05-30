@@ -44,7 +44,7 @@ type Transport struct {
 }
 
 // NewTransport creates a new Transport instance for the provided configuration.
-func NewTransport(id pkg.NodeID, nl pkg.NodesList, tlsConf TLSConfig) (*Transport, error) {
+func NewTransport(id pkg.NodeID, na pkg.NodeAddress, nl pkg.NodesList, tlsConf TLSConfig) (*Transport, error) {
 	t := new(Transport)
 	var err error
 	t.id = id
@@ -70,12 +70,7 @@ func NewTransport(id pkg.NodeID, nl pkg.NodesList, tlsConf TLSConfig) (*Transpor
 	t.setup = t.newSetupTransport()
 	t.compute = t.newComputeTransport()
 
-	for _, node := range t.nodeList {
-		if node.NodeID == t.id {
-			t.address = node.NodeAddress
-		}
-	}
-
+	t.address = na
 	return t, nil
 }
 

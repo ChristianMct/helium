@@ -62,7 +62,7 @@ type Config struct {
 // NewNode creates a new Helium node from the provided config and node list.
 func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 
-	trans, err := grpctrans.NewTransport(config.ID, nodeList, config.TLSConfig)
+	trans, err := grpctrans.NewTransport(config.ID, config.Address, nodeList, config.TLSConfig)
 	if err != nil {
 		return nil, err
 	}
