@@ -50,6 +50,30 @@ services:
       - ./nodelist.json:/helium/config/nodelist.json
     profiles: ["all", "clients"]
 
+  node-3:
+    image: heliummpc/helium:latest
+    container_name: node-3
+    command: -docompute
+    volumes:
+      - ../node3.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # No persistency.
+    profiles: ["all", "clients"]
+
+  node-4:
+    image: heliummpc/helium:latest
+    container_name: node-4
+    command: -docompute
+    volumes:
+      - ../node4.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+    profiles: ["all", "clients"]
+
 # volumes:
   # cloud-data:
   # node-a-data:

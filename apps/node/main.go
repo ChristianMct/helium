@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/ldsec/helium/pkg/protocols"
@@ -149,9 +147,10 @@ func main() {
 		app.computePhase()
 	}
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	<-sigs
+	// sigs := make(chan os.Signal, 1)
+	// signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	// <-sigs
+	<-time.After(time.Second)
 	log.Printf("%s | exiting.", app.nc.ID)
 }
 
@@ -163,7 +162,7 @@ func (a *App) setupPhase() {
 		log.Printf("Node %s | SetupService.Execute() returned an error: %s", a.nc.ID, err)
 	}
 	elapsed := time.Since(start)
-	a.outputStats("setup", elapsed)
+	a.outputStats(a.cd.CircuitName, "setup", elapsed)
 }
 
 // computePhase executes the computational phase of Helium.
@@ -194,7 +193,7 @@ func (a *App) computePhase() {
 		switch cSign.CircuitName {
 		case "psi-2", "psi-4", "psi-8":
 			ops = a.getClientOperandsPSI(bfvParams, encoder, cLabel)
-		case "pir-3", "pir-4", "pir-8":
+		case "pir-3", "pir-5", "pir-9":
 			ops = a.getClientOperandsPIR(bfvParams, encoder, cLabel)
 		default:
 			panic(fmt.Errorf("unknown circuit name: %s", cSign.CircuitName))
@@ -209,7 +208,7 @@ func (a *App) computePhase() {
 		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %s", err))
 	}
 	elapsed := time.Since(start)
-	a.outputStats("compute", elapsed)
+	a.outputStats(a.cd.CircuitName, "compute", elapsed)
 
 	// retrieve output
 	if len(outCtList) <= 0 {
@@ -294,6 +293,109 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder
 
 // registerCircuits registers some predefined circuits in the global state of the compute service.
 func registerCircuits() {
+
+	pirN := func(N int, ec compute.EvaluationContext) error {
+		params := ec.Parameters()
+
+		inops := make(chan struct {
+			i    int
+			op   pkg.Operand
+			mask *bfv.PlaintextMul
+		}, N)
+
+		reqOpChan := make(chan pkg.Operand, 1)
+
+		inWorkers := &sync.WaitGroup{}
+		inWorkers.Add(N)
+		for i := 0; i < N; i++ {
+			// each input is provided by a goroutine
+			go func(i int) {
+				encoder := bfv.NewEncoder(params)
+				maskCoeffs := make([]uint64, params.N())
+				maskCoeffs[i] = 1
+				mask := encoder.EncodeMulNew(maskCoeffs, params.MaxLevel())
+
+				opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
+
+				if i != 0 {
+					inops <- struct {
+						i    int
+						op   pkg.Operand
+						mask *bfv.PlaintextMul
+					}{i, opIn, mask}
+				} else {
+					reqOpChan <- opIn
+				}
+				inWorkers.Done()
+			}(i)
+		}
+
+		// close input channel when all input operands have been provided
+		go func() {
+			inWorkers.Wait()
+			close(inops)
+		}()
+
+		// wait for the query ciphertext to be generated
+		reqOp := <-reqOpChan
+
+		// each received input operand can be processed by one of the NGoRoutine
+		NGoRoutine := 8
+		maskedOps := make(chan pkg.Operand, N)
+		maskWorkers := &sync.WaitGroup{}
+		maskWorkers.Add(NGoRoutine)
+		for i := 0; i < NGoRoutine; i++ {
+			go func() {
+				evaluator := ec.ShallowCopy() // creates a shallow evaluator copy for this goroutine
+				tmp := bfv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
+				for op := range inops {
+					// 1) Multiplication of the query with the plaintext mask
+					evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
+
+					// 2) Inner sum (populate all the slots with the sum of all the slots)
+					evaluator.InnerSum(tmp, tmp)
+
+					// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
+					maskedCt := evaluator.MulNew(tmp, op.op.Ciphertext)
+					maskedOps <- pkg.Operand{Ciphertext: maskedCt}
+				}
+				maskWorkers.Done()
+			}()
+		}
+
+		// close input processing channel when all input have been processed
+		go func() {
+			maskWorkers.Wait()
+			close(maskedOps)
+		}()
+
+		evaluator := ec.ShallowCopy()
+		tmpAdd := bfv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
+		c := 0
+		for maskedOp := range maskedOps {
+			evaluator.Add(maskedOp.Ciphertext, tmpAdd, tmpAdd)
+			c++
+		}
+
+		res := evaluator.RelinearizeNew(tmpAdd)
+		// output encrypted under CPK
+		opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+
+		opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
+			"target":     "node-0",
+			"aggregator": "cloud",
+			"lvl":        strconv.Itoa(params.MaxLevel()),
+			"smudging":   "1.0",
+		})
+		if err != nil {
+			return err
+		}
+
+		// output encrypted under node-a public key
+		ec.Output(opOut, "node-0")
+		return nil
+	}
+
 	testCircuits := map[string]compute.Circuit{
 		"Identity": func(ec compute.EvaluationContext) error {
 			// input from node-a
@@ -442,109 +544,13 @@ func registerCircuits() {
 		},
 
 		"pir-3": func(ec compute.EvaluationContext) error {
-
-			// number of clients
-			N := 3
-
-			params := ec.Parameters()
-
-			inops := make(chan struct {
-				i    int
-				op   pkg.Operand
-				mask *bfv.PlaintextMul
-			}, N)
-
-			reqOpChan := make(chan pkg.Operand, 1)
-
-			inWorkers := &sync.WaitGroup{}
-			inWorkers.Add(N)
-			for i := 0; i < N; i++ {
-				// each input is provided by a goroutine
-				go func(i int) {
-					encoder := bfv.NewEncoder(params)
-					maskCoeffs := make([]uint64, params.N())
-					maskCoeffs[i] = 1
-					mask := encoder.EncodeMulNew(maskCoeffs, params.MaxLevel())
-
-					opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
-
-					if i != 0 {
-						inops <- struct {
-							i    int
-							op   pkg.Operand
-							mask *bfv.PlaintextMul
-						}{i, opIn, mask}
-					} else {
-						reqOpChan <- opIn
-					}
-					inWorkers.Done()
-				}(i)
-			}
-
-			// close input channel when all input operands have been provided
-			go func() {
-				inWorkers.Wait()
-				close(inops)
-			}()
-
-			// wait for the query ciphertext to be generated
-			reqOp := <-reqOpChan
-
-			// each received input operand can be processed by one of the NGoRoutine
-			NGoRoutine := 8
-			maskedOps := make(chan pkg.Operand, N)
-			maskWorkers := &sync.WaitGroup{}
-			maskWorkers.Add(NGoRoutine)
-			for i := 0; i < NGoRoutine; i++ {
-				go func() {
-					evaluator := ec.ShallowCopy() // creates a shallow evaluator copy for this goroutine
-					tmp := bfv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
-					for op := range inops {
-						// 1) Multiplication of the query with the plaintext mask
-						evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
-
-						// 2) Inner sum (populate all the slots with the sum of all the slots)
-						evaluator.InnerSum(tmp, tmp)
-
-						// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
-						maskedCt := evaluator.MulNew(tmp, op.op.Ciphertext)
-						maskedOps <- pkg.Operand{Ciphertext: maskedCt}
-					}
-					maskWorkers.Done()
-				}()
-			}
-
-			// close input processing channel when all input have been processed
-			go func() {
-				maskWorkers.Wait()
-				close(maskedOps)
-			}()
-
-			evaluator := ec.ShallowCopy()
-			tmpAdd := bfv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
-			c := 0
-			for maskedOp := range maskedOps {
-				evaluator.Add(maskedOp.Ciphertext, tmpAdd, tmpAdd)
-				c++
-			}
-
-			res := evaluator.RelinearizeNew(tmpAdd)
-			// output encrypted under CPK
-			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
-
-			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-				"target":     "node-0",
-				"aggregator": "cloud",
-				"lvl":        strconv.Itoa(params.MaxLevel()),
-				"smudging":   "1.0",
-			})
-			if err != nil {
-				return err
-			}
-
-			// output encrypted under node-a public key
-			ec.Output(opOut, "node-0")
-			return nil
+			return pirN(3, ec)
+		},
+		"pir-5": func(ec compute.EvaluationContext) error {
+			return pirN(5, ec)
+		},
+		"pir-9": func(ec compute.EvaluationContext) error {
+			return pirN(9, ec)
 		},
 	}
 	for label, cDef := range testCircuits {
@@ -555,7 +561,7 @@ func registerCircuits() {
 }
 
 // outputStats outputs the total network usage and time take to execute a protocol phase.
-func (a *App) outputStats(phase string, elapsed time.Duration) {
+func (a *App) outputStats(circuit, phase string, elapsed time.Duration) {
 	log.Println("==============", phase, "phase ==============")
 	log.Printf("%s | finished setup for N=%d T=%d", a.nc.ID, len(a.nl), a.nc.SessionParameters[0].T)
 	log.Printf("%s | execute returned after %s", a.nc.ID, elapsed)
@@ -564,15 +570,19 @@ func (a *App) outputStats(phase string, elapsed time.Duration) {
 	if *outputMetrics {
 		var statsJSON []byte
 		statsJSON, err := json.MarshalIndent(map[string]string{
-			"N":        fmt.Sprint(len(a.nl)),
-			"T":        fmt.Sprint(a.nc.SessionParameters[0].T),
-			"Wall":     fmt.Sprint(elapsed),
-			"NetStats": a.node.GetTransport().GetNetworkStats().String(),
+			"Wall":    fmt.Sprint(elapsed),
+			"Sent":    fmt.Sprint(a.node.GetTransport().GetNetworkStats().DataSent),
+			"Recvt":   fmt.Sprint(a.node.GetTransport().GetNetworkStats().DataRecv),
+			"N":       fmt.Sprint(len(a.sess.Nodes)),
+			"T":       fmt.Sprint(a.nc.SessionParameters[0].T),
+			"ID":      fmt.Sprint(a.nc.ID),
+			"Circuit": circuit,
+			"Phase":   phase,
 		}, "", "\t")
 		if err != nil {
 			panic(err)
 		}
-		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s.json", a.nc.ID), statsJSON, 0600); errWrite != nil {
+		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s-%s-%s.json", circuit, phase, a.nc.ID), statsJSON, 0600); errWrite != nil {
 			log.Println(errWrite)
 		}
 	}

@@ -10,25 +10,21 @@ services:
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - /root/results:/helium/stats
-
-      # - cloud-data:/helium/data
-    profiles: ["all", "cloud"]
     ports:
-          - "40000:40000"
+      - "40000:40000"
+    profiles: ["all", "cloud"]
 
   node-0:
     image: heliummpc/helium:latest
     container_name: node-0
     command: -docompute -outputMetrics
     volumes:
-      - ../node-0.json:/helium/config/node.json
+      - ../node0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
-      - /root/results:/helium/stats
-
       # Persistent data across container reboots.
-      # - node-a-data:/helium/data
+      - /root/results:/helium/stats
     profiles: ["all", "clients"]
 
   node-1:
@@ -36,7 +32,7 @@ services:
     container_name: node-1
     command: -docompute
     volumes:
-      - ../node-1.json:/helium/config/node.json
+      - ../node1.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
@@ -49,12 +45,10 @@ services:
     container_name: node-2
     command: -docompute
     volumes:
-      - ../node-2.json:/helium/config/node.json
+      - ../node2.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
-
-      # No persistency.
     profiles: ["all", "clients"]
 
   node-3:
@@ -62,7 +56,7 @@ services:
     container_name: node-3
     command: -docompute
     volumes:
-      - ../node-3.json:/helium/config/node.json
+      - ../node3.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
@@ -75,13 +69,10 @@ services:
     container_name: node-4
     command: -docompute
     volumes:
-      - ../node-4.json:/helium/config/node.json
+      - ../node4.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
-
-      # Persistent data across container reboots.
-      # - node-a-data:/helium/data
     profiles: ["all", "clients"]
 
   node-5:
@@ -89,33 +80,49 @@ services:
     container_name: node-5
     command: -docompute
     volumes:
-      - ../node-5.json:/helium/config/node.json
+      - ../node5.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # No persistency.
+    profiles: ["all", "clients"]
+
+  node-6:
+    image: heliummpc/helium:latest
+    container_name: node-6
+    command: -docompute
+    volumes:
+      - ../node6.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
     profiles: ["all", "clients"]
 
-  node-6:
-      image: heliummpc/helium:latest
-      container_name: node-6
-      command: -docompute
-      volumes:
-        - ../node-6.json:/helium/config/node.json
-        - ../setup.json:/helium/config/setup.json
-        - ../compute.json:/helium/config/compute.json
-        - ./nodelist.json:/helium/config/nodelist.json
-      profiles: ["all", "clients"]
-
   node-7:
-      image: heliummpc/helium:latest
-      container_name: node-7
-      command: -docompute
-      volumes:
-        - ../node-7.json:/helium/config/node.json
-        - ../setup.json:/helium/config/setup.json
-        - ../compute.json:/helium/config/compute.json
-        - ./nodelist.json:/helium/config/nodelist.json
-      profiles: ["all", "clients"]
+    image: heliummpc/helium:latest
+    container_name: node-7
+    command: -docompute
+    volumes:
+      - ../node7.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+
+      # No persistency.
+    profiles: ["all", "clients"]
+
+  node-8:
+    image: heliummpc/helium:latest
+    container_name: node-8
+    command: -docompute
+    volumes:
+      - ../node8.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+    profiles: ["all", "clients"]
+
 # volumes:
-  # cloud-data:
-  # node-a-data:
+#   cloud-data:
+#   node-data:

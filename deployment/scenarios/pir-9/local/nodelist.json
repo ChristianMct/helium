@@ -1,0 +1,12 @@
+[
+  {"NodeID": "cloud","NodeAddress": "cloud:40000"}, 
+  {"NodeID": "node-0"},
+  {"NodeID": "node-1"},
+  {"NodeID": "node-2"},
+  {"NodeID": "node-3"},
+  {"NodeID": "node-4"},
+  {"NodeID": "node-5"},
+  {"NodeID": "node-6"},
+  {"NodeID": "node-7"},
+  {"NodeID": "node-8"}
+]

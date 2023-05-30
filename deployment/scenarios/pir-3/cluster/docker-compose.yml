@@ -10,21 +10,22 @@ services:
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - /root/results:/helium/stats
+    ports:
+      - "40000:40000"
       # - cloud-data:/helium/data
     profiles: ["all", "cloud"]
-    ports:
-          - "40000:40000"
 
   node-0:
     image: heliummpc/helium:latest
     container_name: node-0
     command: -docompute -outputMetrics
     volumes:
-      - ../node-0.json:/helium/config/node.json
+      - ../node0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - /root/results:/helium/stats
+
       # Persistent data across container reboots.
       # - node-a-data:/helium/data
     profiles: ["all", "clients"]
@@ -34,12 +35,23 @@ services:
     container_name: node-1
     command: -docompute
     volumes:
-      - ../node-1.json:/helium/config/node.json
+      - ../node1.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
 
       # No persistency.
+    profiles: ["all", "clients"]
+
+  node-2:
+    image: heliummpc/helium:latest
+    container_name: node-2
+    command: -docompute
+    volumes:
+      - ../node2.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
     profiles: ["all", "clients"]
 
 # volumes:
