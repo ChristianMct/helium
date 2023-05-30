@@ -13,12 +13,12 @@ services:
       # - cloud-data:/helium/data
     # profiles: ["all", "cloud"]
 
-  node-a:
+  node-0:
     image: heliummpc/helium:latest
-    container_name: node-a
+    container_name: node-0
     command: -docompute
     volumes:
-      - ../nodeA.json:/helium/config/node.json
+      - ../node-0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
@@ -27,12 +27,12 @@ services:
       # - node-a-data:/helium/data
     # profiles: ["all", "clients"]
 
-  node-b:
+  node-1:
     image: heliummpc/helium:latest
-    container_name: node-b
+    container_name: node-1
     command: -docompute
     volumes:
-      - ../nodeB.json:/helium/config/node.json
+      - ../node-1.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json

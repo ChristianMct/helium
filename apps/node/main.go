@@ -224,7 +224,7 @@ func (a *App) computePhase() {
 		return
 	}
 	decryptor := bfv.NewDecryptor(bfvParams, a.sess.Sk)
-	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:5]
+	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:8]
 
 	log.Printf("[Compute] Retrieved output: %v\n", outPt)
 }
@@ -240,13 +240,15 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
 
 	// craft input
-	var inData []uint64
-	if a.node.ID() == "node-a" {
-		inData = []uint64{1, 1, 1, 0, 0}
-	} else {
-		inData = []uint64{0, 0, 1, 1, 1}
+	var inData [8]uint64
+	val, err := strconv.Atoi(strings.Split(string(a.node.ID()), "-")[1])
+	if err != nil {
+		panic(err)
 	}
-	inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
+	for i := 0; i <= val; i++ {
+		inData[i] = 1
+	}
+	inPt := encoder.EncodeNew(inData[:], bfvParams.MaxLevel())
 	inCt := encryptor.EncryptNew(inPt)
 
 	// "//nodeID//circuitID/inputID"
@@ -318,8 +320,8 @@ func registerCircuits() {
 			return nil
 		},
 		"psi-2": func(ec compute.EvaluationContext) error {
-			opIn1 := ec.Input("//node-a/in-0")
-			opIn2 := ec.Input("//node-b/in-0")
+			opIn1 := ec.Input("//node-0/in-0")
+			opIn2 := ec.Input("//node-1/in-0")
 
 			// ev := ec.ShallowCopy()
 			res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
@@ -328,7 +330,7 @@ func registerCircuits() {
 
 			params := ec.Parameters().Parameters
 			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-				"target":     "node-a",
+				"target":     "node-0",
 				"aggregator": "cloud",
 				"lvl":        strconv.Itoa(params.MaxLevel()),
 				"smudging":   "1.0",
@@ -337,7 +339,7 @@ func registerCircuits() {
 				return err
 			}
 
-			ec.Output(opOut, "node-a")
+			ec.Output(opOut, "node-0")
 			return nil
 		},
 
