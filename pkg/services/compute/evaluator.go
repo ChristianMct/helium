@@ -83,25 +83,6 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	}
 	se.cDesc = dummyCtx.cDesc
 
-	rlk := new(rlwe.RelinearizationKey)
-	if se.cDesc.NeedRlk {
-		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
-		if err != nil {
-			panic(fmt.Errorf("%s | rlk was not found for node %s: %s", sess.NodeID, sess.NodeID, err))
-		}
-	}
-
-	rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
-	for galEl := range se.cDesc.GaloisKeys {
-		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(galEl, 10)}}.String(), rtks.Keys[galEl])
-		if err != nil {
-			panic(fmt.Errorf("%s | rtk for galEl %d was not found: %s", sess.NodeID, galEl, err))
-		}
-	}
-
-	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk, Rtks: rtks})
-	se.Evaluator = eval
-
 	se.inputOps = make(map[pkg.OperandLabel]*FutureOperand)
 	se.ops = make(map[pkg.OperandLabel]*FutureOperand)
 	se.outgoingOps = make(map[pkg.OperandLabel]*FutureOperand)
@@ -175,6 +156,25 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 
 	log.Printf("%s | started full context Execute of %s\n", se.sess.NodeID, se.id)
+
+	rlk := new(rlwe.RelinearizationKey)
+	if se.cDesc.NeedRlk {
+		err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
+		if err != nil {
+			panic(fmt.Errorf("%s | rlk was not found for node %s: %s", se.sess.NodeID, se.sess.NodeID, err))
+		}
+	}
+
+	rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
+	for galEl := range se.cDesc.GaloisKeys {
+		err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(galEl, 10)}}.String(), rtks.Keys[galEl])
+		if err != nil {
+			panic(fmt.Errorf("%s | rtk for galEl %d was not found: %s", se.sess.NodeID, galEl, err))
+		}
+	}
+
+	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk, Rtks: rtks})
+	se.Evaluator = eval
 
 	se.resolveRemoteInputs(ctx, se.cDesc.InputSet)
 

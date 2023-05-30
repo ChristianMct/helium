@@ -116,10 +116,6 @@ func main() {
 		panic("multi-session nodes not implemented")
 	}
 
-	if errConn := app.node.Connect(); errConn != nil {
-		panic(errConn)
-	}
-
 	sessionID := pkg.SessionID(app.nc.SessionParameters[0].ID)
 	var exists bool
 	app.sess, exists = app.node.GetSessionFromID(sessionID)
@@ -127,14 +123,27 @@ func main() {
 		panic(fmt.Errorf("No session found for ID: %s", sessionID))
 	}
 
+	registerCircuits()
+	cloudID := app.nl[0].NodeID
+	cLabel := pkg.CircuitID("test-circuit-0")
+	var cSign = compute.Signature{
+		CircuitName: app.cd.CircuitName,
+		Delegate:    cloudID,
+	}
+	ctx := pkg.NewContext(&app.sess.ID, nil)
+	computeService := app.node.GetComputeService()
+	err = computeService.LoadCircuit(ctx, cSign, cLabel)
+	if err != nil {
+		panic(err)
+	}
+
+	if errConn := app.node.Connect(); errConn != nil {
+		panic(errConn)
+	}
+
 	app.setupPhase()
 
 	if *docompute {
-
-		if !app.node.IsFullNode() {
-			<-time.After(time.Second)
-		}
-
 		app.computePhase()
 	}
 
@@ -157,22 +166,14 @@ func (a *App) setupPhase() {
 
 // computePhase executes the computational phase of Helium.
 func (a *App) computePhase() {
-	registerCircuits()
 
 	cloudID := a.nl[0].NodeID
+	cLabel := pkg.CircuitID("test-circuit-0")
 	var cSign = compute.Signature{
 		CircuitName: a.cd.CircuitName,
 		Delegate:    cloudID,
 	}
-
-	cLabel := pkg.CircuitID("test-circuit-0")
 	ctx := pkg.NewContext(&a.sess.ID, nil)
-
-	computeService := a.node.GetComputeService()
-	err := computeService.LoadCircuit(ctx, cSign, cLabel)
-	if err != nil {
-		panic(err)
-	}
 
 	bfvParams, err := bfv.NewParameters(*a.sess.Params, 65537)
 	if err != nil {
@@ -198,8 +199,7 @@ func (a *App) computePhase() {
 		}
 	}
 
-	log.Println(ops)
-
+	computeService := a.node.GetComputeService()
 	// execute
 	start := time.Now()
 	outCtList, err := computeService.Execute(ctx, cLabel, ops...)
