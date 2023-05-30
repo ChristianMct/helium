@@ -190,9 +190,9 @@ func (a *App) computePhase() {
 	// craft input for clients
 	if a.node.ID() != cloudID {
 		switch cSign.CircuitName {
-		case "psi-2":
+		case "psi-2", "psi-4", "psi-8":
 			ops = a.getClientOperandsPSI(bfvParams, encoder, cLabel)
-		case "pir-3":
+		case "pir-3", "pir-4", "pir-8":
 			ops = a.getClientOperandsPIR(bfvParams, encoder, cLabel)
 		default:
 			panic(fmt.Errorf("unknown circuit name: %s", cSign.CircuitName))
@@ -324,6 +324,49 @@ func registerCircuits() {
 			opIn2 := ec.Input("//node-1/in-0")
 
 			// ev := ec.ShallowCopy()
+			res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+			ec.Relinearize(res, res)
+			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+
+			params := ec.Parameters().Parameters
+			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
+				"target":     "node-0",
+				"aggregator": "cloud",
+				"lvl":        strconv.Itoa(params.MaxLevel()),
+				"smudging":   "1.0",
+			})
+			if err != nil {
+				return err
+			}
+
+			ec.Output(opOut, "node-0")
+			return nil
+		},
+
+		"psi-4": func(ec compute.EvaluationContext) error {
+
+			inOps := make(chan pkg.Operand, 4)
+			for i := 0; i < 4; i++ {
+				i := i
+				go func() {
+					inOps <- ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
+				}()
+			}
+
+			lvl1 := make(chan pkg.Operand, 2)
+			for i := 0; i < 2; i++ {
+				go func() {
+					ev1 := ec.ShallowCopy()
+					opIn1 := <-inOps
+					opIn2 := <-inOps
+					res := ev1.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+					ev1.Relinearize(res, res)
+					lvl1 <- pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+				}()
+			}
+
+			opIn1 := <-lvl1
+			opIn2 := <-lvl1
 			res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
 			ec.Relinearize(res, res)
 			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
