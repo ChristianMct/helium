@@ -146,21 +146,21 @@ func Zip[A, B, C any](as []A, bs []B, cs []C) []Triple[A, B, C] {
 
 func MarshalToFile(s interface{}, filename string) error {
 	file, err := os.Create(filename)
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Errorf("could not close file: %w", err)
-		}
-	}()
 	if err != nil {
 		return fmt.Errorf("could not open file: %w", err)
 	}
+
 	marshalled, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("could not marshal object: %w", err)
 	}
-	file.Write(marshalled)
 
-	return nil
+	_, err = file.Write(marshalled)
+	if err != nil {
+		return fmt.Errorf("could not write to file: %w", err)
+	}
+
+	return file.Close()
 }
 
 func UnmarshalFromFile(filename string, s interface{}) error {
