@@ -3,7 +3,6 @@ package badgerobjectstore
 
 import (
 	"encoding"
-	"errors"
 	"fmt"
 	"log"
 
@@ -20,7 +19,7 @@ type ObjectStore struct {
 // NewObjectStore creates a new ObjectStore instance.
 func NewObjectStore(conf *objectstore.Config) (ks *ObjectStore, err error) {
 	if conf == nil {
-		return nil, errors.New("BadgerDB ObjectStore requires a Config")
+		return nil, fmt.Errorf("BadgerDB ObjectStore requires a Config")
 	}
 	// SynchWrites writes any change to disk immediately.
 	// Maximum size of a single log file = 10MB
@@ -29,7 +28,7 @@ func NewObjectStore(conf *objectstore.Config) (ks *ObjectStore, err error) {
 	opt := badger.DefaultOptions(conf.DBPath).WithValueLogFileSize(10 * (1 << 20)).WithMemTableSize(5 * (1 << 20)).WithValueThreshold(1 << 19)
 	db, err := badger.Open(opt)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Could not instantiate BadgerDB: %s\n", err))
+		return nil, fmt.Errorf("Could not instantiate BadgerDB: %s\n", err)
 	}
 	return &ObjectStore{db: db, bytesStored: 0}, nil
 }

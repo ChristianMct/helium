@@ -3,7 +3,7 @@ package nullobjectstore
 
 import (
 	"encoding"
-	"errors"
+	"fmt"
 )
 
 // ObjectStore is a type implementing the objectstore.ObjectStore interface with a NULL backend.
@@ -19,11 +19,11 @@ func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarsha
 }
 
 func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarshaler) error {
-	return errors.New("Load: ObjectStore backend is NULL")
+	return fmt.Errorf("Load: ObjectStore backend is NULL")
 }
 
 func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
-	return false, errors.New("IsPresent: ObjectStore backend is NULL")
+	return false, fmt.Errorf("IsPresent: ObjectStore backend is NULL")
 }
 
 func (objstore *ObjectStore) Close() error { return nil }
