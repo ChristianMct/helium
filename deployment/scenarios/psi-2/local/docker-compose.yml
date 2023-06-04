@@ -9,6 +9,7 @@ services:
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
+      - ../node-R_pk.json:/helium/config/node-R_pk.json
 
       # - cloud-data:/helium/data
     # profiles: ["all", "cloud"]
@@ -22,6 +23,7 @@ services:
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
+      - ../node-R_pk.json:/helium/config/node-R_pk.json
 
       # Persistent data across container reboots.
       # - node-a-data:/helium/data
@@ -36,10 +38,24 @@ services:
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
+      - ../node-R_pk.json:/helium/config/node-R_pk.json
 
       # No persistency.
     # profiles: ["all", "clients"]
 
+  # node-R is the external receiver
+  node-R:
+    image: heliummpc/helium:latest
+    container_name: node-R
+    command: -docompute
+    volumes:
+      - ../node-R.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json
+      - ../node-R_pk.json:/helium/config/node-R_pk.json
+      - ../node-R_sk.json:/helium/config/node-R_sk.json
+      
 # volumes:
   # cloud-data:
   # node-a-data:

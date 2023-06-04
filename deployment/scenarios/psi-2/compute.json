@@ -1,3 +1,4 @@
 {
-	"CircuitName": "psi-2"
+	"CircuitName": "psi-2",
+	"ReceiverPK": "/helium/config/node-R_pk.json"
 }
