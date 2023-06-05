@@ -25,15 +25,16 @@ import (
 const DefaultAddress = ""
 
 var (
-	addr             = flag.String("address", DefaultAddress, "the address on which the node will listen")
-	configFile       = flag.String("config", "/helium/config/node.json", "the node config file for this node")
-	nodeList         = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
-	setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
-	insecureChannels = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
-	tlsdir           = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
-	outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
-	docompute        = flag.Bool("docompute", false, "whether to execute the compute phase")
-	computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
+	addr              = flag.String("address", DefaultAddress, "the address on which the node will listen")
+	configFile        = flag.String("config", "/helium/config/node.json", "the node config file for this node")
+	nodeList          = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
+	setupFile         = flag.String("setup", "/helium/config/setup.json", "the setup description file")
+	insecureChannels  = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
+	tlsdir            = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
+	outputMetrics     = flag.Bool("outputMetrics", false, "outputs metrics to a file")
+	docompute         = flag.Bool("docompute", false, "whether to execute the compute phase")
+	computeFile       = flag.String("compute", "/helium/config/compute.json", "the compute description file")
+	decryptionKeyFile = flag.String("decryptionKeyFile", "/helium/config/node-R_sk.json", "the file containing the decryption key for the receiver of the output")
 )
 
 type App struct {
@@ -90,13 +91,6 @@ func main() {
 		}
 	}
 
-	if *computeFile != "" {
-		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
-			log.Printf("could not read compute description file: %s\n", err)
-			os.Exit(1)
-		}
-	}
-
 	app.node, err = node.NewNode(app.nc, app.nl)
 	if err != nil {
 		log.Println(err)
@@ -121,7 +115,25 @@ func main() {
 		panic(fmt.Errorf("No session found for ID: %s", sessionID))
 	}
 
-	registerCircuits()
+	if *computeFile != "" {
+		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
+			log.Printf("could not read compute description file: %s\n", err)
+			os.Exit(1)
+		}
+		log.Printf("app.cd is %v\n", app.cd)
+		// register the receiver's public key in the session
+		if app.cd.Receiver.External && app.cd.Receiver.PkFile != "" {
+			receiverPk := rlwe.NewPublicKey(*app.sess.Params)
+			if err = utils.UnmarshalFromFile(app.cd.Receiver.PkFile, receiverPk); err != nil {
+				log.Printf("could not read receiver's public key: %s\n", err)
+				os.Exit(1)
+			}
+			log.Printf("registered pk for node %s\n", app.cd.Receiver.ID)
+			app.sess.RegisterPkForNode(app.cd.Receiver.ID, *receiverPk)
+		}
+	}
+
+	app.registerCircuits()
 	cloudID := app.nl[0].NodeID
 	cLabel := pkg.CircuitID("test-circuit-0")
 	var cSign = compute.Signature{
@@ -182,14 +194,13 @@ func (a *App) computePhase() {
 	}
 	// kg := rlwe.NewKeyGenerator(*a.sess.Params)
 	// _, recPk := kg.GenKeyPair()
-	// a.sess.RegisterPkForNode("receiver", *recPk)
 
 	encoder := bfv.NewEncoder(bfvParams)
 
 	ops := []pkg.Operand{}
 
-	// craft input for clients
-	if a.node.ID() != cloudID {
+	// craft input for clients, ignore cloud and external receiver node
+	if a.node.ID() != cloudID && (!a.cd.Receiver.External || a.sess.NodeID != a.cd.Receiver.ID) {
 		switch cSign.CircuitName {
 		case "psi-2", "psi-4", "psi-8":
 			ops = a.getClientOperandsPSI(bfvParams, encoder, cLabel)
@@ -205,7 +216,7 @@ func (a *App) computePhase() {
 	start := time.Now()
 	outCtList, err := computeService.Execute(ctx, cLabel, ops...)
 	if err != nil {
-		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %s", err))
+		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %w", err))
 	}
 	elapsed := time.Since(start)
 	a.outputStats(a.cd.CircuitName, "compute", elapsed)
@@ -220,17 +231,29 @@ func (a *App) computePhase() {
 		panic(fmt.Errorf("Output ciphertext is nil"))
 	}
 	log.Printf("[Compute] Got encrypted output: %v", outCt)
-	if a.sess.Sk == nil {
-		log.Printf("Refusing to decrypt output: the session secret key is nil. Is this node supposed to have it?\n")
-		return
+
+	decryptionKey := rlwe.NewSecretKey(*a.sess.Params)
+
+	// if the receiver is external get the key from file
+	if a.cd.Receiver.External {
+		if err = utils.UnmarshalFromFile(*decryptionKeyFile, decryptionKey); err != nil {
+			panic(fmt.Errorf("could not read receiver's (%s) private key: %w\n", a.cd.Receiver.ID, err))
+		}
+	} else { // otherwise get it from the session
+		if a.sess.Sk == nil {
+			log.Printf("Refusing to decrypt output: the session secret key is nil. Is this node (%s) the receiver?\n", a.node.ID())
+			return
+		}
+		decryptionKey = a.sess.Sk
 	}
-	decryptor := bfv.NewDecryptor(bfvParams, a.sess.Sk)
+
+	decryptor := bfv.NewDecryptor(bfvParams, decryptionKey)
 	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:8]
 
 	log.Printf("[Compute] Retrieved output: %v\n", outPt)
 }
 
-// getClientOperands returns the operands that this client node will input into the computation.
+// getClientOperandsPSI returns the operands that this client node will input into the PSI computation.
 func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
 	cpk := new(rlwe.PublicKey)
@@ -257,6 +280,7 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 	return ops
 }
 
+// getClientOperandsPIR returns the operands that this client node will input into the PIR computation.
 func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
 	cpk := new(rlwe.PublicKey)
@@ -292,7 +316,7 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder
 }
 
 // registerCircuits registers some predefined circuits in the global state of the compute service.
-func registerCircuits() {
+func (a *App) registerCircuits() {
 
 	pirN := func(N int, ec compute.EvaluationContext) error {
 		params := ec.Parameters()
@@ -398,9 +422,9 @@ func registerCircuits() {
 
 	testCircuits := map[string]compute.Circuit{
 		"Identity": func(ec compute.EvaluationContext) error {
-			// input from node-a
-			opIn := ec.Input("//node-a/in-0")
-			_ = ec.Input("//node-b/in-0")
+			// input from node-9
+			opIn := ec.Input("//node-0/in-0")
+			_ = ec.Input("//node-0/in-0")
 
 			// output encrypted under CPK
 			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
@@ -408,7 +432,7 @@ func registerCircuits() {
 			// collective key switching
 			params := ec.Parameters().Parameters
 			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-				"target":     "node-a",
+				"target":     "node-0",
 				"aggregator": "cloud",
 				"lvl":        strconv.Itoa(params.MaxLevel()),
 				"smudging":   "1.0",
@@ -418,7 +442,7 @@ func registerCircuits() {
 			}
 
 			// output encrypted under node-a public key
-			ec.Output(opOut, "node-a")
+			ec.Output(opOut, "node-0")
 			return nil
 		},
 		"psi-2": func(ec compute.EvaluationContext) error {
@@ -431,8 +455,8 @@ func registerCircuits() {
 			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 
 			params := ec.Parameters().Parameters
-			opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-				"target":     "node-0",
+			opOut, err := ec.PCKS("PCKSProtocolID", opRes, map[string]string{
+				"target":     string(a.cd.Receiver.ID),
 				"aggregator": "cloud",
 				"lvl":        strconv.Itoa(params.MaxLevel()),
 				"smudging":   "1.0",
@@ -441,7 +465,7 @@ func registerCircuits() {
 				return err
 			}
 
-			ec.Output(opOut, "node-0")
+			ec.Output(opOut, a.cd.Receiver.ID)
 			return nil
 		},
 

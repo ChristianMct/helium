@@ -11,7 +11,6 @@ services:
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json
 
-      # - cloud-data:/helium/data
     # profiles: ["all", "cloud"]
 
   node-0:
@@ -25,8 +24,6 @@ services:
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json
 
-      # Persistent data across container reboots.
-      # - node-a-data:/helium/data
     # profiles: ["all", "clients"]
 
   node-1:
@@ -40,22 +37,17 @@ services:
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json
 
-      # No persistency.
     # profiles: ["all", "clients"]
 
   # node-R is the external receiver
   node-R:
     image: heliummpc/helium:latest
     container_name: node-R
-    command: -docompute
+    command: -docompute -decryptionKeyFile /helium/config/node-R_sk.json
     volumes:
       - ../node-R.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json
-      - ../node-R_sk.json:/helium/config/node-R_sk.json
-      
-# volumes:
-  # cloud-data:
-  # node-a-data:
+      - ../node-R_sk.json:/helium/config/node-R_sk.json # only the receiver's volume has access to the decryption key 

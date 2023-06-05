@@ -1,4 +1,8 @@
 {
 	"CircuitName": "psi-2",
-	"ReceiverPK": "/helium/config/node-R_pk.json"
+	"Receiver": {
+		"ID": "node-R",  
+		"External": true,
+		"PkFile": "/helium/config/node-R_pk.json"
+	}
 }
