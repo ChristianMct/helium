@@ -1,7 +1,6 @@
 {
     "ID": "node-b",
     "Address": ":40000",
-    "Peers": {"node-a": "node-a:40000"},
     "TLSConfig": {
         "PeerPKs": {
             "node-a": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEArZNJbP7xengB2zczqZu0DKCH/VYG5pdYUkbXJxPZ6A4=\n-----END PUBLIC KEY-----"

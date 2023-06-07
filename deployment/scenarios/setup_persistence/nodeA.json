@@ -1,8 +1,5 @@
 {
     "ID": "node-a",
-    "Peers": {
-        "cloud": "cloud:40000"
-    },
     "TLSConfig": {
         "InsecureChannels": true
     },

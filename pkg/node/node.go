@@ -54,7 +54,6 @@ type Node struct {
 type Config struct {
 	ID                pkg.NodeID
 	Address           pkg.NodeAddress
-	Peers             map[pkg.NodeID]pkg.NodeAddress
 	SessionParameters []pkg.SessionParameters
 	TLSConfig         grpctrans.TLSConfig
 }
