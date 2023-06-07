@@ -26,6 +26,15 @@ type NodesList []struct {
 	DelegateID NodeID
 }
 
+func (nl NodesList) String() string {
+	str := "[ "
+	for _, node := range nl {
+		str += fmt.Sprintf(`{ ID: %s, Address: %s, DelegateID: %s } `,
+			node.NodeID, node.NodeAddress, node.DelegateID)
+	}
+	return str + "]"
+}
+
 type SessionID string
 
 type ProtocolID string
