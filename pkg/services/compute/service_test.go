@@ -195,6 +195,28 @@ var TestCircuits = map[string]Circuit{
 
 		return nil
 	},
+	"psi-2PCKS": func(ec EvaluationContext) error {
+		opIn1 := ec.Input("//light-0/in-0")
+		opIn2 := ec.Input("//light-1/in-0")
+
+		res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+		ec.Relinearize(res, res)
+		opRes := pkg.Operand{OperandLabel: "//helper-0/out-0", Ciphertext: res}
+
+		params := ec.Parameters().Parameters
+		opOut, err := ec.PCKS("PCKSProtocolID", opRes, map[string]string{
+			"target":     "external-0",
+			"aggregator": "helper-0",
+			"lvl":        strconv.Itoa(params.MaxLevel()),
+			"smudging":   "1.0",
+		})
+		if err != nil {
+			return err
+		}
+
+		ec.Output(opOut, "external-0")
+		return nil
+	},
 }
 
 type peer struct {
@@ -290,14 +312,14 @@ func TestCloudEvalCircuit(t *testing.T) {
 				decoder := bfv.NewEncoder(bfvParams)
 				// idealDecryptor := bfv.NewDecryptor(bfvParams, sk.CopyNew())
 
-				recSk, recPk := kg.GenKeyPair()
-				clou.Session.RegisterPkForNode("light-0", *recPk)
+				// recSk, recPk := kg.GenKeyPair()
+				// clou.Session.RegisterPkForNode("light-0", *recPk)
 
 				for i := range clients {
 					clients[i].Encoder = decoder.ShallowCopy()
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, clou.Session.PublicKey)
-					cliSess, _ := clients[i].GetSessionFromID(sessionID)
-					cliSess.RegisterPkForNode("light-0", *recPk)
+					// cliSess, _ := clients[i].GetSessionFromID(sessionID)
+					// cliSess.RegisterPkForNode("light-0", *recPk)
 				}
 
 				var cSign = Signature{
@@ -309,7 +331,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 				ctx := pkg.NewContext(&sessionID, nil)
 
 				for _, node := range nodes {
-					err := node.LoadCircuit(ctx, cSign, cLabel)
+					err := node.LoadCircuit(ctx, cSign, cLabel, true)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -343,7 +365,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 							require.NotNil(t, out[0].Ciphertext, "client %s should have non-nil output", client.Node.ID())
 
 							cliSess, _ := client.GetSessionFromID(sessionID)
-							_ = recSk
+							// _ = recSk
 							_ = cliSess
 							decryptor := bfv.NewDecryptor(bfvParams, cliSess.Sk)
 
@@ -354,6 +376,169 @@ func TestCloudEvalCircuit(t *testing.T) {
 						return nil
 					})
 				}
+
+				err = g.Wait()
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+
+		}
+	}
+
+}
+
+func TestCloudPCKS(t *testing.T) {
+
+	for label, cDef := range TestCircuits {
+		if err := RegisterCircuit(label, cDef); err != nil {
+			t.Log(err)
+		}
+	}
+
+	for _, literalParams := range rangeParam {
+		for _, ts := range testSettings {
+
+			if ts.T == 0 {
+				ts.T = ts.N
+			}
+
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+
+				if ts.T != ts.N {
+					t.Skip("T != N not yet supported in cloud-assisted setting")
+				}
+
+				var testConfig = node.LocalTestConfig{
+					HelperNodes:   1,
+					LightNodes:    2,
+					ExternalNodes: 1,
+					Session: &pkg.SessionParameters{
+						RLWEParams: literalParams,
+						T:          ts.T,
+					},
+				}
+
+				localtest := node.NewLocalTest(testConfig)
+				sessionID := pkg.SessionID("test-session")
+
+				clou := cloud{Node: localtest.HelperNodes[0], Service: localtest.HelperNodes[0].GetComputeService()}
+				clou.Session, _ = localtest.HelperNodes[0].GetSessionFromID(sessionID)
+
+				external_0 := localtest.ExternalNodes[0]
+				external_0Sess, _ := external_0.GetSessionFromID(sessionID)
+
+				nodes := []*Service{clou.Service, external_0.GetComputeService()}
+
+				clients := make([]client, len(localtest.LightNodes))
+				for i, node := range localtest.LightNodes {
+					clients[i].Node = node
+					clients[i].Service = node.GetComputeService()
+					clients[i].Session, _ = node.GetSessionFromID(sessionID)
+					nodes = append(nodes, clients[i].Service)
+				}
+
+				params := localtest.Params
+				bfvParams, _ := bfv.NewParameters(params, 65537)
+				// initialise key generation
+				kg := rlwe.NewKeyGenerator(params)
+				sk := localtest.SkIdeal
+
+				clou.Session.Sk = sk.CopyNew()
+				clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
+				err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.CKG}.String(), kg.GenPublicKey(sk.CopyNew()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
+				err = clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				localtest.Start()
+
+				decoder := bfv.NewEncoder(bfvParams)
+				// idealDecryptor := bfv.NewDecryptor(bfvParams, sk.CopyNew())
+
+				recSk, recPk := kg.GenKeyPair()
+				// save the secret key of the external node in its objectstore (emulate setup phase)
+				external_0Sess.ObjectStore.Store("outputSK", recSk)
+
+				clou.Session.RegisterPkForNode("external-0", *recPk)
+				external_0Sess.RegisterPkForNode("external-0", *recPk)
+
+				for i := range clients {
+					clients[i].Encoder = decoder.ShallowCopy()
+					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, clou.Session.PublicKey)
+					cliSess, _ := clients[i].GetSessionFromID(sessionID)
+					cliSess.RegisterPkForNode("external-0", *recPk)
+				}
+
+				var cSign = Signature{
+					CircuitName: "psi-2PCKS",
+					Delegate:    clou.Node.ID(),
+				}
+
+				cLabel := pkg.CircuitID("test-circuit-0")
+				ctx := pkg.NewContext(&sessionID, nil)
+
+				for _, node := range nodes {
+					err := node.LoadCircuit(ctx, cSign, cLabel, true)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				g := new(errgroup.Group)
+
+				// execute cloud
+				g.Go(func() error {
+					_, err := clou.Execute(ctx, cLabel)
+					if err != nil {
+						return fmt.Errorf("Node %s: %w", clou.Node.ID(), err)
+					}
+					return nil
+				})
+
+				// execute clients
+				for i, client := range clients {
+					client := client
+					i := i
+					g.Go(func() error {
+						data := make([]uint64, 6)
+						data[i] = 1
+						data[i+1] = 1
+						pt := client.Encoder.EncodeNew(data, bfvParams.MaxLevel())
+						ct := client.Encryptor.EncryptNew(pt)
+						op := pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.Node.ID(), cLabel)), Ciphertext: ct}
+						_, errExec := client.Execute(ctx, cLabel, op)
+						if errExec != nil {
+							return fmt.Errorf("client %s: %w", client.Node.ID(), errExec)
+						}
+
+						return nil
+					})
+				}
+
+				// execute external receiver
+				g.Go(func() error {
+					out, err := external_0.GetComputeService().Execute(ctx, cLabel)
+					if err != nil {
+						return fmt.Errorf("Node %s: %w", external_0.ID(), err)
+					}
+
+					if len(out) > 0 {
+						outputSK := rlwe.NewSecretKey(*external_0Sess.Params)
+						external_0Sess.ObjectStore.Load("outputSK", outputSK)
+						// _ = recSk
+						// _ = nodeSK
+						ptdec := bfv.NewDecryptor(bfvParams, outputSK).DecryptNew(out[0].Ciphertext)
+						fmt.Println(decoder.DecodeUintNew(ptdec)[:6])
+						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, decoder.DecodeUintNew(ptdec)[:6])
+					}
+					return nil
+				})
 
 				err = g.Wait()
 				if err != nil {
@@ -409,7 +594,7 @@ func TestPeerEvalCircuit(t *testing.T) {
 				cpk := kg.GenPublicKey(sk)
 				rlk := kg.GenRelinearizationKey(sk, 1)
 
-				recSk, recPk := kg.GenKeyPair()
+				// recSk, recPk := kg.GenKeyPair()
 
 				var err error
 				nodes := make([]peer, len(localtest.Nodes))
@@ -419,7 +604,7 @@ func TestPeerEvalCircuit(t *testing.T) {
 					nodes[i].Session, _ = nodes[i].GetSessionFromID(sessionID)
 					nodes[i].Session.PublicKey = cpk
 					nodes[i].Session.Rlk = rlk
-					nodes[i].Session.RegisterPkForNode("full-0", *recPk)
+					// nodes[i].Session.RegisterPkForNode("full-0", *recPk)
 				}
 
 				encryptor := bfv.NewEncryptor(bfvParams, cpk)
@@ -439,7 +624,7 @@ func TestPeerEvalCircuit(t *testing.T) {
 				ctx := pkg.NewContext(&sessionID, nil)
 
 				for _, node := range nodes {
-					err = node.LoadCircuit(ctx, cDesc, cLabel)
+					err = node.LoadCircuit(ctx, cDesc, cLabel, true)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -457,7 +642,7 @@ func TestPeerEvalCircuit(t *testing.T) {
 						if len(out) > 0 {
 							sess, _ := node.GetSessionFromID(sessionID)
 							nodeSK := sess.GetSecretKey()
-							_ = recSk
+							// _ = recSk
 							_ = nodeSK
 							ptdec := bfv.NewDecryptor(bfvParams, nodeSK).DecryptNew(out[0].Ciphertext)
 							// fmt.Println(nodeDecoder.DecodeUintNew(ptdec)[:6])

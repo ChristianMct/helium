@@ -32,6 +32,7 @@ type LocalTestConfig struct {
 	FullNodes        int // Number of full nodes in the session
 	LightNodes       int // Number of light nodes in the session
 	HelperNodes      int // number of helper nodes (full nodes that are not in the session key)
+	ExternalNodes    int
 	Session          *pkg.SessionParameters
 	DoThresholdSetup bool
 	InsecureChannels bool // are we using (m)TLS to establish the channels between nodes?
@@ -40,11 +41,12 @@ type LocalTestConfig struct {
 // LocalTest represent a local test setting with several nodes and a single
 // session with group secret key.
 type LocalTest struct {
-	Nodes       []*Node
-	FullNodes   []*Node
-	LightNodes  []*Node
-	HelperNodes []*Node
-	Params      rlwe.Parameters
+	Nodes         []*Node
+	FullNodes     []*Node
+	LightNodes    []*Node
+	HelperNodes   []*Node
+	ExternalNodes []*Node
+	Params        rlwe.Parameters
 
 	SkIdeal     *rlwe.SecretKey
 	NodeConfigs []Config
@@ -55,7 +57,7 @@ type LocalTest struct {
 func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 	test = new(LocalTest)
 	test.NodeConfigs, test.NodesList = genNodeConfigs(config)
-	test.Nodes = make([]*Node, config.FullNodes+config.LightNodes+config.HelperNodes)
+	test.Nodes = make([]*Node, config.FullNodes+config.LightNodes+config.HelperNodes+config.ExternalNodes)
 	for i, nc := range test.NodeConfigs {
 		var err error
 		test.Nodes[i], err = NewNode(nc, test.NodesList)
@@ -65,7 +67,8 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 	}
 	test.FullNodes = test.Nodes[:config.FullNodes]
 	test.LightNodes = test.Nodes[config.FullNodes : config.FullNodes+config.LightNodes]
-	test.HelperNodes = test.Nodes[config.FullNodes+config.LightNodes:]
+	test.HelperNodes = test.Nodes[config.FullNodes+config.LightNodes : config.FullNodes+config.LightNodes+config.HelperNodes]
+	test.ExternalNodes = test.Nodes[config.FullNodes+config.LightNodes+config.HelperNodes:]
 
 	// initialize the session-related fields if session parameters are given
 	if config.Session != nil {
@@ -110,7 +113,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
 func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 
-	ncs := make([]Config, 0, config.FullNodes+config.HelperNodes+config.LightNodes)
+	ncs := make([]Config, 0, config.FullNodes+config.HelperNodes+config.LightNodes+config.ExternalNodes)
 	nl := pkg.NodesList{}
 
 	sessionNodesIds := make([]pkg.NodeID, 0, config.FullNodes+config.LightNodes)
@@ -155,7 +158,8 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 
 	for i := 0; i < config.HelperNodes; i++ {
 		nodeID := pkg.NodeID("helper-" + strconv.Itoa(i))
-		nc := Config{ID: nodeID,
+		nc := Config{
+			ID:      nodeID,
 			Address: pkg.NodeAddress("local"),
 		}
 		ncs = append(ncs, nc)
@@ -164,6 +168,19 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 			pkg.NodeAddress
 			DelegateID pkg.NodeID
 		}{nc.ID, nc.Address, ""})
+	}
+
+	for i := 0; i < config.ExternalNodes; i++ {
+		nodeID := pkg.NodeID("external-" + strconv.Itoa(i))
+		nc := Config{
+			ID: nodeID,
+		}
+		ncs = append(ncs, nc)
+		nl = append(nl, struct {
+			pkg.NodeID
+			pkg.NodeAddress
+			DelegateID pkg.NodeID
+		}{nc.ID, nc.Address, pkg.NodeID(fmt.Sprintf("helper-%d", i%config.HelperNodes))})
 	}
 
 	tlsConfigs, err := createTLSConfigs(config, nl)

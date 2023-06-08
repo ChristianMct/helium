@@ -410,6 +410,121 @@ func TestSimpleSetup(t *testing.T) {
 	})
 }
 
+// TestSetupPublicKeyExchange executes the setup protocol with an external receiver that sends its public key to all nodes.
+func TestSetupPublicKeyExchange(t *testing.T) {
+	literalParams := rangeParam[0]
+
+	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", 2, 1, literalParams.LogN), func(t *testing.T) {
+
+		var sessParams = &pkg.SessionParameters{
+			RLWEParams: literalParams,
+			T:          1,
+		}
+		var testConfig = node.LocalTestConfig{
+			HelperNodes:      1, // the cloud
+			LightNodes:       1, // node_0
+			ExternalNodes:    1, // node_R
+			Session:          sessParams,
+			DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+		}
+		localTest := node.NewLocalTest(testConfig)
+		defer func() {
+			err := localTest.Close()
+			if err != nil {
+				panic(err)
+			}
+		}()
+
+		var err error
+		cloud := localTest.HelperNodes[0]
+		cloudss, ok := cloud.GetSessionFromID("test-session")
+		if !ok {
+			t.Fatal("session should exist")
+		}
+		// cloudss.Nodes = cloudss.Nodes[:1]
+
+		// session node
+		node_0 := localTest.SessionNodes()[0]
+		node_0sess, ok := node_0.GetSessionFromID("test-session")
+		if !ok {
+			t.Fatal("session should exist")
+		}
+		node_0sess.Nodes = node_0sess.Nodes[:1]
+
+		// receiver for PCKS
+		// nl =
+		node_R := localTest.ExternalNodes[0]
+		// fmt.Printf("Nodelist: %v\n", localTest.NodesList)
+		// localTest.NodesList[2].NodeAddress = ""
+		// for _, node := range localTest.NodesList {
+		// 	fmt.Printf(string(node.NodeID))
+		// }
+
+		// localTest.NodesList
+		node_Rsess, ok := node_R.GetSessionFromID("test-session")
+		if !ok {
+			t.Fatal("session should exist")
+		}
+		node_Rsess.Nodes = node_Rsess.Nodes[:1]
+
+		setup := setup.Description{
+			Cpk: localTest.SessionNodesIds(),
+			Pk: []struct {
+				Sender    pkg.NodeID
+				Receivers []pkg.NodeID
+			}{
+				{node_R.ID(), localTest.NodeIds()},
+			},
+		}
+
+		localTest.Start()
+
+		// Start public key generation
+		t.Run("FullSetup", func(t *testing.T) {
+
+			g := new(errgroup.Group)
+
+			// run the cloud
+			g.Go(func() error {
+				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
+				if errExec != nil {
+					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
+				}
+				return errExec
+			})
+
+			// run node_R
+			g.Go(func() error {
+				errExec := node_R.GetSetupService().Execute(setup, localTest.NodesList)
+				if errExec != nil {
+					errExec = fmt.Errorf("node_R (%s) error: %w", cloud.ID(), errExec)
+				}
+				return errExec
+			})
+
+			// run node_0
+			g.Go(func() error {
+				errExec := node_0.GetSetupService().Execute(setup, localTest.NodesList)
+				if errExec != nil {
+					errExec = fmt.Errorf("node_0 (%s) error: %w", node_0.ID(), errExec)
+				}
+				return errExec
+			})
+
+			// wait for cloud and client to finish running the setup
+			err = g.Wait()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// check if setup material was correctly generated
+			checkKeyGenProt(t, localTest, setup, cloudss)
+
+			checkKeyGenProt(t, localTest, setup, node_0sess)
+		})
+	})
+}
+
 // TestQuery executes the setup protocol with one client and the cloud. Then checks that each party queries ONLY the keys specified in
 // the setup descriptor.
 func TestQuery(t *testing.T) {
