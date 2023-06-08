@@ -22,5 +22,3 @@ type StatusUpdate struct {
 	Descriptor
 	Status
 }
-
-// TODO
