@@ -350,12 +350,12 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 
 	if p.shareProviders.Contains(p.self) {
 		kg := rlwe.NewKeyGenerator(*session.Params)
-		sk := kg.GenSecretKey()
+		outputSK := kg.GenSecretKey()
 
 		// save the generated secret key into the object store of the sender
-		session.ObjectStore.Store("SK", sk)
+		session.ObjectStore.Store("outputSK", outputSK)
 
-		errGen := p.proto.GenShare(sk, p.crp, share)
+		errGen := p.proto.GenShare(outputSK, p.crp, share)
 		if errGen != nil {
 			panic(errGen)
 		}

@@ -224,11 +224,11 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	}
 	log.Printf("[Compute] Got encrypted output: %v", outCt)
 
-	decryptionKey := rlwe.NewSecretKey(*a.sess.Params)
+	outputSK := rlwe.NewSecretKey(*a.sess.Params)
 
 	// if the receiver is external get the key from file
 	if a.node.ID() == "node-R" {
-		err = a.sess.ObjectStore.Load("SK", decryptionKey)
+		err = a.sess.ObjectStore.Load("outputSK", outputSK)
 		if err != nil {
 			panic(fmt.Errorf("could not read receiver's (%s) private key: %w\n", "node-R", err))
 		}
@@ -237,10 +237,10 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 			log.Printf("Refusing to decrypt output: the session secret key is nil. Is this node (%s) the receiver?\n", a.node.ID())
 			return
 		}
-		decryptionKey = a.sess.Sk
+		outputSK = a.sess.Sk
 	}
 
-	decryptor := bfv.NewDecryptor(bfvParams, decryptionKey)
+	decryptor := bfv.NewDecryptor(bfvParams, outputSK)
 	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:8]
 
 	log.Printf("[Compute] Retrieved output: %v\n", outPt)
