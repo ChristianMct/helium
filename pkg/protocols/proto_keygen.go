@@ -73,9 +73,10 @@ const (
 	CKS
 	DEC
 	PCKS
+	PK
 )
 
-var typeToString = []string{"Unknown", "SKG", "CKG", "RKG", "RTG", "CKS", "DEC", "PCKS"}
+var typeToString = []string{"Unknown", "SKG", "CKG", "RKG", "RTG", "CKS", "DEC", "PCKS", "PK"}
 
 func (t Type) String() string {
 	if int(t) > len(typeToString) {
@@ -107,6 +108,8 @@ func (t Type) Share() LattigoShare {
 		return &drlwe.CKSShare{}
 	case PCKS:
 		return &drlwe.PCKSShare{}
+	case PK:
+		return &drlwe.CKGShare{}
 	default:
 		return nil
 	}
@@ -155,7 +158,7 @@ type skgProtocol struct {
 	proto SKGProtocol
 }
 
-type pkProtocol struct {
+type cpkProtocol struct {
 	*protocol
 	proto LattigoKeygenProtocol
 	agg   shareAggregator
@@ -171,12 +174,21 @@ type rkgProtocol struct {
 	crp        CRP
 }
 
+// / pkProtocol is the protocol used to share public keys among parties.
+type pkProtocol struct {
+	*protocol
+	proto LattigoKeygenProtocol
+	agg   shareAggregator
+	crs   drlwe.CRS
+	crp   CRP
+}
+
 func NewProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Instance, error) {
 	switch pd.Type {
 	case SKG:
 		p := newProtocol(pd, sess, id)
 		return &skgProtocol{protocol: p, proto: SKGProtocol{Thresholdizer: *drlwe.NewThresholdizer(*sess.Params)}}, nil
-	case CKG, RTG, RKG:
+	case CKG, RTG, RKG, PK:
 		return NewKeygenProtocol(pd, sess, id)
 	case CKS, DEC, PCKS:
 		return NewKeyswitchProtocol(pd, sess, id)
@@ -198,16 +210,16 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Ins
 	var err error
 	var inst Instance
 	protocol := newProtocol(pd, sess, id)
-	var p *pkProtocol
+	var p *cpkProtocol
 	switch pd.Type {
 	case CKG:
-		p = new(pkProtocol)
+		p = new(cpkProtocol)
 		p.protocol = protocol
 		p.crs = sess.GetCRSForProtocol(pd.ID)
 		p.proto, err = NewCKGProtocol(*sess.Params, pd.Args)
 		inst = p
 	case RTG:
-		p = new(pkProtocol)
+		p = new(cpkProtocol)
 		p.protocol = protocol
 		p.crs = sess.GetCRSForProtocol(pd.ID)
 		p.proto, err = NewRTGProtocol(*sess.Params, pd.Args)
@@ -218,6 +230,12 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Ins
 		p.crp = sess.GetCRSForProtocol(pd.ID)
 		p.proto, err = NewRKGProtocol(*sess.Params, pd.Args)
 		inst = p
+	case PK:
+		p := new(pkProtocol)
+		p.protocol = protocol
+		p.crs = sess.GetCRSForProtocol(pd.ID)
+		p.proto, err = NewCKGProtocol(*sess.Params, pd.Args)
+		inst = p
 	default:
 		err = fmt.Errorf("unknown protocol type: %s", pd.Type)
 	}
@@ -225,6 +243,90 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Ins
 		inst = nil
 	}
 	return inst, err
+}
+
+func (p *cpkProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
+	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
+
+	var err error
+	p.crp, err = p.proto.ReadCRP(p.crs)
+	if err != nil {
+		panic(err)
+	}
+
+	var share Share
+	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
+		share = p.proto.AllocateShare()
+		share.ProtocolID = p.ID()
+		share.Type = p.Type
+		share.From = p.self
+		share.AggregateFor = utils.NewEmptySet[pkg.NodeID]()
+		share.Round = 1
+	}
+
+	if p.shareProviders.Contains(p.self) {
+		sk, errSk := session.SecretKeyForGroup(p.shareProviders.Elements())
+		if errSk != nil {
+			log.Printf("%s | error in getting sk: %s\n", p.self, errSk)
+			return AggregationOutput{Error: errSk}
+		}
+		errGen := p.proto.GenShare(sk, p.crp, share)
+		if errGen != nil {
+			panic(errGen)
+		}
+		share.To = []pkg.NodeID{p.Desc().Aggregator}
+		share.AggregateFor.Add(p.self)
+	}
+
+	if p.IsAggregator() {
+		p.agg = *newShareAggregator(p.shareProviders, share, p.proto.AggregatedShares)
+
+		errAggr := p.aggregateShares(ctx, p.agg, env)
+		if errAggr != nil {
+			log.Printf("%s | [%s] failed: %s\n", p.self, p.ID(), errAggr)
+			return AggregationOutput{Error: errAggr}
+		}
+		share.AggregateFor = p.shareProviders.Copy()
+		log.Printf("%s | [%s] completed aggregating\n", p.self, p.ID())
+		return AggregationOutput{Round: []Share{share}}
+	}
+	if p.shareProviders.Contains(p.self) {
+		env.OutgoingShares() <- share
+		log.Printf("%s | [%s] completed participanting\n", p.self, p.ID())
+	}
+	log.Printf("%s | [%s] completed running\n", p.self, p.ID())
+	return AggregationOutput{}
+}
+
+func (p *cpkProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
+	output := make(chan AggregationOutput)
+	go func() {
+		output <- p.run(ctx, session, env)
+	}()
+	return output
+}
+
+func (p *cpkProtocol) Output(agg AggregationOutput) chan Output {
+	out := make(chan Output, 1)
+	if agg.Error != nil {
+		out <- Output{Error: fmt.Errorf("error at aggregation: %w", agg.Error)}
+		return out
+	}
+	if p.crp == nil {
+		var err error
+		p.crp, err = p.proto.ReadCRP(p.crs)
+		if err != nil {
+			panic(err)
+		}
+	}
+	res, err := p.proto.Finalize(p.crp, agg.Round...)
+	if err != nil {
+		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
+		return out
+	}
+	log.Printf("%s | [%s] finalized protocol\n", p.self, p.ID())
+	out <- Output{Result: res}
+	return out
 }
 
 func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
@@ -247,10 +349,12 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 	}
 
 	if p.shareProviders.Contains(p.self) {
-		sk, errSk := session.SecretKeyForGroup(p.shareProviders.Elements())
-		if errSk != nil {
-			return AggregationOutput{Error: errSk}
-		}
+		kg := rlwe.NewKeyGenerator(*session.Params)
+		sk := kg.GenSecretKey()
+
+		// save the generated secret key into the object store of the sender
+		session.ObjectStore.Store("SK", sk)
+
 		errGen := p.proto.GenShare(sk, p.crp, share)
 		if errGen != nil {
 			panic(errGen)
@@ -268,12 +372,14 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 			return AggregationOutput{Error: errAggr}
 		}
 		share.AggregateFor = p.shareProviders.Copy()
+		log.Printf("%s | [%s] completed aggregating\n", p.self, p.ID())
 		return AggregationOutput{Round: []Share{share}}
 	}
 	if p.shareProviders.Contains(p.self) {
 		env.OutgoingShares() <- share
+		log.Printf("%s | [%s] completed participanting\n", p.self, p.ID())
 	}
-	log.Printf("%s | [%s] completed aggregation\n", p.self, p.ID())
+	log.Printf("%s | [%s] completed running\n", p.self, p.ID())
 	return AggregationOutput{}
 }
 
@@ -539,7 +645,7 @@ func (p *protocol) Desc() Descriptor {
 	return p.Descriptor
 }
 
-func (p *pkProtocol) AllocateShare() Share {
+func (p *cpkProtocol) AllocateShare() Share {
 	return p.proto.AllocateShare()
 }
 

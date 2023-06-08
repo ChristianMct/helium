@@ -31,42 +31,52 @@ func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarsh
 	objstore.mtx.RLock()
 	defer objstore.mtx.RUnlock()
 
-	untyped_value, ok := objstore.objstore[objectID]
+	untypedValue, ok := objstore.objstore[objectID]
 	if !ok {
 		return fmt.Errorf("No value found for key string %s in in-memory ObjectStore", objectID)
 	}
 
 	switch value := object.(type) {
 	case *rlwe.PublicKey:
-		typed_value, ok := untyped_value.(*rlwe.PublicKey)
+		typedValue, ok := untypedValue.(*rlwe.PublicKey)
 		if !ok {
 			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
 		}
-		*value = *typed_value
+		*value = *typedValue
+		break
+
+	case *rlwe.SecretKey:
+		typedValue, ok := untypedValue.(*rlwe.SecretKey)
+		if !ok {
+			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
+		}
+		*value = *typedValue
 		break
 
 	case *rlwe.RelinearizationKey:
-		typed_value, ok := untyped_value.(*rlwe.RelinearizationKey)
+		typedValue, ok := untypedValue.(*rlwe.RelinearizationKey)
 		if !ok {
 			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
 		}
-		*value = *typed_value
+		*value = *typedValue
 		break
 
 	case *rlwe.SwitchingKey:
-		typed_value, ok := untyped_value.(*rlwe.SwitchingKey)
+		typedValue, ok := untypedValue.(*rlwe.SwitchingKey)
 		if !ok {
 			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
 		}
-		*value = *typed_value
+		*value = *typedValue
 		break
+
 	case *rlwe.Ciphertext:
-		typed_value, ok := untyped_value.(*rlwe.Ciphertext)
+		typedValue, ok := untypedValue.(*rlwe.Ciphertext)
 		if !ok {
 			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
 		}
-		*value = *typed_value
+		*value = *typedValue
 		break
+
 	default:
 		return fmt.Errorf("Unexpected request type %T\n", value)
 	}

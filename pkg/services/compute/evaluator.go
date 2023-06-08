@@ -68,7 +68,10 @@ type fullEvaluatorContext struct {
 	}
 }
 
-func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, cDef Circuit, nodeMapping map[string]pkg.NodeID) *fullEvaluatorContext {
+// newFullEvaluationContext creates a new full-evaluator context used by aggregators to execute a circuit.
+// The key switching operations of the circuit can be loaded separately.
+// This method should be called before the cloud goes online.
+func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, cDef Circuit, nodeMapping map[string]pkg.NodeID, loadKeySwitchOps bool) *fullEvaluatorContext {
 	se := new(fullEvaluatorContext)
 	se.id = id
 	se.sess = sess
@@ -104,27 +107,8 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 
 	se.protos = make(map[pkg.ProtocolID]protocols.KeySwitchInstance)
 
-	for protoID, protoDesc := range se.cDesc.KeyOps {
-		var aggregator pkg.NodeID
-		if agg, hasAgg := protoDesc.Args["aggregator"]; hasAgg {
-			aggregator = pkg.NodeID(agg)
-		} else {
-			aggregator = pkg.NodeID(protoDesc.Args["target"]) // TODO: check that aggregator is full node
-		}
-
-		protoDesc.Aggregator = aggregator
-
-		part := utils.NewSet(sess.Nodes)
-		if protoDesc.Type == protocols.DEC {
-			part.Remove(pkg.NodeID(protoDesc.Args["target"]))
-		}
-
-		protoDesc.Participants = part.Elements() // TODO decide on exec
-		proto, err := protocols.NewProtocol(protoDesc, sess, protoID)
-		if err != nil {
-			panic(err)
-		}
-		se.protos[protoID], _ = proto.(protocols.KeySwitchInstance)
+	if loadKeySwitchOps {
+		se.LoadKeySwitchingOperations(sess)
 	}
 
 	se.inputs, se.outputs = make(chan pkg.Operand, len(se.cDesc.InputSet)), make(chan pkg.Operand, len(se.cDesc.OutputSet))
@@ -151,6 +135,33 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	}()
 
 	return se
+}
+
+// LoadKeySwitchingOperations loads the key switching operations of a circuit into the full-evaluator context.
+// This method should be called after the setup phase has generated the keys required for the key switching protocols.
+func (se *fullEvaluatorContext) LoadKeySwitchingOperations(sess *pkg.Session) {
+	for protoID, protoDesc := range se.cDesc.KeyOps {
+		var aggregator pkg.NodeID
+		if agg, hasAgg := protoDesc.Args["aggregator"]; hasAgg {
+			aggregator = pkg.NodeID(agg)
+		} else {
+			aggregator = pkg.NodeID(protoDesc.Args["target"]) // TODO: check that aggregator is full node
+		}
+
+		protoDesc.Aggregator = aggregator
+
+		part := utils.NewSet(sess.Nodes)
+		if protoDesc.Type == protocols.DEC {
+			part.Remove(pkg.NodeID(protoDesc.Args["target"]))
+		}
+
+		protoDesc.Participants = part.Elements() // TODO decide on exec
+		proto, err := protocols.NewProtocol(protoDesc, sess, protoID)
+		if err != nil {
+			panic(err)
+		}
+		se.protos[protoID], _ = proto.(protocols.KeySwitchInstance)
+	}
 }
 
 func (se *fullEvaluatorContext) Execute(ctx context.Context) error {

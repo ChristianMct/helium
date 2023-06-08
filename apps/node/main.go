@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -25,16 +26,15 @@ import (
 const DefaultAddress = ""
 
 var (
-	addr              = flag.String("address", DefaultAddress, "the address on which the node will listen")
-	configFile        = flag.String("config", "/helium/config/node.json", "the node config file for this node")
-	nodeList          = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
-	setupFile         = flag.String("setup", "/helium/config/setup.json", "the setup description file")
-	insecureChannels  = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
-	tlsdir            = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
-	outputMetrics     = flag.Bool("outputMetrics", false, "outputs metrics to a file")
-	docompute         = flag.Bool("docompute", false, "whether to execute the compute phase")
-	computeFile       = flag.String("compute", "/helium/config/compute.json", "the compute description file")
-	decryptionKeyFile = flag.String("decryptionKeyFile", "/helium/config/node-R_sk.json", "the file containing the decryption key for the receiver of the output")
+	addr             = flag.String("address", DefaultAddress, "the address on which the node will listen")
+	configFile       = flag.String("config", "/helium/config/node.json", "the node config file for this node")
+	nodeList         = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
+	setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
+	insecureChannels = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
+	tlsdir           = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
+	outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
+	docompute        = flag.Bool("docompute", false, "whether to execute the compute phase")
+	computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
 )
 
 type App struct {
@@ -79,14 +79,22 @@ func main() {
 	}
 
 	if err = utils.UnmarshalFromFile(*nodeList, &app.nl); err != nil {
-
 		log.Println("could not read nodelist:", err)
 		os.Exit(1)
 	}
 
+	// parse setup description
 	if *setupFile != "" {
 		if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
 			log.Printf("could not read setup description file: %s\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// parse compute description
+	if *computeFile != "" {
+		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
+			log.Printf("could not read compute description file: %s\n", err)
 			os.Exit(1)
 		}
 	}
@@ -115,24 +123,10 @@ func main() {
 		panic(fmt.Errorf("No session found for ID: %s", sessionID))
 	}
 
-	if *computeFile != "" {
-		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
-			log.Printf("could not read compute description file: %s\n", err)
-			os.Exit(1)
-		}
-		log.Printf("app.cd is %v\n", app.cd)
-		// register the receiver's public key in the session
-		if app.cd.Receiver.External && app.cd.Receiver.PkFile != "" {
-			receiverPk := rlwe.NewPublicKey(*app.sess.Params)
-			if err = utils.UnmarshalFromFile(app.cd.Receiver.PkFile, receiverPk); err != nil {
-				log.Printf("could not read receiver's public key: %s\n", err)
-				os.Exit(1)
-			}
-			log.Printf("registered pk for node %s\n", app.cd.Receiver.ID)
-			app.sess.RegisterPkForNode(app.cd.Receiver.ID, *receiverPk)
-		}
-	}
-
+	// Register and load the circuit, the cloud is defined as the first node of the nodelist.
+	// We need to load the circuit before the cloud goes online so that clients do not query for unexpected ciphertexts.
+	// This phase does NOT load the key switching operations of the circuit, this must be done after receiving the
+	// necessary keys from the setup phase.
 	app.registerCircuits()
 	cloudID := app.nl[0].NodeID
 	cLabel := pkg.CircuitID("test-circuit-0")
@@ -142,21 +136,30 @@ func main() {
 	}
 	ctx := pkg.NewContext(&app.sess.ID, nil)
 	computeService := app.node.GetComputeService()
-	err = computeService.LoadCircuit(ctx, cSign, cLabel)
+
+	// note: does not load the key switching operations
+	err = computeService.LoadCircuit(ctx, cSign, cLabel, false)
 	if err != nil {
 		panic(err)
 	}
 
 	log.Printf("%s | connecting...\n", app.nc.ID)
-
 	if errConn := app.node.Connect(); errConn != nil {
 		panic(errConn)
 	}
 
+	// SETUP
 	app.setupPhase()
 
+	// COMPUTE
 	if *docompute {
-		app.computePhase()
+		// complete circuit loading by loading the key switching operations
+		err = computeService.LoadCircuitKeySwitchingOperations(ctx, cSign, cLabel)
+		if err != nil {
+			panic(err)
+		}
+
+		app.computePhase(cloudID, ctx, cLabel, cSign)
 	}
 
 	// sigs := make(chan os.Signal, 1)
@@ -178,29 +181,18 @@ func (a *App) setupPhase() {
 }
 
 // computePhase executes the computational phase of Helium.
-func (a *App) computePhase() {
-
-	cloudID := a.nl[0].NodeID
-	cLabel := pkg.CircuitID("test-circuit-0")
-	var cSign = compute.Signature{
-		CircuitName: a.cd.CircuitName,
-		Delegate:    cloudID,
-	}
-	ctx := pkg.NewContext(&a.sess.ID, nil)
-
+func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.CircuitID, cSign compute.Signature) {
 	bfvParams, err := bfv.NewParameters(*a.sess.Params, 65537)
 	if err != nil {
 		panic(err)
 	}
-	// kg := rlwe.NewKeyGenerator(*a.sess.Params)
-	// _, recPk := kg.GenKeyPair()
 
 	encoder := bfv.NewEncoder(bfvParams)
 
 	ops := []pkg.Operand{}
 
-	// craft input for clients, ignore cloud and external receiver node
-	if a.node.ID() != cloudID && (!a.cd.Receiver.External || a.sess.NodeID != a.cd.Receiver.ID) {
+	// craft input for session nodes
+	if utils.NewSet(a.sess.Nodes).Contains(a.node.ID()) {
 		switch cSign.CircuitName {
 		case "psi-2", "psi-4", "psi-8":
 			ops = a.getClientOperandsPSI(bfvParams, encoder, cLabel)
@@ -235,9 +227,10 @@ func (a *App) computePhase() {
 	decryptionKey := rlwe.NewSecretKey(*a.sess.Params)
 
 	// if the receiver is external get the key from file
-	if a.cd.Receiver.External {
-		if err = utils.UnmarshalFromFile(*decryptionKeyFile, decryptionKey); err != nil {
-			panic(fmt.Errorf("could not read receiver's (%s) private key: %w\n", a.cd.Receiver.ID, err))
+	if a.node.ID() == "node-R" {
+		err = a.sess.ObjectStore.Load("SK", decryptionKey)
+		if err != nil {
+			panic(fmt.Errorf("could not read receiver's (%s) private key: %w\n", "node-R", err))
 		}
 	} else { // otherwise get it from the session
 		if a.sess.Sk == nil {
@@ -289,8 +282,9 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder
 		panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
 	}
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
-	inData := make([]uint64, bfvParams.N())
+
 	// craft input
+	inData := make([]uint64, bfvParams.N())
 
 	reqFromNode := 2
 
@@ -449,14 +443,13 @@ func (a *App) registerCircuits() {
 			opIn1 := ec.Input("//node-0/in-0")
 			opIn2 := ec.Input("//node-1/in-0")
 
-			// ev := ec.ShallowCopy()
 			res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
 			ec.Relinearize(res, res)
 			opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 
 			params := ec.Parameters().Parameters
 			opOut, err := ec.PCKS("PCKSProtocolID", opRes, map[string]string{
-				"target":     string(a.cd.Receiver.ID),
+				"target":     "node-R",
 				"aggregator": "cloud",
 				"lvl":        strconv.Itoa(params.MaxLevel()),
 				"smudging":   "1.0",
@@ -465,10 +458,9 @@ func (a *App) registerCircuits() {
 				return err
 			}
 
-			ec.Output(opOut, a.cd.Receiver.ID)
+			ec.Output(opOut, "node-R")
 			return nil
 		},
-
 		"psi-4": func(ec compute.EvaluationContext) error {
 
 			inOps := make(chan pkg.Operand, 4)

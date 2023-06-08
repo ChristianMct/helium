@@ -112,7 +112,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		// every time it receives a protocol update, puts the protocol descriptor
 		// in the protocols to run or in the protocols completed
 		for protoUpdate := range protosUpdatesChan {
-			log.Printf("%s | go protocol update for protocol %s : status: %v \n", s.self, protoUpdate.ID, protoUpdate.Status)
+			log.Printf("%s | got protocol update for protocol %s : status: %v \n", s.self, protoUpdate.ID, protoUpdate.Status)
 			switch protoUpdate.Status {
 			case protocols.OK:
 				protoCompleted <- protoUpdate.Descriptor
@@ -141,11 +141,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 
 	// if first protocol to execute is SKG and this node is part of the session nodes.
 	// execute aggregation to set share of SK T-out-of-N.
-	//skgpd, skgPDexists := protoIDtoPD[pkg.ProtocolID(protocols.SKG.String())]
 	if len(sigListNoResult) > 0 && sigListNoResult[0].Type == protocols.SKG && utils.NewSet(sess.Nodes).Contains(s.self) {
-		// if !ok {
-		// 	return fmt.Errorf("%s | Threshold Setup is enabled but there is no SKG protocol to execute", s.self)
-		// }
 		skgpd := protocols.Descriptor{ID: "SKG", Signature: sigListNoResult[0], Participants: sess.Nodes}
 		proto, err := protocols.NewProtocol(skgpd, sess, skgpd.ID)
 		if err != nil {
@@ -335,7 +331,8 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 				// select participants for this aggregation
 				switch {
 				case len(pd.Participants) > 0:
-				// select a subset of T participants
+
+				// CASE T < N
 				case len(pd.Participants) == 0 && sess.T < len(sess.Nodes):
 					partSet := utils.NewEmptySet[pkg.NodeID]()
 					if sess.Contains(s.self) {
@@ -349,13 +346,19 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 					partSet.AddAll(online)
 					// select T parties at random
 					pd.Participants = pkg.GetRandomClientSlice(sess.T, partSet.Elements())
-				// default puts all the nodes in the participant list of the protocol
+
+				// CASE N
 				default:
-					pd.Participants = make([]pkg.NodeID, len(sess.Nodes))
-					copy(pd.Participants, sess.Nodes)
+					// for the PK subprotocol, the participants sets is different
+					if pd.Signature.Type == protocols.PK {
+						// participant is the sender of the pk
+						pd.Participants = []pkg.NodeID{pkg.NodeID(pd.Signature.Args["Sender"])}
+					} else {
+						pd.Participants = make([]pkg.NodeID, len(sess.Nodes))
+						copy(pd.Participants, sess.Nodes)
+					}
 				}
 
-				// DEBUG
 				log.Printf("%s | [Aggregate] Making new protocol pd: %v\n", s.self, pd)
 				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
 				if err != nil {
@@ -377,10 +380,13 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running}
 
 				// blocking, returns the result of the aggregation.
+				log.Printf("%s | [Aggregate] Waiting to finish aggregation for pd: %v\n", s.self, pd)
+				log.Printf("%s | [Aggregate] Service is %v", s.self, s)
 				aggOut := <-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					panic(aggOut.Error)
 				}
+				log.Printf("%s | [Aggregate] Finished aggregating for pd: %v\n", s.self, pd)
 
 				s.saveAggOut(aggOut, pd, proto, outputs)
 
@@ -504,7 +510,12 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 				//log.Printf("%s | Setup: storing CPK %v under %s \n", s.self, res, output.Signature.String())
 				err := sess.ObjectStore.Store(output.Signature.String(), res)
 				if err != nil {
-					log.Printf("%s | error on Collective Public Key store: %s", s.self, err)
+					log.Printf("%s | error on Public Key store: %s", s.self, err)
+				}
+
+				// if the output is the public key of a node, register it in the session for the computation phase
+				if output.Signature.Type == protocols.PK {
+					sess.RegisterPkForNode(pkg.NodeID(output.Signature.Args["Sender"]), *res)
 				}
 			case *rlwe.SwitchingKey:
 				err := sess.ObjectStore.Store(output.Signature.String(), res)

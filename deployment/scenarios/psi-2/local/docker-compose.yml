@@ -43,7 +43,7 @@ services:
   node-R:
     image: heliummpc/helium:latest
     container_name: node-R
-    command: -docompute -decryptionKeyFile /helium/config/node-R_sk.json
+    command: -docompute 
     volumes:
       - ../node-R.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
