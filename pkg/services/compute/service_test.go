@@ -331,7 +331,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 				ctx := pkg.NewContext(&sessionID, nil)
 
 				for _, node := range nodes {
-					err := node.LoadCircuit(ctx, cSign, cLabel, true)
+					err := node.LoadCircuit(ctx, cSign, cLabel)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -465,14 +465,14 @@ func TestCloudPCKS(t *testing.T) {
 				// save the secret key of the external node in its objectstore (emulate setup phase)
 				external_0Sess.ObjectStore.Store("outputSK", recSk)
 
-				clou.Session.RegisterPkForNode("external-0", *recPk)
-				external_0Sess.RegisterPkForNode("external-0", *recPk)
+				clou.Session.RegisterPkForNode("external-0", recPk)
+				external_0Sess.RegisterPkForNode("external-0", recPk)
 
 				for i := range clients {
 					clients[i].Encoder = decoder.ShallowCopy()
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, clou.Session.PublicKey)
 					cliSess, _ := clients[i].GetSessionFromID(sessionID)
-					cliSess.RegisterPkForNode("external-0", *recPk)
+					cliSess.RegisterPkForNode("external-0", recPk)
 				}
 
 				var cSign = Signature{
@@ -484,7 +484,7 @@ func TestCloudPCKS(t *testing.T) {
 				ctx := pkg.NewContext(&sessionID, nil)
 
 				for _, node := range nodes {
-					err := node.LoadCircuit(ctx, cSign, cLabel, true)
+					err := node.LoadCircuit(ctx, cSign, cLabel)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -624,7 +624,7 @@ func TestPeerEvalCircuit(t *testing.T) {
 				ctx := pkg.NewContext(&sessionID, nil)
 
 				for _, node := range nodes {
-					err = node.LoadCircuit(ctx, cDesc, cLabel, true)
+					err = node.LoadCircuit(ctx, cDesc, cLabel)
 					if err != nil {
 						t.Fatal(err)
 					}

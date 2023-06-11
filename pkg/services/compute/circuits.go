@@ -48,7 +48,7 @@ type Circuit func(EvaluationContext) error
 type CircuitDescription struct {
 	InputSet, Ops, OutputSet utils.Set[pkg.OperandLabel]
 	OutputsFor               map[pkg.NodeID]utils.Set[pkg.OperandLabel]
-	KeyOps                   map[pkg.ProtocolID]protocols.Descriptor
+	KeySwitchOps             map[pkg.ProtocolID]protocols.Descriptor
 	NeedRlk                  bool
 	GaloisKeys               utils.Set[uint64]
 }
@@ -67,12 +67,12 @@ func newCircuitParserCtx(cid pkg.CircuitID, params bfv.Parameters, nodeMapping m
 	cpc := &circuitParserContext{
 		circID: cid,
 		cDesc: CircuitDescription{
-			InputSet:   utils.NewEmptySet[pkg.OperandLabel](),
-			Ops:        utils.NewEmptySet[pkg.OperandLabel](),
-			OutputSet:  utils.NewEmptySet[pkg.OperandLabel](),
-			OutputsFor: make(map[pkg.NodeID]utils.Set[pkg.OperandLabel]),
-			KeyOps:     make(map[pkg.ProtocolID]protocols.Descriptor),
-			GaloisKeys: make(utils.Set[uint64]),
+			InputSet:     utils.NewEmptySet[pkg.OperandLabel](),
+			Ops:          utils.NewEmptySet[pkg.OperandLabel](),
+			OutputSet:    utils.NewEmptySet[pkg.OperandLabel](),
+			OutputsFor:   make(map[pkg.NodeID]utils.Set[pkg.OperandLabel]),
+			KeySwitchOps: make(map[pkg.ProtocolID]protocols.Descriptor),
+			GaloisKeys:   make(utils.Set[uint64]),
 		},
 		SubCtx:      make(map[pkg.CircuitID]*circuitParserContext, 0),
 		params:      params,
@@ -164,11 +164,11 @@ func (e *circuitParserContext) registerKeyOps(id pkg.ProtocolID, pd protocols.De
 		pd.Args["target"] = string(e.nodeMapping[target])
 	}
 
-	if _, exists := e.cDesc.KeyOps[id]; exists {
+	if _, exists := e.cDesc.KeySwitchOps[id]; exists {
 		return fmt.Errorf("protocol with id %s exists", id)
 	}
 
-	e.cDesc.KeyOps[id] = pd
+	e.cDesc.KeySwitchOps[id] = pd
 	return nil
 }
 

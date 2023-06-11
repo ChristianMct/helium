@@ -55,7 +55,7 @@ func RegisterCircuit(name string, cd Circuit) error {
 
 // LoadCircuit loads the circuit creating the necessary evaluation environments.
 // This method should be called before the cloud goes online.
-func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.CircuitID, loadKeySwitchOps bool) error {
+func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.CircuitID) error {
 
 	if _, exist := s.evalEnvs[label]; exist {
 		return fmt.Errorf("circuit with label %s already exists", label)
@@ -72,33 +72,9 @@ func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.Circu
 	}
 
 	if cd.Delegate == "" || cd.Delegate == s.ID() {
-		s.evalEnvs[label] = s.newFullEvaluationContext(sess, label, cDef, nil, loadKeySwitchOps)
+		s.evalEnvs[label] = s.newFullEvaluationContext(sess, label, cDef, nil)
 	} else {
 		s.evalEnvs[label] = s.newDelegatedEvaluatorContext(cd.Delegate, sess, label, cDef)
-	}
-
-	return nil
-}
-
-// LoadCircuitKeySwitchingOperations loads the key switching operations of a circuit.
-// This method should be called after the setup phase has generated the keys required for the key switching protocols.
-func (s *Service) LoadCircuitKeySwitchingOperations(ctx context.Context, cd Signature, label pkg.CircuitID) error {
-	eval, exist := s.evalEnvs[label]
-	if !exist {
-		return fmt.Errorf("circuit with label %s was not loaded with LoadCircuit", label)
-	}
-	sess, exist := s.sessions.GetSessionFromContext(ctx)
-	if !exist {
-		return fmt.Errorf("session does not exist")
-	}
-	if cd.Delegate == "" || cd.Delegate == s.ID() {
-		switch evaluator := eval.(type) {
-		case *fullEvaluatorContext:
-			evaluator.LoadKeySwitchingOperations(sess)
-			break
-		default:
-			return fmt.Errorf("expected fullEvaluatorContext")
-		}
 	}
 
 	return nil

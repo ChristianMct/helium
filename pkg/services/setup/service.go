@@ -515,7 +515,7 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 
 				// if the output is the public key of a node, register it in the session for the computation phase
 				if output.Signature.Type == protocols.PK {
-					sess.RegisterPkForNode(pkg.NodeID(output.Signature.Args["Sender"]), *res)
+					sess.RegisterPkForNode(pkg.NodeID(output.Signature.Args["Sender"]), res)
 				}
 			case *rlwe.SwitchingKey:
 				err := sess.ObjectStore.Store(output.Signature.String(), res)

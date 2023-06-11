@@ -43,12 +43,12 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (
 		ks.proto, err = NewCKSProtocol(*sess.Params, pd.Args)
 		ks.outputKey = rlwe.NewSecretKey(*sess.Params) // target key is zero for decryption
 	case PCKS:
-		targetPk, exists := sess.GetPkForNode(ks.target)
-		if !exists {
-			return nil, fmt.Errorf("no pk for node with id %s", target)
-		}
+		// targetPk, exists := sess.GetPkForNode(ks.target)
+		// if !exists {
+		// 	return nil, fmt.Errorf("no pk for node with id %s", target)
+		// }
 		ks.proto, err = NewPCKSProtocol(*sess.Params, pd.Args)
-		ks.outputKey = &targetPk
+		// ks.outputKey = &targetPk
 	}
 	if err != nil {
 		ks = nil
@@ -92,6 +92,13 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, session *pkg.Session,
 		sk, errSk := session.SecretKeyForGroup(skGroup.Elements())
 		if errSk != nil {
 			return AggregationOutput{Error: errSk}
+		}
+		if p.Type == PCKS {
+			var exists bool
+			p.outputKey, exists = session.GetPkForNode(p.target)
+			if !exists {
+				return AggregationOutput{Error: fmt.Errorf("no pk for node with ID %s", p.target)}
+			}
 		}
 		errGen := p.proto.GenShare(sk, p.outputKey, p.input, share)
 		if errGen != nil {

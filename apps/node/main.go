@@ -125,8 +125,6 @@ func main() {
 
 	// Register and load the circuit, the cloud is defined as the first node of the nodelist.
 	// We need to load the circuit before the cloud goes online so that clients do not query for unexpected ciphertexts.
-	// This phase does NOT load the key switching operations of the circuit, this must be done after receiving the
-	// necessary keys from the setup phase.
 	app.registerCircuits()
 	cloudID := app.nl[0].NodeID
 	cLabel := pkg.CircuitID("test-circuit-0")
@@ -138,7 +136,7 @@ func main() {
 	computeService := app.node.GetComputeService()
 
 	// note: does not load the key switching operations
-	err = computeService.LoadCircuit(ctx, cSign, cLabel, false)
+	err = computeService.LoadCircuit(ctx, cSign, cLabel)
 	if err != nil {
 		panic(err)
 	}
@@ -153,12 +151,6 @@ func main() {
 
 	// COMPUTE
 	if *docompute {
-		// complete circuit loading by loading the key switching operations
-		err = computeService.LoadCircuitKeySwitchingOperations(ctx, cSign, cLabel)
-		if err != nil {
-			panic(err)
-		}
-
 		app.computePhase(cloudID, ctx, cLabel, cSign)
 	}
 

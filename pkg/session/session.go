@@ -142,7 +142,7 @@ type Session struct {
 	NodeID NodeID
 	Nodes  []NodeID
 
-	NodesPk map[NodeID]rlwe.PublicKey
+	NodesPk map[NodeID]*rlwe.PublicKey
 
 	T       int
 	SPKS    map[NodeID]drlwe.ShamirPublicPoint
@@ -196,7 +196,7 @@ func NewSession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe
 	sess.NodeID = nodeID
 	sess.Nodes = nodes
 
-	sess.NodesPk = map[NodeID]rlwe.PublicKey{}
+	sess.NodesPk = map[NodeID]*rlwe.PublicKey{}
 
 	sess.Params = params
 
@@ -356,14 +356,14 @@ func (s *Session) GetCRSForProtocol(pid ProtocolID) drlwe.CRS {
 	return prng
 }
 
-func (s *Session) RegisterPkForNode(nid NodeID, pk rlwe.PublicKey) {
+func (s *Session) RegisterPkForNode(nid NodeID, pk *rlwe.PublicKey) {
 	if _, exists := s.NodesPk[nid]; exists {
 		panic("pk for node already registered")
 	}
 	s.NodesPk[nid] = pk
 }
 
-func (s *Session) GetPkForNode(nid NodeID) (pk rlwe.PublicKey, exists bool) {
+func (s *Session) GetPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists bool) {
 	pk, exists = s.NodesPk[nid]
 	return pk, exists
 }
