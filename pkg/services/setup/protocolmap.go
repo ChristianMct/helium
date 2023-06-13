@@ -1,9 +1,13 @@
 package setup
 
 import (
+	"fmt"
+	"log"
+	"net/url"
 	"strconv"
 
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/services/compute"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 )
@@ -19,6 +23,64 @@ type Description struct {
 		Sender    pkg.NodeID
 		Receivers []pkg.NodeID
 	}
+}
+
+// ComputeDescriptionToSetupDescription converts a CircuitDescription into a setup.Description by
+// extractiong the keys needed for the correct circuit execution.
+func ComputeDescriptionToSetupDescription(cd compute.CircuitDescription) (Description, error) {
+	sd := Description{}
+
+	// determine session nodes
+	sessionNodes := make([]pkg.NodeID, 0)
+	log.Printf("[Convert] Input set %v\n", cd.InputSet)
+	for client := range cd.InputSet {
+		nopl, err := url.Parse(string(client))
+		if err != nil {
+			panic(fmt.Errorf("invalid operand label: %s", client))
+		}
+		sessionNodes = append(sessionNodes, pkg.NodeID(nopl.Host))
+	}
+	log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
+
+	// determine aggregators
+	aggregators := make([]pkg.NodeID, 0)
+	for _, keySwitchPD := range cd.KeySwitchOps {
+		aggregators = append(aggregators, pkg.NodeID(keySwitchPD.Args["aggregator"]))
+	}
+	log.Printf("[Convert] Aggregators are %v\n", aggregators)
+
+	// Collective Public Key
+	sd.Cpk = sessionNodes
+
+	// Relinearization Key
+	if cd.NeedRlk {
+		sd.Rlk = aggregators
+	}
+
+	// Rotation Keys
+	for GaloisEl := range cd.GaloisKeys {
+		keyField := struct {
+			GaloisEl  uint64
+			Receivers []pkg.NodeID
+		}{GaloisEl, aggregators}
+		sd.GaloisKeys = append(sd.GaloisKeys, keyField)
+	}
+
+	// Public Keys of output receivers
+	for _, keySwitchPD := range cd.KeySwitchOps {
+		// there is an external receiver
+		if keySwitchPD.Type == protocols.PCKS {
+			sender := pkg.NodeID(keySwitchPD.Args["target"])
+			receivers := append(aggregators, sessionNodes...)
+			keyField := struct {
+				Sender    pkg.NodeID
+				Receivers []pkg.NodeID
+			}{sender, receivers}
+			sd.Pk = append(sd.Pk, keyField)
+		}
+	}
+
+	return sd, nil
 }
 
 type SignatureList []protocols.Signature

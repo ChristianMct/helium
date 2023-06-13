@@ -256,6 +256,15 @@ func (s *Service) ID() pkg.NodeID {
 	return s.id
 }
 
+func (s *Service) CircuitDescription(label pkg.CircuitID) CircuitDescription {
+	c, exists := s.evalEnvs[label]
+	if !exists {
+		panic(fmt.Errorf("circuit does not exist"))
+	}
+
+	return c.CircuitDescription()
+}
+
 type ProtocolEnvironment struct { // TODO dedup with Setup
 	incoming <-chan protocols.Share
 	outgoing chan<- protocols.Share

@@ -6,7 +6,6 @@ services:
     command: -docompute
     volumes:
       - ../cloud.json:/helium/config/node.json
-      - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json
@@ -19,7 +18,6 @@ services:
     command: -docompute
     volumes:
       - ../node-0.json:/helium/config/node.json
-      - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json
@@ -32,7 +30,6 @@ services:
     command: -docompute
     volumes:
       - ../node-1.json:/helium/config/node.json
-      - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json
@@ -46,7 +43,6 @@ services:
     command: -docompute 
     volumes:
       - ../node-R.json:/helium/config/node.json
-      - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
       - ../node-R_pk.json:/helium/config/node-R_pk.json

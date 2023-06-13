@@ -84,12 +84,12 @@ func main() {
 	}
 
 	// parse setup description
-	if *setupFile != "" {
-		if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
-			log.Printf("could not read setup description file: %s\n", err)
-			os.Exit(1)
-		}
-	}
+	// if *setupFile != "" {
+	// 	if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
+	// 		log.Printf("could not read setup description file: %s\n", err)
+	// 		os.Exit(1)
+	// 	}
+	// }
 
 	// parse compute description
 	if *computeFile != "" {
@@ -144,6 +144,13 @@ func main() {
 	if errConn := app.node.Connect(); errConn != nil {
 		panic(errConn)
 	}
+
+	app.sd, err = setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cLabel))
+	if err != nil {
+		panic(err)
+	}
+	log.Printf("Converted setup descriptor:\n%v\n", app.sd)
+	// log.Printf("JSON setup descriptor:\n%v\n", app.sd)
 
 	// SETUP
 	app.setupPhase()
