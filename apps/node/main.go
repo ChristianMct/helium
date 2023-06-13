@@ -135,7 +135,6 @@ func main() {
 	ctx := pkg.NewContext(&app.sess.ID, nil)
 	computeService := app.node.GetComputeService()
 
-	// note: does not load the key switching operations
 	err = computeService.LoadCircuit(ctx, cSign, cLabel)
 	if err != nil {
 		panic(err)
