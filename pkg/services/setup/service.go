@@ -255,7 +255,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 	return protosUpdatesChan
 }
 
-const parallelParticipation int = 10
+const parallelParticipation int = 1
 
 // participate makes every participant participate in the protocol
 // returns a channel where true is sent when all participations are done.
@@ -314,7 +314,7 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 	return allPartsDone
 }
 
-const parallelAggregation int = 10
+const parallelAggregation int = 1
 
 func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descriptor, outputs chan struct {
 	protocols.Descriptor

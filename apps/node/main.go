@@ -33,7 +33,7 @@ var (
 	insecureChannels = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
 	tlsdir           = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
 	outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
-	docompute        = flag.Bool("docompute", false, "whether to execute the compute phase")
+	docompute        = flag.Bool("docompute", true, "executes the compute phase")
 	computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
 )
 
@@ -51,10 +51,10 @@ func main() {
 
 	flag.Parse()
 
-	if *configFile == "" {
-		log.Println("need to provide a config file with the -config flag")
-		os.Exit(1)
-	}
+	// if *configFile == "" {
+	// 	log.Println("need to provide a config file with the -config flag")
+	// 	os.Exit(1)
+	// }
 
 	// app holds all data relative to the node execution.
 	app := App{}
@@ -83,22 +83,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// parse setup description
-	// if *setupFile != "" {
-	// 	if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
-	// 		log.Printf("could not read setup description file: %s\n", err)
-	// 		os.Exit(1)
-	// 	}
-	// }
-
-	// parse compute description
-	if *computeFile != "" {
-		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
-			log.Printf("could not read compute description file: %s\n", err)
-			os.Exit(1)
-		}
-	}
-
 	app.node, err = node.NewNode(app.nc, app.nl)
 	if err != nil {
 		log.Println(err)
@@ -123,34 +107,53 @@ func main() {
 		panic(fmt.Errorf("No session found for ID: %s", sessionID))
 	}
 
-	// Register and load the circuit, the cloud is defined as the first node of the nodelist.
-	// We need to load the circuit before the cloud goes online so that clients do not query for unexpected ciphertexts.
-	app.registerCircuits()
-	cloudID := app.nl[0].NodeID
-	cLabel := pkg.CircuitID("test-circuit-0")
-	var cSign = compute.Signature{
-		CircuitName: app.cd.CircuitName,
-		Delegate:    cloudID,
-	}
-	ctx := pkg.NewContext(&app.sess.ID, nil)
-	computeService := app.node.GetComputeService()
+	var cloudID pkg.NodeID
+	var cLabel pkg.CircuitID
+	var cSign compute.Signature
+	var ctx context.Context
+	var computeService *compute.Service
+	if *docompute {
+		// parse compute description
+		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
+			log.Printf("could not read compute description file: %s\n", err)
+			os.Exit(1)
+		}
 
-	err = computeService.LoadCircuit(ctx, cSign, cLabel)
-	if err != nil {
-		panic(err)
+		// Register and load circuit.
+		// The cloud is defined as the first node of the nodelist.
+		// We need to load the circuit before the cloud goes online so that clients do not query for unexpected ciphertexts.
+		app.registerCircuits()
+		cloudID = app.nl[0].NodeID
+		cLabel = pkg.CircuitID("test-circuit-0")
+		cSign = compute.Signature{
+			CircuitName: app.cd.CircuitName,
+			Delegate:    cloudID,
+		}
+		ctx = pkg.NewContext(&app.sess.ID, nil)
+		computeService = app.node.GetComputeService()
+
+		err = computeService.LoadCircuit(ctx, cSign, cLabel)
+		if err != nil {
+			panic(err)
+		}
+
+		// infer setup description
+		app.sd, err = setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cLabel))
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		// parse setup description
+		if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
+			log.Printf("could not read setup description file: %s\n", err)
+			os.Exit(1)
+		}
 	}
 
 	log.Printf("%s | connecting...\n", app.nc.ID)
 	if errConn := app.node.Connect(); errConn != nil {
 		panic(errConn)
 	}
-
-	app.sd, err = setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cLabel))
-	if err != nil {
-		panic(err)
-	}
-	log.Printf("Converted setup descriptor:\n%v\n", app.sd)
-	// log.Printf("JSON setup descriptor:\n%v\n", app.sd)
 
 	// SETUP
 	app.setupPhase()
@@ -224,13 +227,17 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 
 	outputSK := rlwe.NewSecretKey(*a.sess.Params)
 
-	// if the receiver is external get the key from file
-	if a.node.ID() == "node-R" {
+	externalReceivers := make(utils.Set[pkg.NodeID])
+	for _, externalReceiver := range a.sd.Pk {
+		externalReceivers.Add(externalReceiver.Sender)
+	}
+
+	if externalReceivers.Contains(a.node.ID()) {
 		err = a.sess.ObjectStore.Load("outputSK", outputSK)
 		if err != nil {
 			panic(fmt.Errorf("could not read receiver's (%s) private key: %w\n", "node-R", err))
 		}
-	} else { // otherwise get it from the session
+	} else {
 		if a.sess.Sk == nil {
 			log.Printf("Refusing to decrypt output: the session secret key is nil. Is this node (%s) the receiver?\n", a.node.ID())
 			return

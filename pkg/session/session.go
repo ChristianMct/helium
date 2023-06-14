@@ -382,7 +382,8 @@ func GetRandomClientSlice(t int, nodes []NodeID) []NodeID {
 }
 
 func (s *Session) String() string {
-	return fmt.Sprintf(`{
+	return fmt.Sprintf(`
+	{
 		ID: %s,
 		NodeID: %s,
 		Nodes: %v,

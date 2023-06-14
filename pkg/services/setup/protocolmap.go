@@ -2,7 +2,6 @@ package setup
 
 import (
 	"fmt"
-	"log"
 	"net/url"
 	"strconv"
 
@@ -32,7 +31,6 @@ func ComputeDescriptionToSetupDescription(cd compute.CircuitDescription) (Descri
 
 	// determine session nodes
 	sessionNodes := make([]pkg.NodeID, 0)
-	log.Printf("[Convert] Input set %v\n", cd.InputSet)
 	for client := range cd.InputSet {
 		nopl, err := url.Parse(string(client))
 		if err != nil {
@@ -40,14 +38,14 @@ func ComputeDescriptionToSetupDescription(cd compute.CircuitDescription) (Descri
 		}
 		sessionNodes = append(sessionNodes, pkg.NodeID(nopl.Host))
 	}
-	log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
+	// log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
 
 	// determine aggregators
 	aggregators := make([]pkg.NodeID, 0)
 	for _, keySwitchPD := range cd.KeySwitchOps {
 		aggregators = append(aggregators, pkg.NodeID(keySwitchPD.Args["aggregator"]))
 	}
-	log.Printf("[Convert] Aggregators are %v\n", aggregators)
+	// log.Printf("[Convert] Aggregators are %v\n", aggregators)
 
 	// Collective Public Key
 	sd.Cpk = sessionNodes
@@ -133,4 +131,14 @@ func (sl SignatureList) Contains(other protocols.Signature) bool {
 		}
 	}
 	return false
+}
+
+func (sd Description) String() string {
+	return fmt.Sprintf(`
+	{
+		Cpk: %v,
+		GaloisKeys: %v,
+		Rlk: %v,
+		Pk: %v
+	}`, sd.Cpk, sd.GaloisKeys, sd.Rlk, sd.Pk)
 }

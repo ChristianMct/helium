@@ -2,6 +2,7 @@ package setup_test
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/bits"
 	"strconv"
@@ -414,16 +415,16 @@ func TestSimpleSetup(t *testing.T) {
 func TestSetupPublicKeyExchange(t *testing.T) {
 	literalParams := rangeParam[0]
 
-	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", 2, 1, literalParams.LogN), func(t *testing.T) {
+	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", testSettings[1].N, testSettings[1].N, literalParams.LogN), func(t *testing.T) {
 
 		var sessParams = &pkg.SessionParameters{
 			RLWEParams: literalParams,
-			T:          1,
+			T:          testSettings[1].N,
 		}
 		var testConfig = node.LocalTestConfig{
-			HelperNodes:      1, // the cloud
-			LightNodes:       1, // node_0
-			ExternalNodes:    1, // node_R
+			HelperNodes:      1,                 // the cloud
+			LightNodes:       testSettings[1].N, // node_0, node_1, node_2
+			ExternalNodes:    1,                 // node_R
 			Session:          sessParams,
 			DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 		}
@@ -441,31 +442,18 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 		if !ok {
 			t.Fatal("session should exist")
 		}
-		// cloudss.Nodes = cloudss.Nodes[:1]
-
-		// session node
-		node_0 := localTest.SessionNodes()[0]
-		node_0sess, ok := node_0.GetSessionFromID("test-session")
-		if !ok {
-			t.Fatal("session should exist")
-		}
-		node_0sess.Nodes = node_0sess.Nodes[:1]
+		log.Printf(cloudss.String())
 
 		// receiver for PCKS
-		// nl =
 		node_R := localTest.ExternalNodes[0]
-		// fmt.Printf("Nodelist: %v\n", localTest.NodesList)
-		// localTest.NodesList[2].NodeAddress = ""
-		// for _, node := range localTest.NodesList {
-		// 	fmt.Printf(string(node.NodeID))
-		// }
 
-		// localTest.NodesList
-		node_Rsess, ok := node_R.GetSessionFromID("test-session")
-		if !ok {
-			t.Fatal("session should exist")
+		// session nodes + external receiver
+		sessionNodes := localTest.SessionNodes()
+		clients := make([]*node.Node, len(sessionNodes))
+		for i := range clients {
+			clients[i] = sessionNodes[i]
 		}
-		node_Rsess.Nodes = node_Rsess.Nodes[:1]
+		clients = append(clients, node_R)
 
 		setup := setup.Description{
 			Cpk: localTest.SessionNodesIds(),
@@ -473,7 +461,7 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 				Sender    pkg.NodeID
 				Receivers []pkg.NodeID
 			}{
-				{node_R.ID(), localTest.NodeIds()},
+				{node_R.ID(), localTest.SessionNodesIds()},
 			},
 		}
 
@@ -493,23 +481,17 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 				return errExec
 			})
 
-			// run node_R
-			g.Go(func() error {
-				errExec := node_R.GetSetupService().Execute(setup, localTest.NodesList)
-				if errExec != nil {
-					errExec = fmt.Errorf("node_R (%s) error: %w", cloud.ID(), errExec)
-				}
-				return errExec
-			})
-
-			// run node_0
-			g.Go(func() error {
-				errExec := node_0.GetSetupService().Execute(setup, localTest.NodesList)
-				if errExec != nil {
-					errExec = fmt.Errorf("node_0 (%s) error: %w", node_0.ID(), errExec)
-				}
-				return errExec
-			})
+			// run clients
+			for _, client := range clients {
+				client := client
+				g.Go(func() error {
+					errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
+					if errExec != nil {
+						errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
+					}
+					return errExec
+				})
+			}
 
 			// wait for cloud and client to finish running the setup
 			err = g.Wait()
@@ -520,7 +502,13 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 			// check if setup material was correctly generated
 			checkKeyGenProt(t, localTest, setup, cloudss)
 
-			checkKeyGenProt(t, localTest, setup, node_0sess)
+			for _, client := range clients {
+				clientss, ok := client.GetSessionFromID("test-session")
+				if !ok {
+					t.Fatal("session should exist")
+				}
+				checkKeyGenProt(t, localTest, setup, clientss)
+			}
 		})
 	})
 }
