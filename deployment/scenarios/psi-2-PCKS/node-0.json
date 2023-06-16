@@ -1,8 +1,5 @@
 {
-    "ID": "node-1",
-    "Peers": {
-        "cloud": "cloud:40000"
-    },
+    "ID": "node-0",
     "TLSConfig": {
         "InsecureChannels": true
     },
@@ -12,7 +9,7 @@
         "Nodes": ["node-0", "node-1"],
 		"CRSKey": "bGF0dGlnMA==",
         "ObjectStoreConfig": {
-            "BackendName": "mem"       
+            "BackendName": "mem"
         }
     }],
     "SignatureParameters": {"Type": 1}

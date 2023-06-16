@@ -5,15 +5,5 @@
 	],
 	"Rlk": [
 		"cloud"
-	],
-	"Pk": [
-		{
-			"Sender": "node-R",
-			"Receivers": [
-				"cloud",
-				"node-0",
-				"node-1"
-			]
-		}
 	]
 }

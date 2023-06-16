@@ -3,43 +3,46 @@ services:
   cloud:
     image: heliummpc/helium:latest
     container_name: cloud
-    # command: -docompute
+    # command: -docompute=false
     volumes:
       - ../cloud.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
 
-      # - cloud-data:/helium/data
     # profiles: ["all", "cloud"]
 
   node-0:
     image: heliummpc/helium:latest
     container_name: node-0
-    # command: -docompute
+    # command: -docompute=false
     volumes:
       - ../node-0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
 
-      # Persistent data across container reboots.
-      # - node-a-data:/helium/data
     # profiles: ["all", "clients"]
 
   node-1:
     image: heliummpc/helium:latest
     container_name: node-1
-    # command: -docompute
+    # command: -docompute=false
     volumes:
       - ../node-1.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
 
-      # No persistency.
     # profiles: ["all", "clients"]
 
-# volumes:
-  # cloud-data:
-  # node-a-data:
+  # node-R is the external receiver
+  node-R:
+    image: heliummpc/helium:latest
+    container_name: node-R
+    # command: -docompute=false
+    volumes:
+      - ../node-R.json:/helium/config/node.json
+      - ../setup.json:/helium/config/setup.json
+      - ../compute.json:/helium/config/compute.json
+      - ./nodelist.json:/helium/config/nodelist.json

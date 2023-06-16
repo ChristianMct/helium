@@ -1,6 +1,7 @@
 {
     "ID": "cloud",
     "Address": ":40000",
+    "Peers": {},
     "TLSConfig": {
         "InsecureChannels": true
     },
