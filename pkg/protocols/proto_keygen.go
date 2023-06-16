@@ -174,7 +174,7 @@ type rkgProtocol struct {
 	crp        CRP
 }
 
-// / pkProtocol is the protocol used to share public keys among parties.
+// pkProtocol is the protocol used to share public keys among parties.
 type pkProtocol struct {
 	*protocol
 	proto LattigoKeygenProtocol
@@ -245,6 +245,7 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Ins
 	return inst, err
 }
 
+// run runs the cpkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
 func (p *cpkProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
 
@@ -329,23 +330,13 @@ func (p *cpkProtocol) Output(agg AggregationOutput) chan Output {
 	return out
 }
 
+// run runs the pkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
 func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
 
-	var err error
-	p.crp, err = p.proto.ReadCRP(p.crs)
-	if err != nil {
-		panic(err)
-	}
-
-	var share Share
-	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
-		share = p.proto.AllocateShare()
-		share.ProtocolID = p.ID()
-		share.Type = p.Type
-		share.From = p.self
-		share.AggregateFor = utils.NewEmptySet[pkg.NodeID]()
-		share.Round = 1
+	// pkProtocols can only have one participant: the sender of the public key
+	if len(p.Participants) != 1 {
+		panic(fmt.Errorf("error: a pkProtocol must have exactly one participant. Participants are: %v", p.Participants))
 	}
 
 	if p.shareProviders.Contains(p.self) {
@@ -355,34 +346,47 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 		// save the generated secret key into the object store of the sender
 		session.ObjectStore.Store("outputSK", outputSK)
 
+		var err error
+		p.crp, err = p.proto.ReadCRP(p.crs)
+		if err != nil {
+			panic(err)
+		}
+
+		share := p.proto.AllocateShare()
+		share.ProtocolID = p.ID()
+		share.Type = p.Type
+		share.To = []pkg.NodeID{p.Desc().Aggregator}
+		share.From = p.self
+		share.Round = 1
+
 		errGen := p.proto.GenShare(outputSK, p.crp, share)
 		if errGen != nil {
 			panic(errGen)
 		}
-		share.To = []pkg.NodeID{p.Desc().Aggregator}
-		share.AggregateFor.Add(p.self)
-	}
 
-	if p.IsAggregator() {
-		p.agg = *newShareAggregator(p.shareProviders, share, p.proto.AggregatedShares)
-
-		errAggr := p.aggregateShares(ctx, p.agg, env)
-		if errAggr != nil {
-			log.Printf("%s | [%s] failed: %s\n", p.self, p.ID(), errAggr)
-			return AggregationOutput{Error: errAggr}
-		}
-		share.AggregateFor = p.shareProviders.Copy()
-		log.Printf("%s | [%s] completed aggregating\n", p.self, p.ID())
-		return AggregationOutput{Round: []Share{share}}
-	}
-	if p.shareProviders.Contains(p.self) {
 		env.OutgoingShares() <- share
 		log.Printf("%s | [%s] completed participanting\n", p.self, p.ID())
 	}
+
+	if p.IsAggregator() {
+		select {
+		case incShare := <-env.IncomingShares():
+			log.Printf("%s | [%s] new share from %s\n", p.self, p.ID(), incShare.From)
+			log.Printf("%s | [%s] completed aggregating\n", p.self, p.ID())
+			return AggregationOutput{Round: []Share{incShare}}
+			// share.
+		case <-ctx.Done():
+			log.Printf("timeout while aggregating shares")
+			return AggregationOutput{Error: fmt.Errorf("timeout while aggregating shares")}
+			// panic(fmt.Errorf("timeout while aggregating shares"))
+		}
+	}
+
 	log.Printf("%s | [%s] completed running\n", p.self, p.ID())
 	return AggregationOutput{}
 }
 
+// Aggregate runs the protocol and returns a channel through which the output is send.
 func (p *pkProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
 	output := make(chan AggregationOutput)
 	go func() {
@@ -391,6 +395,7 @@ func (p *pkProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Tr
 	return output
 }
 
+// Output takes an aggregation output and samples the CRP to reconstruct the Public Key.
 func (p *pkProtocol) Output(agg AggregationOutput) chan Output {
 	out := make(chan Output, 1)
 	if agg.Error != nil {
@@ -498,6 +503,7 @@ func (p *rkgProtocol) Aggregate(ctx context.Context, session *pkg.Session, env T
 	return output
 }
 
+// run runs the rkgProtocol allowing participants to provide shares and aggregators to aggregate such shares.
 func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
 
 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)

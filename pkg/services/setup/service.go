@@ -90,10 +90,10 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		}
 	}
 
-	pdAggs := make(chan protocols.Descriptor, len(sigListNoResult))
 	// if the current node is an aggregator, create a protocol description
-	// for each signature to run, wiht itself as aggregator and undefined plist.
+	// for each signature to run, with itself as aggregator and undefined plist.
 	// TODO: assumes all aggregators run the required protocol
+	pdAggs := make(chan protocols.Descriptor, len(sigListNoResult))
 	if aggregators.Contains(s.self) {
 		for i, sig := range sigListNoResult {
 			pdAggs <- protocols.Descriptor{ID: pkg.ProtocolID(fmt.Sprintf("%s-%d", sig.Type, i)), Signature: sig, Aggregator: s.self}
@@ -101,9 +101,9 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 	}
 	close(pdAggs)
 
+	// 2. REGISTRATION: register for setup to the aggregator
 	ctx := pkg.NewContext(&sessID, nil)
 	outCtx := pkg.GetOutgoingContext(context.Background(), s.self)
-	// 2. REGISTRATION: register for setup to the aggregator
 	protosUpdatesChan := s.registerToAggregatorsForSetup(&aggregators, outCtx)
 
 	// split protocols updates into to run and completed.
@@ -222,8 +222,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 		}
 		aggDone.Add(1)
 		go func() {
-			// DEBUG
-			log.Printf("%s | registering to aggregator %s\n", s.self, agg)
+			log.Printf("%s | [Register] registering to aggregator %s\n", s.self, agg)
 			// register aggregator to the transport for the setup protocol.
 			protoUpdateChannel, err := s.transport.RegisterForSetupAt(outCtx, agg)
 			if err != nil {
@@ -237,7 +236,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 				protosUpdatesChan <- protoStatusUpdate
 			}
 			// no more updates from this aggregator.
-			log.Printf("%s | aggregator %s done\n", s.self, agg)
+			log.Printf("%s | [Register] aggregator %s done\n", s.self, agg)
 
 			aggDone.Done()
 		}()
@@ -247,7 +246,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 	go func() {
 		// when all aggregators have been registered and have no more updates.
 		aggDone.Wait()
-		log.Printf("%s | registration to all aggregators done\n", s.self)
+		log.Printf("%s | [Register] registration to all aggregators done\n", s.self)
 		// close the global update channels, others will know that no more updates are coming.
 		close(protosUpdatesChan)
 	}()
@@ -381,7 +380,7 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 
 				// blocking, returns the result of the aggregation.
 				log.Printf("%s | [Aggregate] Waiting to finish aggregation for pd: %v\n", s.self, pd)
-				log.Printf("%s | [Aggregate] Service is %v", s.self, s)
+				// log.Printf("%s | [Aggregate] Service is %v", s.self, s)
 				aggOut := <-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					panic(aggOut.Error)
