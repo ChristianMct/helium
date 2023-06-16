@@ -336,15 +336,15 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 
 	// pkProtocols can only have one participant: the sender of the public key
 	if len(p.Participants) != 1 {
-		panic(fmt.Errorf("error: a pkProtocol must have exactly one participant. Participants are: %v", p.Participants))
+		panic(fmt.Errorf("error: a pkProtocol must have exactly one participant. p.Participants: %v", p.Participants))
 	}
 
 	if p.shareProviders.Contains(p.self) {
 		kg := rlwe.NewKeyGenerator(*session.Params)
-		outputSK := kg.GenSecretKey()
-
-		// save the generated secret key into the object store of the sender
-		session.ObjectStore.Store("outputSK", outputSK)
+		outputSk := kg.GenSecretKey()
+		if err := session.StoreOuputSk(outputSk); err != nil {
+			panic(err)
+		}
 
 		var err error
 		p.crp, err = p.proto.ReadCRP(p.crs)
@@ -359,7 +359,7 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 		share.From = p.self
 		share.Round = 1
 
-		errGen := p.proto.GenShare(outputSK, p.crp, share)
+		errGen := p.proto.GenShare(outputSk, p.crp, share)
 		if errGen != nil {
 			panic(errGen)
 		}
@@ -378,7 +378,6 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 		case <-ctx.Done():
 			log.Printf("timeout while aggregating shares")
 			return AggregationOutput{Error: fmt.Errorf("timeout while aggregating shares")}
-			// panic(fmt.Errorf("timeout while aggregating shares"))
 		}
 	}
 

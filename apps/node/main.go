@@ -224,7 +224,7 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	}
 	log.Printf("[Compute] Got encrypted output: %v", outCt)
 
-	outputSK := rlwe.NewSecretKey(*a.sess.Params)
+	var outputSk *rlwe.SecretKey
 
 	externalReceivers := make(utils.Set[pkg.NodeID])
 	for _, externalReceiver := range a.sd.Pk {
@@ -232,19 +232,19 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	}
 
 	if externalReceivers.Contains(a.node.ID()) {
-		err = a.sess.ObjectStore.Load("outputSK", outputSK)
+		outputSk, err = a.sess.OutputSk()
 		if err != nil {
-			panic(fmt.Errorf("could not read receiver's (%s) private key: %w\n", "node-R", err))
+			panic(err)
 		}
 	} else {
 		if a.sess.Sk == nil {
-			log.Printf("Refusing to decrypt output: the session secret key is nil. Is this node (%s) the receiver?\n", a.node.ID())
+			log.Printf("error while decrypting output: the session secret key is nil. Is this node (%s) the indended receiver?\n", a.node.ID())
 			return
 		}
-		outputSK = a.sess.Sk
+		outputSk = a.sess.Sk
 	}
 
-	decryptor := bfv.NewDecryptor(bfvParams, outputSK)
+	decryptor := bfv.NewDecryptor(bfvParams, outputSk)
 	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:8]
 
 	log.Printf("[Compute] Retrieved output: %v\n", outPt)

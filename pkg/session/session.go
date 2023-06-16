@@ -142,8 +142,6 @@ type Session struct {
 	NodeID NodeID
 	Nodes  []NodeID
 
-	NodesPk map[NodeID]*rlwe.PublicKey
-
 	T       int
 	SPKS    map[NodeID]drlwe.ShamirPublicPoint
 	tsk     *drlwe.ShamirSecretShare
@@ -195,8 +193,6 @@ func NewSession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe
 	sess.ID = sessionID
 	sess.NodeID = nodeID
 	sess.Nodes = nodes
-
-	sess.NodesPk = map[NodeID]*rlwe.PublicKey{}
 
 	sess.Params = params
 
@@ -356,16 +352,44 @@ func (s *Session) GetCRSForProtocol(pid ProtocolID) drlwe.CRS {
 	return prng
 }
 
-func (s *Session) RegisterPkForNode(nid NodeID, pk *rlwe.PublicKey) {
-	if _, exists := s.NodesPk[nid]; exists {
-		panic("pk for node already registered")
+// StoreOuputSk stores the output secret key in the ObjectStore.
+func (s *Session) StoreOuputSk(outputSk *rlwe.SecretKey) error {
+	if err := s.ObjectStore.Store("outputSk", outputSk); err != nil {
+		return fmt.Errorf("error while storing the output secret key: %w", err)
 	}
-	s.NodesPk[nid] = pk
+
+	return nil
 }
 
-func (s *Session) GetPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists bool) {
-	pk, exists = s.NodesPk[nid]
-	return pk, exists
+// OutputSk loads the output secret key from the ObjectStore.
+func (s *Session) OutputSk() (*rlwe.SecretKey, error) {
+	outputSk := rlwe.NewSecretKey(*s.Params)
+
+	if err := s.ObjectStore.Load("outputSk", outputSk); err != nil {
+		return nil, fmt.Errorf("error while loading the output secret key: %w", err)
+	}
+
+	return outputSk, nil
+}
+
+// StoreOutputPkForNode stores the output public key for a node in the ObjectStore.
+func (s *Session) StoreOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error {
+	if err := s.ObjectStore.Store("outputPk", outputPk); err != nil {
+		return fmt.Errorf("error while storing the output public key: %w", err)
+	}
+
+	return nil
+}
+
+// GetOutputPkForNode load the output public key for a node from the ObjectStore.
+func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists error) {
+	outputPk := rlwe.NewPublicKey(*s.Params)
+
+	if err := s.ObjectStore.Load("outputPk", outputPk); err != nil {
+		return nil, fmt.Errorf("error while loading the output public key: %w", err)
+	}
+
+	return outputPk, nil
 }
 
 func (s *Session) Contains(nodeID NodeID) bool {

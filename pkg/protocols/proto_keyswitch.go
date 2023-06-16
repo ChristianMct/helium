@@ -94,9 +94,9 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, session *pkg.Session,
 			return AggregationOutput{Error: errSk}
 		}
 		if p.Type == PCKS {
-			var exists bool
-			p.outputKey, exists = session.GetPkForNode(p.target)
-			if !exists {
+			var err error
+			p.outputKey, err = session.GetOutputPkForNode(p.target)
+			if err != nil {
 				return AggregationOutput{Error: fmt.Errorf("no pk for node with ID %s", p.target)}
 			}
 		}

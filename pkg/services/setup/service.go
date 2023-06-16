@@ -506,26 +506,29 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 		if output.Result != nil {
 			switch res := output.Result.(type) {
 			case *rlwe.PublicKey:
-				//log.Printf("%s | Setup: storing CPK %v under %s \n", s.self, res, output.Signature.String())
-				err := sess.ObjectStore.Store(output.Signature.String(), res)
-				if err != nil {
-					log.Printf("%s | error on Public Key store: %s", s.self, err)
+				// if the output is the public key of a node, register it for the computation phase
+				if output.Signature.Type == protocols.PK {
+					if err := sess.StoreOutputPkForNode(pkg.NodeID(output.Signature.Args["Sender"]), res); err != nil {
+						log.Printf("%s | error on Public Key store: %s", s.self, err)
+						break
+					}
 				}
 
-				// if the output is the public key of a node, register it in the session for the computation phase
-				if output.Signature.Type == protocols.PK {
-					sess.RegisterPkForNode(pkg.NodeID(output.Signature.Args["Sender"]), res)
+				//log.Printf("%s | Setup: storing CPK %v under %s \n", s.self, res, output.Signature.String())
+				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+					log.Printf("%s | error on Collective Public Key store: %s", s.self, err)
 				}
+				break
 			case *rlwe.SwitchingKey:
-				err := sess.ObjectStore.Store(output.Signature.String(), res)
-				if err != nil {
+				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					log.Printf("%s | error on Rotation Key Store: %s", s.self, err)
 				}
+				break
 			case *rlwe.RelinearizationKey:
-				err := sess.ObjectStore.Store(output.Signature.String(), res)
-				if err != nil {
+				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					log.Printf("%s | error on Relinearization Key store: %s", s.self, err)
 				}
+				break
 			default:
 				log.Printf("%s | got output for protocol %s: %v\n", s.self, output.ID, output)
 			}

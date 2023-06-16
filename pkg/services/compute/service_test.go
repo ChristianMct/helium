@@ -459,20 +459,29 @@ func TestCloudPCKS(t *testing.T) {
 				localtest.Start()
 
 				decoder := bfv.NewEncoder(bfvParams)
-				// idealDecryptor := bfv.NewDecryptor(bfvParams, sk.CopyNew())
 
 				recSk, recPk := kg.GenKeyPair()
-				// save the secret key of the external node in its objectstore (emulate setup phase)
-				external_0Sess.ObjectStore.Store("outputSK", recSk)
 
-				clou.Session.RegisterPkForNode("external-0", recPk)
-				external_0Sess.RegisterPkForNode("external-0", recPk)
+				// save the secret key of the external node in its objectstore (emulate setup phase)
+				err = external_0Sess.StoreOuputSk(recSk)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if err = clou.Session.StoreOutputPkForNode("external-0", recPk); err != nil {
+					t.Fatal(err)
+				}
+				if err = external_0Sess.StoreOutputPkForNode("external-0", recPk); err != nil {
+					t.Fatal(err)
+				}
 
 				for i := range clients {
 					clients[i].Encoder = decoder.ShallowCopy()
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, clou.Session.PublicKey)
 					cliSess, _ := clients[i].GetSessionFromID(sessionID)
-					cliSess.RegisterPkForNode("external-0", recPk)
+					if err = cliSess.StoreOutputPkForNode("external-0", recPk); err != nil {
+						t.Fatal(err)
+					}
 				}
 
 				var cSign = Signature{
@@ -529,11 +538,12 @@ func TestCloudPCKS(t *testing.T) {
 					}
 
 					if len(out) > 0 {
-						outputSK := rlwe.NewSecretKey(*external_0Sess.Params)
-						external_0Sess.ObjectStore.Load("outputSK", outputSK)
-						// _ = recSk
-						// _ = nodeSK
-						ptdec := bfv.NewDecryptor(bfvParams, outputSK).DecryptNew(out[0].Ciphertext)
+						outputSk, err := external_0Sess.OutputSk()
+						if err != nil {
+							return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
+
+						}
+						ptdec := bfv.NewDecryptor(bfvParams, outputSk).DecryptNew(out[0].Ciphertext)
 						fmt.Println(decoder.DecodeUintNew(ptdec)[:6])
 						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, decoder.DecodeUintNew(ptdec)[:6])
 					}
