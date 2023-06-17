@@ -374,8 +374,8 @@ func (s *Session) OutputSk() (*rlwe.SecretKey, error) {
 
 // StoreOutputPkForNode stores the output public key for a node in the ObjectStore.
 func (s *Session) StoreOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error {
-	if err := s.ObjectStore.Store("outputPk", outputPk); err != nil {
-		return fmt.Errorf("error while storing the output public key: %w", err)
+	if err := s.ObjectStore.Store("outputPk-"+string(nid), outputPk); err != nil {
+		return fmt.Errorf("error while storing the output public key for node %s: %w", nid, err)
 	}
 
 	return nil
@@ -385,8 +385,8 @@ func (s *Session) StoreOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) err
 func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists error) {
 	outputPk := rlwe.NewPublicKey(*s.Params)
 
-	if err := s.ObjectStore.Load("outputPk", outputPk); err != nil {
-		return nil, fmt.Errorf("error while loading the output public key: %w", err)
+	if err := s.ObjectStore.Load("outputPk-"+string(nid), outputPk); err != nil {
+		return nil, fmt.Errorf("error while loading the output public key for node %s: %w", nid, err)
 	}
 
 	return outputPk, nil
