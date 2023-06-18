@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -196,7 +197,11 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 func (s *Service) filterSignatureList(sl SignatureList, sess *pkg.Session) (noResult, hasResult SignatureList) {
 	noResult, hasResult = make(SignatureList, 0), make(SignatureList, 0)
 	for _, sig := range sl {
-		has, err := sess.ObjectStore.IsPresent(sig.String())
+		// has, err := sess.ObjectStore.IsPresent(sig.String())
+
+		// TODO: conversion from protocol.Type to api.ProtocolType is not necessary if the protocols package
+		// reuses api.ProtocolType instead of defining protocol.Type
+		has, err := sess.HasKey(api.ProtocolType(api.ProtocolType_value[sig.Type.String()]), sig.Args)
 		if err != nil {
 			panic(err)
 		}
@@ -254,7 +259,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 	return protosUpdatesChan
 }
 
-const parallelParticipation int = 10
+const parallelParticipation int = 1
 
 // participate makes every participant participate in the protocol
 // returns a channel where true is sent when all participations are done.
@@ -313,7 +318,7 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 	return allPartsDone
 }
 
-const parallelAggregation int = 10
+const parallelAggregation int = 1
 
 func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descriptor, outputs chan struct {
 	protocols.Descriptor
@@ -501,32 +506,45 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 	protocols.Output
 }, sess *pkg.Session) {
 	for output := range outputs {
-		log.Printf("%s | [Store] Storing output for protocol %s under %s\n", s.self, output.Descriptor.ID, output.Signature.String())
+		// log.Printf("%s | [Store] Storing output for protocol %s under %s\n", s.self, output.Descriptor.ID, output.Signature.String())
 
 		if output.Result != nil {
 			switch res := output.Result.(type) {
 			case *rlwe.PublicKey:
 				// if the output is the public key of a node, register it for the computation phase
 				if output.Signature.Type == protocols.PK {
-					if err := sess.StoreOutputPkForNode(pkg.NodeID(output.Signature.Args["Sender"]), res); err != nil {
-						log.Printf("%s | error on Public Key store: %s", s.self, err)
+					if err := sess.SetOutputPkForNode(pkg.NodeID(output.Signature.Args["Sender"]), res); err != nil {
+						log.Printf("%s | %s", s.self, err)
 						break
 					}
 				}
 
-				//log.Printf("%s | Setup: storing CPK %v under %s \n", s.self, res, output.Signature.String())
-				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+				if err := sess.SetCollectivePublicKey(res); err != nil {
 					log.Printf("%s | error on Collective Public Key store: %s", s.self, err)
+				}
+
+				// if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+				// 	log.Printf("%s | error on Collective Public Key store: %s", s.self, err)
+				// }
+				break
+			case *rlwe.RelinearizationKey:
+				// if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+				// 	log.Printf("%s | error on Relinearization Key store: %s", s.self, err)
+				// }
+				if err := sess.SetRelinearizationKey(res); err != nil {
+					log.Printf("%s | %s", s.self, err)
 				}
 				break
 			case *rlwe.SwitchingKey:
-				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-					log.Printf("%s | error on Rotation Key Store: %s", s.self, err)
+				// if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+				// 	log.Printf("%s | error on Rotation Key Store: %s", s.self, err)
+				// }
+				galEl, err := strconv.ParseUint(output.Signature.Args["GalEl"], 10, 64)
+				if err != nil {
+					log.Printf("%s | %s", s.self, err)
 				}
-				break
-			case *rlwe.RelinearizationKey:
-				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-					log.Printf("%s | error on Relinearization Key store: %s", s.self, err)
+				if err := sess.SetRotationKey(res, galEl); err != nil {
+					log.Printf("%s | %s", s.self, err)
 				}
 				break
 			default:

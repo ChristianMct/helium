@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/protocols"
@@ -158,19 +157,23 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 
 	log.Printf("%s | started full context Execute of %s\n", se.sess.NodeID, se.id)
 
+	var err error
 	rlk := new(rlwe.RelinearizationKey)
 	if se.cDesc.NeedRlk {
-		err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
+		rlk, err = se.sess.GetRelinearizationKey()
+		// err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
 		if err != nil {
-			panic(fmt.Errorf("%s | rlk was not found for node %s: %s", se.sess.NodeID, se.sess.NodeID, err))
+			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
 	}
 
 	rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
 	for galEl := range se.cDesc.GaloisKeys {
-		err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(galEl, 10)}}.String(), rtks.Keys[galEl])
+		var err error
+		rtks.Keys[galEl], err = se.sess.GetRotationKey(galEl)
+		// err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(galEl, 10)}}.String(), rtks.Keys[galEl])
 		if err != nil {
-			panic(fmt.Errorf("%s | rtk for galEl %d was not found: %s", se.sess.NodeID, galEl, err))
+			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
 	}
 
@@ -179,7 +182,7 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 
 	se.resolveRemoteInputs(ctx, se.cDesc.InputSet)
 
-	err := se.f(se)
+	err = se.f(se)
 
 	close(se.outputs)
 	log.Printf("%s | full context Execute returned, err = %v \n", se.sess.NodeID, err)

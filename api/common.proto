@@ -45,6 +45,7 @@ enum ProtocolType {
     CKS = 5; /* collective switching to collective secret-key */
     DEC = 6; /* collective decryption */
     PCKS = 7; /* collective switching to known public-key */
+    PK   = 8; /* public key sharing */
 }
 
 enum ProtocolStatus {

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/ldsec/helium/pkg/node"
-	"github.com/ldsec/helium/pkg/protocols"
 	. "github.com/ldsec/helium/pkg/services/compute"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
@@ -296,13 +295,14 @@ func TestCloudEvalCircuit(t *testing.T) {
 				sk := localtest.SkIdeal
 
 				clou.Session.Sk = sk.CopyNew()
-				clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
-				err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.CKG}.String(), kg.GenPublicKey(sk.CopyNew()))
-				if err != nil {
+				// clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
+				// err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.CKG}.String(), kg.GenPublicKey(sk.CopyNew()))
+				if err := clou.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew())); err != nil {
 					t.Fatal(err)
 				}
-				clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
-				err = clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
+				// clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
+				// err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
+				err := clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -317,7 +317,11 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 				for i := range clients {
 					clients[i].Encoder = decoder.ShallowCopy()
-					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, clou.Session.PublicKey)
+					cpk, err := clou.GetCollectivePublicKey()
+					if err != nil {
+						t.Fatal(err)
+					}
+					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, cpk)
 					// cliSess, _ := clients[i].GetSessionFromID(sessionID)
 					// cliSess.RegisterPkForNode("light-0", *recPk)
 				}
@@ -445,13 +449,14 @@ func TestCloudPCKS(t *testing.T) {
 				sk := localtest.SkIdeal
 
 				clou.Session.Sk = sk.CopyNew()
-				clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
-				err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.CKG}.String(), kg.GenPublicKey(sk.CopyNew()))
+				// clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
+				err := clou.Session.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew()))
 				if err != nil {
 					t.Fatal(err)
 				}
-				clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
-				err = clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
+				// clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
+				// err = clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
+				err = clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -463,23 +468,27 @@ func TestCloudPCKS(t *testing.T) {
 				recSk, recPk := kg.GenKeyPair()
 
 				// save the secret key of the external node in its objectstore (emulate setup phase)
-				err = external_0Sess.StoreOuputSk(recSk)
+				err = external_0Sess.SetOuputSk(recSk)
 				if err != nil {
 					t.Fatal(err)
 				}
 
-				if err = clou.Session.StoreOutputPkForNode("external-0", recPk); err != nil {
+				if err = clou.Session.SetOutputPkForNode("external-0", recPk); err != nil {
 					t.Fatal(err)
 				}
-				if err = external_0Sess.StoreOutputPkForNode("external-0", recPk); err != nil {
+				if err = external_0Sess.SetOutputPkForNode("external-0", recPk); err != nil {
 					t.Fatal(err)
 				}
 
 				for i := range clients {
 					clients[i].Encoder = decoder.ShallowCopy()
-					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, clou.Session.PublicKey)
+					cpk, err := clou.Session.GetCollectivePublicKey()
+					if err != nil {
+						t.Fatal(err)
+					}
+					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, cpk)
 					cliSess, _ := clients[i].GetSessionFromID(sessionID)
-					if err = cliSess.StoreOutputPkForNode("external-0", recPk); err != nil {
+					if err = cliSess.SetOutputPkForNode("external-0", recPk); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -538,7 +547,7 @@ func TestCloudPCKS(t *testing.T) {
 					}
 
 					if len(out) > 0 {
-						outputSk, err := external_0Sess.OutputSk()
+						outputSk, err := external_0Sess.GetOutputSk()
 						if err != nil {
 							return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
 
@@ -612,7 +621,10 @@ func TestPeerEvalCircuit(t *testing.T) {
 					nodes[i].Node = node
 					nodes[i].Service = node.GetComputeService()
 					nodes[i].Session, _ = nodes[i].GetSessionFromID(sessionID)
-					nodes[i].Session.PublicKey = cpk
+					err = nodes[i].Session.SetCollectivePublicKey(cpk)
+					if err != nil {
+						t.Fatal(err)
+					}
 					nodes[i].Session.Rlk = rlk
 					// nodes[i].Session.RegisterPkForNode("full-0", *recPk)
 				}

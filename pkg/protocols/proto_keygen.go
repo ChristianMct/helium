@@ -342,7 +342,7 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 	if p.shareProviders.Contains(p.self) {
 		kg := rlwe.NewKeyGenerator(*session.Params)
 		outputSk := kg.GenSecretKey()
-		if err := session.StoreOuputSk(outputSk); err != nil {
+		if err := session.SetOuputSk(outputSk); err != nil {
 			panic(err)
 		}
 

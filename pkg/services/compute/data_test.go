@@ -56,8 +56,11 @@ func TestCloudDataTransfers(t *testing.T) {
 				if !ok {
 					t.Fatal("session should exist")
 				}
-				sess.PublicKey = kg.GenPublicKey(sk)
-				sess.Rlk = kg.GenRelinearizationKey(sk, 1)
+				// sess.PublicKey = kg.GenPublicKey(sk)
+				if err := sess.SetCollectivePublicKey(kg.GenPublicKey(sk)); err != nil {
+					t.Fatal(err)
+				}
+				// sess.Rlk = kg.GenRelinearizationKey(sk, 1)
 
 				localtest.Start()
 
@@ -67,7 +70,11 @@ func TestCloudDataTransfers(t *testing.T) {
 				for i, node := range localtest.LightNodes {
 					clients[i].Node = node
 					clients[i].Service = node.GetComputeService()
-					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, sess.PublicKey)
+					cpk, err := sess.GetCollectivePublicKey()
+					if err != nil {
+						t.Fatal(err)
+					}
+					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, cpk)
 				}
 
 				t.Run("Store+Load", func(t *testing.T) {
