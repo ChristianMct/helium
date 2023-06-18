@@ -2,7 +2,6 @@ package setup_test
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"math/bits"
 	"strconv"
@@ -442,10 +441,14 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 		if !ok {
 			t.Fatal("session should exist")
 		}
-		log.Printf(cloudss.String())
+		// log.Printf(cloudss.String())
 
 		// receiver for PCKS
 		node_R := localTest.ExternalNodes[0]
+		node_Rsess, ok := node_R.GetSessionFromID("test-session")
+		if !ok {
+			t.Fatal("session should exist")
+		}
 
 		// session nodes + external receiver
 		sessionNodes := localTest.SessionNodes()
@@ -500,14 +503,18 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 			}
 
 			// check if setup material was correctly generated
-			checkKeyGenProt(t, localTest, setup, cloudss)
+			outputSk, err := node_Rsess.GetOutputSk()
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkKeyGenProt(t, localTest, setup, cloudss, outputSk)
 
 			for _, client := range clients {
 				clientss, ok := client.GetSessionFromID("test-session")
 				if !ok {
 					t.Fatal("session should exist")
 				}
-				checkKeyGenProt(t, localTest, setup, clientss)
+				checkKeyGenProt(t, localTest, setup, clientss, outputSk)
 			}
 		})
 	})
@@ -523,18 +530,9 @@ func TestQuery(t *testing.T) {
 	}
 
 	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-
-		// var testname = fmt.Sprintf("TestSimpleSetup-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
-
-		// var objstoreconf = objectstore.Config{
-		// 	BackendName: "mem",
-		// 	DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
-		// }
-
 		var sessParams = &pkg.SessionParameters{
 			RLWEParams: literalParams,
 			T:          ts.T,
-			// ObjectStoreConfig: objstoreconf,
 		}
 		var testConfig = node.LocalTestConfig{
 			HelperNodes:      1,
@@ -634,7 +632,7 @@ func TestQuery(t *testing.T) {
 }
 
 func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signature, expectedPresence bool) {
-	present, err := sess.IsPresent(sign.String())
+	present, err := sess.IsPresent(sign.ToObjectStore())
 	if err != nil {
 		panic("Error in IsPresent")
 	}
@@ -754,28 +752,44 @@ func TestPeerToPeerSetup(t *testing.T) {
 }
 
 // Based on the session information, check if the protocol was performed correctly.
-func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, sess *pkg.Session) {
+func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, sess *pkg.Session, externalSk ...*rlwe.SecretKey) {
 
 	params := lt.Params
 	sk := lt.SkIdeal
 	nParties := len(lt.SessionNodes())
 
+	log2BoundPk := bits.Len64(uint64(nParties) * params.NoiseBound() * uint64(params.N()))
+
+	// check CPK
 	if utils.NewSet(setup.Cpk).Contains(sess.NodeID) {
-		cpk := new(rlwe.PublicKey)
-		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
+		cpk, err := sess.GetCollectivePublicKey()
 		if err != nil {
-			t.Fatalf("%s | CPK was not found for node %s: %s", sess.NodeID, sess.NodeID, err)
+			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
-		log2BoundPk := bits.Len64(uint64(nParties) * params.NoiseBound() * uint64(params.N()))
+
 		require.True(t, rlwe.PublicKeyIsCorrect(cpk, sk, params, log2BoundPk))
 	}
 
+	// check shared PK
+	for _, key := range setup.Pk {
+		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
+			pk, err := sess.GetOutputPkForNode(key.Sender)
+			if err != nil {
+				t.Fatalf("%s | %s", sess.NodeID, err)
+			}
+			if externalSk == nil || len(externalSk) == 0 {
+				t.Fatalf("%s | cannot check correctness of public key of %s", sess.NodeID, key.Sender)
+			}
+			require.True(t, rlwe.PublicKeyIsCorrect(pk, externalSk[0], params, log2BoundPk))
+		}
+	}
+
+	// check RTG
 	for _, key := range setup.GaloisKeys {
 		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
-			rtk := new(rlwe.SwitchingKey)
-			err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(key.GaloisEl, 10)}}.String(), rtk)
+			rtk, err := sess.GetRotationKey(key.GaloisEl)
 			if err != nil {
-				t.Fatalf("%s | Rotation Key was not found for %s: %s", sess.NodeID, sess.NodeID, err)
+				t.Fatalf("%s | %s", sess.NodeID, err)
 			}
 			log2BoundRtk := bits.Len64(uint64(
 				params.N() * len(rtk.Value) * len(rtk.Value[0]) *
@@ -785,11 +799,11 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 		}
 	}
 
+	// check RLK
 	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
-		rlk := new(rlwe.RelinearizationKey)
-		err := sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
+		rlk, err := sess.GetRelinearizationKey()
 		if err != nil {
-			t.Fatalf("%s | RLK was not found for node %s, %s", sess.NodeID, sess.NodeID, err)
+			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
 
 		levelQ, levelP := params.QCount()-1, params.PCount()-1

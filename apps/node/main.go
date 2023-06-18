@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/ldsec/helium/pkg/protocols"
 	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bfv"
@@ -34,6 +35,7 @@ var (
 	outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
 	docompute        = flag.Bool("docompute", true, "executes the compute phase")
 	computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
+	keepRunning      = flag.Bool("keepRunning", false, "keeps the node running until system SIGINT or SIGTERM")
 )
 
 type App struct {
@@ -49,11 +51,6 @@ type App struct {
 func main() {
 
 	flag.Parse()
-
-	// if *configFile == "" {
-	// 	log.Println("need to provide a config file with the -config flag")
-	// 	os.Exit(1)
-	// }
 
 	// app holds all data relative to the node execution.
 	app := App{}
@@ -162,9 +159,12 @@ func main() {
 		app.computePhase(cloudID, ctx, cLabel, cSign)
 	}
 
-	// sigs := make(chan os.Signal, 1)
-	// signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	// <-sigs
+	// keeps the node running until SIGINT or SIGTERM
+	if *keepRunning {
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		<-sigs
+	}
 	<-time.After(time.Second)
 	log.Printf("%s | exiting.", app.nc.ID)
 }
@@ -232,7 +232,7 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	}
 
 	if externalReceivers.Contains(a.node.ID()) {
-		outputSk, err = a.sess.OutputSk()
+		outputSk, err = a.sess.GetOutputSk()
 		if err != nil {
 			panic(err)
 		}
@@ -253,11 +253,15 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 // getClientOperandsPSI returns the operands that this client node will input into the PSI computation.
 func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
-	cpk := new(rlwe.PublicKey)
-	err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
+	cpk, err := a.sess.GetCollectivePublicKey()
 	if err != nil {
-		panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
+		panic(err)
 	}
+	// cpk := new(rlwe.PublicKey)
+	// err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
+	// if err != nil {
+	// 	panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
+	// }
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
 
 	// craft input
@@ -280,11 +284,15 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 // getClientOperandsPIR returns the operands that this client node will input into the PIR computation.
 func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
-	cpk := new(rlwe.PublicKey)
-	err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
+	cpk, err := a.sess.GetCollectivePublicKey()
 	if err != nil {
-		panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
+		panic(err)
 	}
+	// cpk := new(rlwe.PublicKey)
+	// err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
+	// if err != nil {
+	// 	panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
+	// }
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
 
 	// craft input

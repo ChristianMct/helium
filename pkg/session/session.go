@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 
+	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/session/objectstore"
 	"github.com/ldsec/helium/pkg/session/objectstore/badgerobjectstore"
 	"github.com/ldsec/helium/pkg/session/objectstore/memobjectstore"
@@ -151,9 +152,9 @@ type Session struct {
 	Params *rlwe.Parameters
 
 	Sk *rlwe.SecretKey
-	*rlwe.PublicKey
-	*rlwe.RelinearizationKey
-	*rlwe.EvaluationKey
+	// *rlwe.PublicKey
+	// *rlwe.RelinearizationKey
+	// *rlwe.EvaluationKey
 
 	mutex sync.RWMutex
 }
@@ -197,8 +198,8 @@ func NewSession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe
 	sess.Params = params
 
 	sess.Sk = sk
-	sess.EvaluationKey = &rlwe.EvaluationKey{Rlk: rlwe.NewRelinearizationKey(*params, 1), Rtks: rlwe.NewRotationKeySet(*params, []uint64{})}
-	sess.RelinearizationKey = sess.EvaluationKey.Rlk
+	// sess.EvaluationKey = &rlwe.EvaluationKey{Rlk: rlwe.NewRelinearizationKey(*params, 1), Rtks: rlwe.NewRotationKeySet(*params, []uint64{})}
+	// sess.RelinearizationKey = sess.EvaluationKey.Rlk
 	sess.CRSKey = crsKey
 
 	sess.T = t
@@ -280,21 +281,121 @@ func (s *SessionStore) Close() error {
 	return nil
 }
 
-func (s *Session) GetRelinKey() ([]byte, error) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-	relin, err := s.RelinearizationKey.MarshalBinary()
-	if err != nil {
-		return nil, err
+// HasKey returns whether the requested type of key is stored in the ObjectStore.
+// the args map is used to distingush among different keys of the same type (such as different rotation keys).
+// func (s *Session) HasKey(protocolType api.ProtocolType, args map[string]string) (bool, error) {
+// 	var argsStr string
+// 	if len(args) == 0 {
+// 		argsStr = ""
+// 	} else {
+// 		argsStr = fmt.Sprint(args)
+// 	}
+// 	log.Printf("looking for %s\n", protocolType.String()+argsStr)
+
+// 	return s.ObjectStore.IsPresent(protocolType.String() + argsStr)
+// }
+
+// GetCollectivePublicKey loads the collective public key from the ObjectStore.
+func (s *Session) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
+	cpk := new(rlwe.PublicKey)
+	if err := s.ObjectStore.Load(api.ProtocolType_CKG.String(), cpk); err != nil {
+		return nil, fmt.Errorf("error while loading the collective public key: %w", err)
 	}
 
-	return relin, nil
+	return cpk, nil
 }
 
-func (s *Session) SetRotationKey(galEl uint64, swk *rlwe.SwitchingKey) error {
-	s.mutex.Lock()
-	s.EvaluationKey.Rtks.Keys[galEl] = swk
-	s.mutex.Unlock()
+// SetCollectivePublicKey stores the collective public key into the ObjectStore.
+func (s *Session) SetCollectivePublicKey(cpk *rlwe.PublicKey) error {
+	if err := s.ObjectStore.Store(api.ProtocolType_CKG.String(), cpk); err != nil {
+		return fmt.Errorf("error while storing the collective public key: %w", err)
+	}
+
+	return nil
+}
+
+// GetRelinearizationKey loads the relinearization key from the ObjectStore.
+func (s *Session) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
+	rlk := new(rlwe.RelinearizationKey)
+	if err := s.ObjectStore.Load(api.ProtocolType_RKG.String(), rlk); err != nil {
+		return nil, fmt.Errorf("error while loading the relinearization key: %w", err)
+	}
+
+	return rlk, nil
+}
+
+// SetRelinearizationKey stores the relinearization key into the ObjectStore.
+func (s *Session) SetRelinearizationKey(rlk *rlwe.RelinearizationKey) error {
+	if err := s.ObjectStore.Store(api.ProtocolType_RKG.String(), rlk); err != nil {
+		return fmt.Errorf("error while storing the relinearization key: %w", err)
+	}
+
+	return nil
+}
+
+// SetRotationKey loads the rotation key identified by the Galois element from the ObjectStore.
+func (s *Session) GetRotationKey(galEl uint64) (*rlwe.SwitchingKey, error) {
+	rtk := new(rlwe.SwitchingKey)
+	args := map[string]string{"GalEl": fmt.Sprint(galEl)}
+
+	if err := s.ObjectStore.Load(api.ProtocolType_RTG.String()+fmt.Sprint(args), rtk); err != nil {
+		return nil, fmt.Errorf("error while loading the rotation key with galEl %d: %w", galEl, err)
+	}
+
+	return rtk, nil
+}
+
+// SetRotationKey stores the rotation key identified by the Galois element into the ObjectStore.
+func (s *Session) SetRotationKey(rtk *rlwe.SwitchingKey, galEl uint64) error {
+	args := map[string]string{"GalEl": fmt.Sprint(galEl)}
+	log.Printf("saving %s\n", api.ProtocolType_RTG.String()+fmt.Sprint(args))
+
+	if err := s.ObjectStore.Store(api.ProtocolType_RTG.String()+fmt.Sprint(args), rtk); err != nil {
+		return fmt.Errorf("error while storing the rotation key with galEl %d: %w", galEl, err)
+	}
+
+	return nil
+}
+
+// GetOutputSk loads the output secret key from the ObjectStore.
+func (s *Session) GetOutputSk() (*rlwe.SecretKey, error) {
+	outputSk := rlwe.NewSecretKey(*s.Params)
+	if err := s.ObjectStore.Load(api.ProtocolType_SKG.String(), outputSk); err != nil {
+		return nil, fmt.Errorf("error while loading the output secret key: %w", err)
+	}
+
+	return outputSk, nil
+}
+
+// SetOuputSk stores the output secret key into the ObjectStore.
+func (s *Session) SetOuputSk(outputSk *rlwe.SecretKey) error {
+	if err := s.ObjectStore.Store(api.ProtocolType_SKG.String(), outputSk); err != nil {
+		return fmt.Errorf("error while storing the output secret key: %w", err)
+	}
+
+	return nil
+}
+
+// GetOutputPkForNode load the output public key for a node from the ObjectStore.
+func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists error) {
+	outputPk := rlwe.NewPublicKey(*s.Params)
+	indexStr := fmt.Sprintf("%s%v", api.ProtocolType_PK, map[string]string{"Sender": string(nid)})
+
+	if err := s.ObjectStore.Load(indexStr, outputPk); err != nil {
+		return nil, fmt.Errorf("error while loading the output public key of node %s: %w", nid, err)
+	}
+
+	return outputPk, nil
+}
+
+// SetOutputPkForNode stores the output public key for a node into the ObjectStore.
+func (s *Session) SetOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error {
+	indexStr := fmt.Sprintf("%s%v", api.ProtocolType_PK, map[string]string{"Sender": string(nid)})
+
+	if err := s.ObjectStore.Store(indexStr, outputPk); err != nil {
+		return fmt.Errorf("error while storing the output public key of node %s: %w", nid, err)
+	}
+
 	return nil
 }
 
@@ -350,46 +451,6 @@ func (s *Session) GetCRSForProtocol(pid ProtocolID) drlwe.CRS {
 		log.Fatal(err)
 	}
 	return prng
-}
-
-// StoreOuputSk stores the output secret key in the ObjectStore.
-func (s *Session) StoreOuputSk(outputSk *rlwe.SecretKey) error {
-	if err := s.ObjectStore.Store("outputSk", outputSk); err != nil {
-		return fmt.Errorf("error while storing the output secret key: %w", err)
-	}
-
-	return nil
-}
-
-// OutputSk loads the output secret key from the ObjectStore.
-func (s *Session) OutputSk() (*rlwe.SecretKey, error) {
-	outputSk := rlwe.NewSecretKey(*s.Params)
-
-	if err := s.ObjectStore.Load("outputSk", outputSk); err != nil {
-		return nil, fmt.Errorf("error while loading the output secret key: %w", err)
-	}
-
-	return outputSk, nil
-}
-
-// StoreOutputPkForNode stores the output public key for a node in the ObjectStore.
-func (s *Session) StoreOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error {
-	if err := s.ObjectStore.Store("outputPk-"+string(nid), outputPk); err != nil {
-		return fmt.Errorf("error while storing the output public key for node %s: %w", nid, err)
-	}
-
-	return nil
-}
-
-// GetOutputPkForNode load the output public key for a node from the ObjectStore.
-func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists error) {
-	outputPk := rlwe.NewPublicKey(*s.Params)
-
-	if err := s.ObjectStore.Load("outputPk-"+string(nid), outputPk); err != nil {
-		return nil, fmt.Errorf("error while loading the output public key for node %s: %w", nid, err)
-	}
-
-	return outputPk, nil
 }
 
 func (s *Session) Contains(nodeID NodeID) bool {

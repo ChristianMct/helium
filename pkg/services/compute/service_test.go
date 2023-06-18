@@ -621,11 +621,13 @@ func TestPeerEvalCircuit(t *testing.T) {
 					nodes[i].Node = node
 					nodes[i].Service = node.GetComputeService()
 					nodes[i].Session, _ = nodes[i].GetSessionFromID(sessionID)
-					err = nodes[i].Session.SetCollectivePublicKey(cpk)
-					if err != nil {
+					if err = nodes[i].Session.SetCollectivePublicKey(cpk); err != nil {
 						t.Fatal(err)
 					}
-					nodes[i].Session.Rlk = rlk
+					// nodes[i].Session.Rlk = rlk
+					if err = nodes[i].Session.SetRelinearizationKey(rlk); err != nil {
+						t.Fatal(err)
+					}
 					// nodes[i].Session.RegisterPkForNode("full-0", *recPk)
 				}
 

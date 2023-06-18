@@ -85,15 +85,6 @@ func (t Type) String() string {
 	return typeToString[t]
 }
 
-// ProtoID converts a protocol type into a string.
-func (t Type) ProtoID(galKeyCount ...uint64) string {
-	s := t.String()
-	if t == RTG {
-		return fmt.Sprintf("%s[%d]", s, galKeyCount)
-	}
-	return s
-}
-
 func (t Type) Share() LattigoShare {
 	switch t {
 	case SKG:
@@ -129,6 +120,19 @@ func (t Signature) String() string {
 		panic(err)
 	}
 	return string(s)
+}
+
+// ToObjectStore returns a string used to index the output of the protocol into the ObjectStore.
+func (t Signature) ToObjectStore() string {
+	if t.Args == nil {
+		t.Args = map[string]string{} // prevents different rep for nil and empty
+	}
+	s := fmt.Sprint(t.Type)
+	if len(t.Args) > 0 {
+		s += fmt.Sprint(t.Args)
+	}
+
+	return s
 }
 
 func (s Signature) Equals(other Signature) bool {
