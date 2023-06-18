@@ -22,5 +22,15 @@
 	"Rlk": [
 		"node-a",
 		"node-b"
+	],
+	"Pk": [
+		{
+			"Sender": "node-R",
+			"Receivers": [
+				"cloud",
+				"node-a",
+				"node-b"
+			]
+		}
 	]
 }

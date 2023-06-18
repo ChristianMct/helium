@@ -37,8 +37,8 @@ mkdir -p $LOG_DIR
 
 echo "STARTING PHASE 1..."
 
-docker compose --profile cloud up --detach
-docker compose --profile cloud logs -f > ${LOG_FILE_CLOUD} &
+docker compose --profile cloud --profile receiver up --detach
+docker compose --profile cloud --profile receiver logs -f > ${LOG_FILE_CLOUD} &
 sleep 1
 
 echo "FIRST PHASE \n\n" > ${LOG_FILE_CLIENTS}
