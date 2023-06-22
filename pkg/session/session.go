@@ -9,6 +9,7 @@ import (
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/session/objectstore"
 	"github.com/ldsec/helium/pkg/session/objectstore/badgerobjectstore"
+	"github.com/ldsec/helium/pkg/session/objectstore/hybridobjectstore"
 	"github.com/ldsec/helium/pkg/session/objectstore/memobjectstore"
 	"github.com/ldsec/helium/pkg/session/objectstore/nullobjectstore"
 	"github.com/ldsec/helium/pkg/utils"
@@ -227,12 +228,13 @@ func NewSession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe
 		break
 
 	case "badgerdb":
-		// TODO remove hardcoded manipulation of DB path.
-		sessParams.ObjectStoreConfig.DBPath += string(sess.NodeID)
-		// END TODO.
+		if sess.ObjectStore, err = badgerobjectstore.NewObjectStore(&sessParams.ObjectStoreConfig); err != nil {
+			return nil, err
+		}
+		break
 
-		sess.ObjectStore, err = badgerobjectstore.NewObjectStore(&sessParams.ObjectStoreConfig)
-		if err != nil {
+	case "hybrid":
+		if sess.ObjectStore, err = hybridobjectstore.NewObjectStore(&sessParams.ObjectStoreConfig); err != nil {
 			return nil, err
 		}
 		break

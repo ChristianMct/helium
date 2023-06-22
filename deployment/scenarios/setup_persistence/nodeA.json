@@ -14,7 +14,7 @@
         "Nodes": ["node-a", "node-b"],
 		"CRSKey": "bGF0dGlnMA==",
         "ObjectStoreConfig": {
-            "BackendName": "badgerdb",
+            "BackendName": "hybrid",
             "DBPath": "./data/db"            
         }
     }],
