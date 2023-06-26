@@ -83,7 +83,11 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 		for i, n := range test.SessionNodes() {
 			// computes the ideal secret-key for the test
 			sess[i], _ = n.GetSessionFromID("test-session")
-			test.Params.RingQP().AddLvl(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level(), sess[i].GetSecretKey().Value, test.SkIdeal.Value, test.SkIdeal.Value)
+			sk, err := sess[i].GetSecretKey()
+			if err != nil {
+				panic(err)
+			}
+			test.Params.RingQP().AddLvl(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level(), sk.Value, test.SkIdeal.Value, test.SkIdeal.Value)
 		}
 
 		if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {
@@ -91,7 +95,11 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 			thresholdizer := drlwe.NewThresholdizer(test.Params)
 			for i, ni := range test.SessionNodes() {
 				shares[ni.id] = make(map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
-				shamirPoly, _ := thresholdizer.GenShamirPolynomial(config.Session.T, sess[i].GetSecretKey())
+				sk, err := sess[i].GetSecretKey()
+				if err != nil {
+					panic(err)
+				}
+				shamirPoly, _ := thresholdizer.GenShamirPolynomial(config.Session.T, sk)
 				for _, nj := range test.SessionNodes() {
 					shares[ni.id][nj.id] = thresholdizer.AllocateThresholdSecretShare()
 					thresholdizer.GenShamirSecretShare(sess[i].SPKS[nj.ID()], shamirPoly, shares[ni.id][nj.id])

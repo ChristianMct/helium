@@ -161,7 +161,6 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 	rlk := new(rlwe.RelinearizationKey)
 	if se.cDesc.NeedRlk {
 		rlk, err = se.sess.GetRelinearizationKey()
-		// err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RKG}.String(), rlk)
 		if err != nil {
 			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
@@ -171,7 +170,6 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 	for galEl := range se.cDesc.GaloisKeys {
 		var err error
 		rtks.Keys[galEl], err = se.sess.GetRotationKey(galEl)
-		// err := se.sess.ObjectStore.Load(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(galEl, 10)}}.String(), rtks.Keys[galEl])
 		if err != nil {
 			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
@@ -288,8 +286,6 @@ func (se *fullEvaluatorContext) resolveRemoteInputs(ctx context.Context, ins uti
 	go func() {
 		for in := range ins {
 
-			// DEBUG
-			//log.Printf("[ResolveRemoteInputs] fetching %v", in)
 			var op pkg.Operand
 
 			inURL := pkg.NewURL(string(in))

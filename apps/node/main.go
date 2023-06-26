@@ -237,11 +237,12 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 			panic(err)
 		}
 	} else {
-		if a.sess.Sk == nil {
-			log.Printf("error while decrypting output: the session secret key is nil. Is this node (%s) the indended receiver?\n", a.node.ID())
+		sessSk, err := a.sess.GetSecretKey()
+		if err != nil {
+			log.Printf("error while decrypting output: the session secret key is not present. Is this node (%s) the indended receiver?\n", a.node.ID())
 			return
 		}
-		outputSk = a.sess.Sk
+		outputSk = sessSk
 	}
 
 	decryptor := bfv.NewDecryptor(bfvParams, outputSk)

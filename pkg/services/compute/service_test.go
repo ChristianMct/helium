@@ -294,12 +294,13 @@ func TestCloudEvalCircuit(t *testing.T) {
 				kg := rlwe.NewKeyGenerator(params)
 				sk := localtest.SkIdeal
 
-				clou.Session.Sk = sk.CopyNew()
+				if err := clou.Session.SetSecretKey(sk.CopyNew()); err != nil {
+					t.Fatal(err)
+				}
 				if err := clou.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew())); err != nil {
 					t.Fatal(err)
 				}
-				err := clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1))
-				if err != nil {
+				if err := clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1)); err != nil {
 					t.Fatal(err)
 				}
 
@@ -361,7 +362,11 @@ func TestCloudEvalCircuit(t *testing.T) {
 							cliSess, _ := client.GetSessionFromID(sessionID)
 							// _ = recSk
 							_ = cliSess
-							decryptor := bfv.NewDecryptor(bfvParams, cliSess.Sk)
+							sk, err := cliSess.GetSecretKey()
+							if err != nil {
+								return err
+							}
+							decryptor := bfv.NewDecryptor(bfvParams, sk)
 
 							ptdec := decryptor.DecryptNew(out[0].Ciphertext)
 							fmt.Println(decoder.DecodeUintNew(ptdec))
@@ -371,8 +376,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 					})
 				}
 
-				err = g.Wait()
-				if err != nil {
+				if err := g.Wait(); err != nil {
 					t.Fatal(err)
 				}
 			})
@@ -439,13 +443,13 @@ func TestCloudPCKS(t *testing.T) {
 				kg := rlwe.NewKeyGenerator(params)
 				sk := localtest.SkIdeal
 
-				clou.Session.Sk = sk.CopyNew()
-				err := clou.Session.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew()))
-				if err != nil {
+				if err := clou.Session.SetSecretKey(sk.CopyNew()); err != nil {
 					t.Fatal(err)
 				}
-				err = clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1))
-				if err != nil {
+				if err := clou.Session.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew())); err != nil {
+					t.Fatal(err)
+				}
+				if err := clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1)); err != nil {
 					t.Fatal(err)
 				}
 
@@ -456,15 +460,14 @@ func TestCloudPCKS(t *testing.T) {
 				recSk, recPk := kg.GenKeyPair()
 
 				// save the secret key of the external node in its objectstore (emulate setup phase)
-				err = external_0Sess.SetOuputSk(recSk)
-				if err != nil {
+				if err := external_0Sess.SetOuputSk(recSk); err != nil {
 					t.Fatal(err)
 				}
 
-				if err = clou.Session.SetOutputPkForNode("external-0", recPk); err != nil {
+				if err := clou.Session.SetOutputPkForNode("external-0", recPk); err != nil {
 					t.Fatal(err)
 				}
-				if err = external_0Sess.SetOutputPkForNode("external-0", recPk); err != nil {
+				if err := external_0Sess.SetOutputPkForNode("external-0", recPk); err != nil {
 					t.Fatal(err)
 				}
 
@@ -547,8 +550,7 @@ func TestCloudPCKS(t *testing.T) {
 					return nil
 				})
 
-				err = g.Wait()
-				if err != nil {
+				if err := g.Wait(); err != nil {
 					t.Fatal(err)
 				}
 			})
@@ -612,11 +614,9 @@ func TestPeerEvalCircuit(t *testing.T) {
 					if err = nodes[i].Session.SetCollectivePublicKey(cpk); err != nil {
 						t.Fatal(err)
 					}
-					// nodes[i].Session.Rlk = rlk
 					if err = nodes[i].Session.SetRelinearizationKey(rlk); err != nil {
 						t.Fatal(err)
 					}
-					// nodes[i].Session.RegisterPkForNode("full-0", *recPk)
 				}
 
 				encryptor := bfv.NewEncryptor(bfvParams, cpk)
@@ -653,7 +653,10 @@ func TestPeerEvalCircuit(t *testing.T) {
 						}
 						if len(out) > 0 {
 							sess, _ := node.GetSessionFromID(sessionID)
-							nodeSK := sess.GetSecretKey()
+							nodeSK, err := sess.GetSecretKey()
+							if err != nil {
+								t.Fatal(err)
+							}
 							// _ = recSk
 							_ = nodeSK
 							ptdec := bfv.NewDecryptor(bfvParams, nodeSK).DecryptNew(out[0].Ciphertext)

@@ -179,9 +179,6 @@ type SignatureParameters struct {
 
 // CreateNewSession takes an int id and creates a new rlwe session with this node and its peers and a sessionID constructed using the given id.
 func (node *Node) CreateNewSession(sessParams pkg.SessionParameters) (sess *pkg.Session, err error) {
-	// sessionID = "p2p" + node.addr + "." + fmt.Sprint(id)
-	// peerAddr := getAddrOfPeers(node.peers)
-
 	fheParams, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams)
 	if err != nil {
 		return
@@ -192,12 +189,14 @@ func (node *Node) CreateNewSession(sessParams pkg.SessionParameters) (sess *pkg.
 	}
 
 	var sk *rlwe.SecretKey
+
 	// node generates its secret-key for the session
 	if utils.NewSet(sessParams.Nodes).Contains(node.id) {
 		kg := rlwe.NewKeyGenerator(fheParams)
 		sk = kg.GenSecretKey()
 	}
 
+	// note: this creates a session with no secret key for nodes outside the session.
 	sess, err = node.sessions.NewRLWESession(&sessParams, &fheParams, sk, sessParams.CRSKey, node.id, sessParams.Nodes, sessParams.T, sessParams.ShamirPks, sessParams.ID)
 	if err != nil {
 		return sess, err
