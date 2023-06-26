@@ -113,9 +113,11 @@ var pirN = func(N int, ec compute.EvaluationContext) error {
 	return nil
 }
 
+// psiN computes the Private Set Intersection among N parties where N is a power of two.
 var psiN = func(N int, ec compute.EvaluationContext) error {
-	if N%2 != 0 {
-		return fmt.Errorf("psiN not implemented for odd N = %d", N)
+	log2N := math.Log2(float64(N))
+	if log2N != float64(int(log2N)) {
+		return fmt.Errorf("psiN only implemented for powers of two, N = %d", N)
 	}
 
 	inOps := make(chan pkg.Operand, N)
@@ -127,7 +129,7 @@ var psiN = func(N int, ec compute.EvaluationContext) error {
 	}
 
 	// multiplication depth
-	numLevels := int(math.Log2(float64(N))) // 3
+	numLevels := int(log2N)
 
 	chanForLevel := make([]chan pkg.Operand, numLevels+1)
 	chanForLevel[0] = inOps
@@ -135,8 +137,8 @@ var psiN = func(N int, ec compute.EvaluationContext) error {
 
 	for level := 1; level <= numLevels; level++ {
 		level := level
-		numMulForLevel := int(math.Pow(2, float64((numLevels-1)-(level-1)))) // 4, 2, 1
-		chanForLevel[level] = make(chan pkg.Operand, numMulForLevel)         // 4, 2, 1
+		numMulForLevel := int(math.Pow(2, float64((numLevels-1)-(level-1))))
+		chanForLevel[level] = make(chan pkg.Operand, numMulForLevel)
 		for i := 0; i < numMulForLevel; i++ {
 			go func() {
 				ev1 := ec.ShallowCopy()
@@ -167,6 +169,7 @@ var psiN = func(N int, ec compute.EvaluationContext) error {
 	return nil
 }
 
+// testCircuits is a map mapping a circuitID string to each circuit function.
 var testCircuits = map[string]compute.Circuit{
 	"identity-1": func(ec compute.EvaluationContext) error {
 		opIn := ec.Input("//node-0/in-0")

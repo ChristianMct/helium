@@ -295,13 +295,9 @@ func TestCloudEvalCircuit(t *testing.T) {
 				sk := localtest.SkIdeal
 
 				clou.Session.Sk = sk.CopyNew()
-				// clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
-				// err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.CKG}.String(), kg.GenPublicKey(sk.CopyNew()))
 				if err := clou.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew())); err != nil {
 					t.Fatal(err)
 				}
-				// clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
-				// err := clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
 				err := clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1))
 				if err != nil {
 					t.Fatal(err)
@@ -310,10 +306,6 @@ func TestCloudEvalCircuit(t *testing.T) {
 				localtest.Start()
 
 				decoder := bfv.NewEncoder(bfvParams)
-				// idealDecryptor := bfv.NewDecryptor(bfvParams, sk.CopyNew())
-
-				// recSk, recPk := kg.GenKeyPair()
-				// clou.Session.RegisterPkForNode("light-0", *recPk)
 
 				for i := range clients {
 					clients[i].Encoder = decoder.ShallowCopy()
@@ -322,8 +314,6 @@ func TestCloudEvalCircuit(t *testing.T) {
 						t.Fatal(err)
 					}
 					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, cpk)
-					// cliSess, _ := clients[i].GetSessionFromID(sessionID)
-					// cliSess.RegisterPkForNode("light-0", *recPk)
 				}
 
 				var cSign = Signature{
@@ -392,6 +382,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 }
 
+// TestCloudPCKS runs the compute phase and executes the psi-2-PCKS circuit to test the sending of the external receiver public key.
 func TestCloudPCKS(t *testing.T) {
 
 	for label, cDef := range TestCircuits {
@@ -449,13 +440,10 @@ func TestCloudPCKS(t *testing.T) {
 				sk := localtest.SkIdeal
 
 				clou.Session.Sk = sk.CopyNew()
-				// clou.Session.PublicKey = kg.GenPublicKey(sk.CopyNew())
 				err := clou.Session.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew()))
 				if err != nil {
 					t.Fatal(err)
 				}
-				// clou.Session.Rlk = kg.GenRelinearizationKey(sk.CopyNew(), 1)
-				// err = clou.Session.ObjectStore.Store(protocols.Signature{Type: protocols.RKG}.String(), kg.GenRelinearizationKey(sk.CopyNew(), 1))
 				err = clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1))
 				if err != nil {
 					t.Fatal(err)
