@@ -47,6 +47,7 @@ type App struct {
 	sess *pkg.Session
 }
 
+// main is the entrypoint of the node application.
 // Instructions to run: go run main.go node.go -config [nodeconfigfile].
 func main() {
 
@@ -258,11 +259,7 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 	if err != nil {
 		panic(err)
 	}
-	// cpk := new(rlwe.PublicKey)
-	// err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
-	// if err != nil {
-	// 	panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
-	// }
+
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
 
 	// craft input
@@ -275,7 +272,6 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 	inPt := encoder.EncodeNew(inData[:], bfvParams.MaxLevel())
 	inCt := encryptor.EncryptNew(inPt)
 
-	// "//nodeID//circuitID/inputID"
 	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
 	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
 
@@ -289,11 +285,7 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder
 	if err != nil {
 		panic(err)
 	}
-	// cpk := new(rlwe.PublicKey)
-	// err := a.sess.ObjectStore.Load(protocols.Signature{Type: protocols.CKG}.String(), cpk)
-	// if err != nil {
-	// 	panic(fmt.Errorf("%s | CPK was not found for node %s: %s", a.sess.NodeID, a.sess.NodeID, err))
-	// }
+
 	encryptor := bfv.NewEncryptor(bfvParams, cpk)
 
 	// craft input
@@ -315,7 +307,6 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder
 	inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
 	inCt := encryptor.EncryptNew(inPt)
 
-	// "//nodeID//circuitID/inputID"
 	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
 	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
 

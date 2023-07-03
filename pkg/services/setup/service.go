@@ -193,6 +193,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 	return nil
 }
 
+// filterSignatureList splits a SignatureList into two lists based on the presence of the protocol's output in the ObjectStore.
 func (s *Service) filterSignatureList(sl SignatureList, sess *pkg.Session) (noResult, hasResult SignatureList) {
 	noResult, hasResult = make(SignatureList, 0), make(SignatureList, 0)
 	for _, sig := range sl {
@@ -209,7 +210,8 @@ func (s *Service) filterSignatureList(sl SignatureList, sess *pkg.Session) (noRe
 	return
 }
 
-// registerToAggregatorsForSetup registers the caller to all the aggregators and returns a channel where protocols updates are sent.
+// registerToAggregatorsForSetup registers the caller to all the aggregator.
+// Returns a channel where protocols updates are sent.
 func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeID], outCtx context.Context) <-chan protocols.StatusUpdate {
 	// channel that carries protocol updates (for all protocols).
 	protosUpdatesChan := make(chan protocols.StatusUpdate)
@@ -256,8 +258,8 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 
 const parallelParticipation int = 10
 
-// participate makes every participant participate in the protocol
-// returns a channel where true is sent when all participations are done.
+// participate makes every participant participate in the protocol.
+// Returns a channel where true is sent when all participations are done.
 func (s *Service) participate(ctx context.Context, sigList SignatureList, protoToRun chan protocols.Descriptor, sess *pkg.Session) <-chan bool {
 
 	var wg sync.WaitGroup
@@ -315,6 +317,8 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 
 const parallelAggregation int = 10
 
+// aggregate makes every aggregator aggregate the shares for the required protocols.
+// Returns a channel where true is sent when all aggregations are done.
 func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descriptor, outputs chan struct {
 	protocols.Descriptor
 	protocols.Output
@@ -440,8 +444,8 @@ func (s *Service) saveAggOut(aggOut protocols.AggregationOutput,
 	s.outLock.Unlock()
 }
 
-// queryForOutput accepts a channel where to send outputs
-// and returns a channel `outQueriesDone` where true will be sent when all the outputs for a protocol.
+// queryForOutput makes participants of a protocol query the cloud for that protocol's output.
+// Returns a channel where true is sent when all queries are done.
 func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureList, sigToReceiverSet ReceiversMap, protoCompleted <-chan protocols.Descriptor, sess *pkg.Session, outputs chan<- struct {
 	protocols.Descriptor
 	protocols.Output
@@ -496,6 +500,7 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 	return outQueriesDone
 }
 
+// storeProtocolOutput stores the protocol's output in the ObjectStore of the node.
 func (s *Service) storeProtocolOutput(outputs chan struct {
 	protocols.Descriptor
 	protocols.Output

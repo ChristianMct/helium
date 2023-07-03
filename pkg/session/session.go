@@ -152,11 +152,6 @@ type Session struct {
 	CRSKey []byte
 	Params *rlwe.Parameters
 
-	// Sk *rlwe.SecretKey
-	// *rlwe.PublicKey
-	// *rlwe.RelinearizationKey
-	// *rlwe.EvaluationKey
-
 	mutex sync.RWMutex
 }
 
