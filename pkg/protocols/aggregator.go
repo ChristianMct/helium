@@ -40,6 +40,14 @@ func (a *shareAggregator) PutShare(share Share) (bool, error) {
 	return a.Complete(), nil
 }
 
+func (a *shareAggregator) Expected() utils.Set[pkg.NodeID] {
+	return a.expected.Copy()
+}
+
+func (a *shareAggregator) Missing() utils.Set[pkg.NodeID] {
+	return a.expected.Diff(a.share.AggregateFor)
+}
+
 func (a *shareAggregator) GetAggregatedShare() Share {
 	if !a.Complete() {
 		return a.share.Copy()

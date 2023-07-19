@@ -40,8 +40,16 @@ func (s Set[T]) AddAll(el Set[T]) {
 	}
 }
 
-func (s Set[T]) Remove(el T) {
-	delete(s, el)
+func (s Set[T]) Remove(el ...T) {
+	for _, e := range el {
+		delete(s, e)
+	}
+}
+
+func (s Set[T]) Diff(other Set[T]) Set[T] {
+	sc := s.Copy()
+	s.Remove(other.Elements()...)
+	return sc
 }
 
 func (s Set[T]) Contains(el T) bool {

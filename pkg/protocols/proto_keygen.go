@@ -380,8 +380,7 @@ func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transpor
 			return AggregationOutput{Round: []Share{incShare}}
 			// share.
 		case <-ctx.Done():
-			log.Printf("timeout while aggregating shares")
-			return AggregationOutput{Error: fmt.Errorf("timeout while aggregating shares")}
+			return AggregationOutput{Error: fmt.Errorf("%s | timeout while aggregating shares for protocol %s, missing: %v", p.self, p.ID(), p.Participants)}
 		}
 	}
 
@@ -573,8 +572,10 @@ func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 		select {
 		case aggR1 = <-env.IncomingShares():
 		case <-ctx.Done():
-			log.Println("timeout while aggregating shares")
+			err = fmt.Errorf("%s | timeout while waiting for round 1 aggregated share for protocol %s", p.self, p.ID())
+			return AggregationOutput{Error: err}
 		}
+		log.Printf("%s | got round 1 aggregated share\n", p.self)
 	}
 
 	if p.shareProviders.Contains(p.self) {
@@ -684,7 +685,7 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 				return nil
 			}
 		case <-ctx.Done():
-			return fmt.Errorf("timeout while aggregating shares")
+			return fmt.Errorf("%s | timeout while aggregating shares for protocol %s, missing: %v", p.self, p.ID(), aggregator.Missing())
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/protocols"
@@ -14,6 +15,9 @@ import (
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
+
+const parallelAggregation int = 10
+const parallelParticipation int = 10
 
 type Service struct {
 	self pkg.NodeID
@@ -90,17 +94,6 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		}
 	}
 
-	// if the current node is an aggregator, create a protocol description
-	// for each signature to run, with itself as aggregator and undefined plist.
-	// TODO: assumes all aggregators run the required protocol
-	pdAggs := make(chan protocols.Descriptor, len(sigListNoResult))
-	if aggregators.Contains(s.self) {
-		for i, sig := range sigListNoResult {
-			pdAggs <- protocols.Descriptor{ID: pkg.ProtocolID(fmt.Sprintf("%s-%d", sig.Type, i)), Signature: sig, Aggregator: s.self}
-		}
-	}
-	close(pdAggs)
-
 	// 2. REGISTRATION: register for setup to the aggregator
 	ctx := pkg.NewContext(&sessID, nil)
 	outCtx := pkg.GetOutgoingContext(context.Background(), s.self)
@@ -132,7 +125,8 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 			proto, protoExists := s.runningProtos[incShare.ProtocolID]
 			s.runningProtosMu.RUnlock()
 			if !protoExists {
-				panic("protocol is not running")
+				log.Println(fmt.Errorf("%s | dropped share from sender %s: protocol %s is not running", s.self, incShare.From, incShare.ProtocolID))
+				continue
 			}
 			// sends received share to the incoming channel of the destination protocol.
 			proto.incoming <- incShare
@@ -170,7 +164,14 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		protocols.Descriptor
 		protocols.Output
 	})
-	allAggsDone := s.aggregate(ctx, pdAggs, outputs, sess)
+	var allAggsDone <-chan bool
+	if aggregators.Contains(s.self) {
+		allAggsDone = s.aggregate(ctx, sigListNoResult, outputs, sess)
+	} else {
+		nop := make(chan bool)
+		close(nop)
+		allAggsDone = nop
+	}
 
 	// 4. FINALIZE: query completed protocols for output
 	outQueriesDone := s.queryForOutput(ctx, sigListNoResult, sigToReceiverSet, protoCompleted, sess, outputs)
@@ -256,8 +257,6 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 	return protosUpdatesChan
 }
 
-const parallelParticipation int = 10
-
 // participate makes every participant participate in the protocol.
 // Returns a channel where true is sent when all participations are done.
 func (s *Service) participate(ctx context.Context, sigList SignatureList, protoToRun chan protocols.Descriptor, sess *pkg.Session) <-chan bool {
@@ -272,24 +271,16 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 					panic(fmt.Errorf("%s | [Participate] error: protocol descriptor %s signature %s is not in the signature list", s.self, pd, pd.Signature))
 				}
 
-				s.runningProtosMu.RLock()
+				s.runningProtosMu.Lock()
 				_, running := s.runningProtos[pd.ID]
-				s.runningProtosMu.RUnlock()
 				// already running, next pd.
 				if running {
+					s.runningProtosMu.Unlock()
 					continue
 				}
 
-				// DEBUG
-				log.Printf("%s | [Participate] Making new protocol pd: %v\n", s.self, pd)
-				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
-				if err != nil {
-					panic(err)
-				}
-
-				inc := make(chan protocols.Share)
 				// add protocols to running protocols
-				s.runningProtosMu.Lock()
+				inc := make(chan protocols.Share)
 				s.runningProtos[pd.ID] = struct {
 					pd       protocols.Descriptor
 					incoming chan protocols.Share
@@ -299,7 +290,19 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 				}
 				s.runningProtosMu.Unlock()
 
-				<-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
+				// DEBUG
+				log.Printf("%s | [Participate] Making new protocol pd: %v\n", s.self, pd)
+				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
+				if err != nil {
+					panic(err)
+				}
+
+				ctxdl, _ := context.WithTimeout(ctx, 2*time.Second)
+				aggOut := <-proto.Aggregate(ctxdl, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
+				if aggOut.Error != nil {
+					//panic(aggOut.Error)
+					log.Println(aggOut.Error)
+				}
 			}
 			wg.Done()
 		}()
@@ -315,14 +318,27 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 	return allPartsDone
 }
 
-const parallelAggregation int = 10
-
 // aggregate makes every aggregator aggregate the shares for the required protocols.
 // Returns a channel where true is sent when all aggregations are done.
-func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descriptor, outputs chan struct {
+func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs chan struct {
 	protocols.Descriptor
 	protocols.Output
 }, sess *pkg.Session) <-chan bool {
+
+	// if the current node is an aggregator, create a protocol description
+	// for each signature to run, with itself as aggregator and undefined plist.
+	// TODO: assumes all aggregators run the required protocol
+	pdAggs := make(chan protocols.Descriptor, len(sigList))
+	wgSig := sync.WaitGroup{}
+	wgSig.Add(len(sigList))
+	for i, sig := range sigList {
+		pdAggs <- protocols.Descriptor{ID: pkg.ProtocolID(fmt.Sprintf("%s-%d", sig.Type, i)), Signature: sig, Aggregator: s.self}
+	}
+
+	go func() {
+		wgSig.Wait()
+		close(pdAggs)
+	}()
 
 	var wg sync.WaitGroup
 	for w := 0; w < parallelAggregation; w++ {
@@ -347,8 +363,10 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 						panic(err)
 					}
 					partSet.AddAll(online)
+
 					// select T parties at random
 					pd.Participants = pkg.GetRandomClientSlice(sess.T, partSet.Elements())
+					//pd.Participants = pkg.GetRandomClientSlice(sess.T, sess.Nodes) // Fault injection
 
 				// CASE N
 				default:
@@ -384,10 +402,17 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 
 				// blocking, returns the result of the aggregation.
 				log.Printf("%s | [Aggregate] Waiting to finish aggregation for pd: %v\n", s.self, pd)
+				ctxAgg, _ := context.WithTimeout(ctx, time.Second)
 				// log.Printf("%s | [Aggregate] Service is %v", s.self, s)
-				aggOut := <-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
+				aggOut := <-proto.Aggregate(ctxAgg, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
-					panic(aggOut.Error)
+					//panic(aggOut.Error)
+					log.Println(aggOut.Error)
+					pdAggs <- protocols.Descriptor{ID: pd.ID + "-R", Signature: pd.Signature, Aggregator: s.self}
+					s.runningProtosMu.Lock()
+					delete(s.runningProtos, pd.ID)
+					s.runningProtosMu.Unlock()
+					continue
 				}
 				log.Printf("%s | [Aggregate] Finished aggregating for pd: %v\n", s.self, pd)
 
@@ -413,6 +438,8 @@ func (s *Service) aggregate(ctx context.Context, pdAggs chan protocols.Descripto
 					pd,
 					out,
 				}
+
+				wgSig.Done()
 			}
 			wg.Done()
 		}()
