@@ -1,0 +1,18 @@
+{
+    "ID": "cloud",
+    "Address": ":40000",
+    "TLSConfig": {
+        "InsecureChannels": true
+    },
+    "SessionParameters": [{
+        "ID": "test-session",
+        "T": 2,
+        "RLWEParams": {"LogN":13,"Q":[18014398508400641,18014398510645249,18014398510661633],"P":[36028797018652673]},
+        "Nodes": ["node-0", "node-1", "node-2"],
+		"CRSKey": "bGF0dGlnMA==",
+        "ObjectStoreConfig": {
+            "BackendName": "mem"          
+        }
+    }],
+    "SignatureParameters": {"Type": 1}
+}

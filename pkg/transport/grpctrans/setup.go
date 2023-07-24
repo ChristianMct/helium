@@ -220,16 +220,14 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 	select {
 	case <-t.outgoingProtocolUpdatesDone:
 	case <-peer.protoUpdateStreamDone:
+	case <-stream.Context().Done():
 	}
-
-	log.Printf("%s | peer %v unregistered\n", t.id, peerID)
 
 	t.mPeers.Lock()
 	peer.connected = false
 	peer.protoUpdateStream = nil
 	t.mPeers.Unlock()
-
-	return nil
+	return t.srvHandler.Unregister(transport.Peer{PeerID: peerID})
 }
 
 func (t *setupTransport) GetAggregationOutput(ctx context.Context, pid *api.ProtocolID) (*api.Aggregation, error) {

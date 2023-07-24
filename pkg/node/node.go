@@ -11,6 +11,7 @@ import (
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
 	"github.com/ldsec/helium/pkg/utils"
+	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -189,17 +190,26 @@ func (node *Node) CreateNewSession(sessParams pkg.SessionParameters) (sess *pkg.
 	}
 
 	var sk *rlwe.SecretKey
+	var tsk *drlwe.ShamirSecretShare
 
 	// node generates its secret-key for the session
 	if utils.NewSet(sessParams.Nodes).Contains(node.id) {
-		kg := rlwe.NewKeyGenerator(fheParams)
-		sk = kg.GenSecretKey()
+		// kg := rlwe.NewKeyGenerator(fheParams)
+		// sk = kg.GenSecretKey()
+		sk, tsk, err = pkg.GetTestSecretKeys(sessParams, node.id) // TODO: locally generated keys
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	// note: this creates a session with no secret key for nodes outside the session.
 	sess, err = node.sessions.NewRLWESession(&sessParams, &fheParams, sk, sessParams.CRSKey, node.id, sessParams.Nodes, sessParams.T, sessParams.ShamirPks, sessParams.ID)
 	if err != nil {
 		return sess, err
+	}
+
+	if utils.NewSet(sessParams.Nodes).Contains(node.id) {
+		sess.SetTSK(tsk) // TODO: locally generated keys
 	}
 
 	log.Printf("Node %s | created rlwe session with id: %s and nodes: %s \n", node.id, sess.ID, sess.Nodes)

@@ -133,7 +133,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-
+		panic("NO")
 		// infer setup description
 		app.sd, err = setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cLabel))
 		if err != nil {

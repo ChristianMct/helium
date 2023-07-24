@@ -237,7 +237,7 @@ func TestSkinnyCloudAssistedSetup(t *testing.T) {
 					HelperNodes:      1, // the cloud
 					LightNodes:       ts.N,
 					Session:          sessParams,
-					DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+					DoThresholdSetup: false, // no t-out-of-N TSK gen in the cloud-based model yet
 				}
 				localTest := node.NewLocalTest(testConfig)
 				defer func() {

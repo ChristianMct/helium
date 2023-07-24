@@ -181,7 +181,7 @@ func (st *ShareTransport) handleShareStream(peerID pkg.NodeID, stream ShareStrea
 		for {
 			incShare, err := stream.Recv()
 			if err != nil {
-				if !errors.Is(err, io.EOF) {
+				if !errors.Is(err, io.EOF) && status.Code(err) != codes.Canceled {
 					log.Printf("%s | error while receiving share: %v", st.id, err)
 				}
 				break
@@ -194,7 +194,7 @@ func (st *ShareTransport) handleShareStream(peerID pkg.NodeID, stream ShareStrea
 			incoming <- s
 		}
 	}()
-	log.Printf("%s | handling stream with %v\n", st.id, peerID)
+	//log.Printf("%s | handling stream with %v\n", st.id, peerID)
 	err := <-streamErr
 	return err
 }

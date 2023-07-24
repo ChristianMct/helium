@@ -78,8 +78,6 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		panic("test session does not exist")
 	}
 
-	log.Printf("%s | Setup.Execute parameters\nsd: %v\nnl: %v\nsess: %v\n", s.self, sd, nl, sess)
-
 	// 1. INITIALIZATION: generate the list of protocols signatures to execute and relative receivers
 	sigList, sigToReceiverSet := DescriptionToSignatureList(sd)
 
@@ -130,6 +128,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 			}
 			// sends received share to the incoming channel of the destination protocol.
 			proto.incoming <- incShare
+			log.Println(fmt.Errorf("%s | received share from sender %s for protocol %s", s.self, incShare.From, incShare.ProtocolID))
 		}
 	}()
 
@@ -297,7 +296,7 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 					panic(err)
 				}
 
-				ctxdl, _ := context.WithTimeout(ctx, 2*time.Second)
+				ctxdl, _ := context.WithTimeout(ctx, 10*time.Second)
 				aggOut := <-proto.Aggregate(ctxdl, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					//panic(aggOut.Error)
@@ -402,7 +401,13 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 
 				// blocking, returns the result of the aggregation.
 				log.Printf("%s | [Aggregate] Waiting to finish aggregation for pd: %v\n", s.self, pd)
-				ctxAgg, _ := context.WithTimeout(ctx, time.Second)
+				var timeout time.Duration
+				if proto.Desc().Type == protocols.RKG {
+					timeout = 3 * time.Second
+				} else {
+					timeout = 10 * time.Second
+				}
+				ctxAgg, _ := context.WithTimeout(ctx, timeout)
 				// log.Printf("%s | [Aggregate] Service is %v", s.self, s)
 				aggOut := <-proto.Aggregate(ctxAgg, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
@@ -569,7 +574,19 @@ func (s *Service) Register(peer transport.Peer) error {
 	s.cPeers.L.Unlock()
 	s.cPeers.Broadcast()
 	log.Printf("%s | peer %v registered for setup\n", s.self, peer.ID())
-	// TODO unregistering
+	return nil
+}
+
+func (s *Service) Unregister(peer transport.Peer) error {
+	s.cPeers.L.Lock()
+	defer s.cPeers.L.Unlock()
+	if _, exists := s.peers[peer.ID()]; !exists {
+		log.Printf("%s | trying to unregister unregistered peer %s", s.self, peer.ID())
+		return nil
+	}
+	delete(s.peers, peer.ID())
+	s.cPeers.Broadcast()
+	log.Printf("%s | peer %v unregistered\n", s.self, peer.ID())
 	return nil
 }
 

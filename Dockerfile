@@ -19,14 +19,25 @@ RUN CGO_ENABLED=0 go build ./apps/node
 #########################################
 #  Image                                #
 #########################################
-FROM alpine:3.15
+FROM ubuntu:latest
 
 WORKDIR /helium
 
+# RUN apk add --no-cache bash
+# RUN apk add --no-cache iproute2-tc
+# RUN apk add --no-cache iperf3
+# RUN apk add --no-cache git
+
+RUN apt update
+RUN apt install -y iperf3 git iproute2 kmod
+
+RUN git clone https://github.com/magnific0/wondershaper.git
+
+COPY deployment/apps/startnode.sh /helium/startnode.sh
 COPY --from=builder /helium/node /helium/node
 
-RUN mkdir /lib64 && ln -s /lib/libc.musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2
+#RUN mkdir /lib64 && ln -s /lib/libc.musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2
 
 EXPOSE 40000
 
-ENTRYPOINT [ "/helium/node" ]
+ENTRYPOINT [ "/helium/startnode.sh" ]

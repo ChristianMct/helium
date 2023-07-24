@@ -83,6 +83,9 @@ type SetupServiceHandler interface {
 	// Register is called by the transport when a new peer register itself for the setup.
 	Register(Peer) error
 
+	// Unregister is called by the transport when a peer is unregistered from the setup.
+	Unregister(Peer) error
+
 	// GetProtocolStatus returns the node's list of protocol along with their status.
 	GetProtocolStatus() []protocols.StatusUpdate
 
