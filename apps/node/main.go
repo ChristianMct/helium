@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bfv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

@@ -16,19 +16,15 @@ services:
     image: heliummpc/helium:latest
     container_name: node-0
     command: -docompute=false
-    privileged: true
     cap_add:
-      - ALL
-    labels:
-      - com.docker-tc.enabled=1
-      - com.docker-tc.limit=100kbps
-      - com.docker-tc.delay=100ms
+      - NET_ADMIN
+    environment:
+      - RATE_LIMIT=5mbit
     volumes:
       - ../node0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
       - ../compute.json:/helium/config/compute.json
       - ./nodelist.json:/helium/config/nodelist.json
-      - /lib/modules:/lib/modules
 
       # Persistent data across container reboots.
       # - node-a-data:/helium/data
@@ -38,10 +34,10 @@ services:
     image: heliummpc/helium:latest
     container_name: node-1
     command: -docompute=false
-    labels:
-      - com.docker-tc.enabled=1
-      - com.docker-tc.limit=100kbps
-      - com.docker-tc.delay=100ms
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - RATE_LIMIT=5mbit
     volumes:
       - ../node1.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
@@ -55,10 +51,10 @@ services:
     image: heliummpc/helium:latest
     container_name: node-2
     command: -docompute=false
-    labels:
-      - com.docker-tc.enabled=1
-      - com.docker-tc.limit=100kbps
-      - com.docker-tc.delay=100ms
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - RATE_LIMIT=5mbit
     volumes:
       - ../node2.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json

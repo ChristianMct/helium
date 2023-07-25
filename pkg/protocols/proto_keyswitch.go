@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
@@ -20,7 +20,7 @@ type keySwitchProtocol struct {
 	input     *rlwe.Ciphertext
 }
 
-func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (KeySwitchInstance, error) {
+func NewKeyswitchProtocol(params rlwe.Parameters, pd Descriptor, sk *rlwe.SecretKey, outputKey OutputKey, pid pkg.ProtocolID, nid pkg.NodeID) (KeySwitchInstance, error) {
 
 	if _, hasArg := pd.Args["target"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: target")
@@ -34,21 +34,17 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (
 	ks.target = pkg.NodeID(target)
 	ks.inputChan = make(chan *rlwe.Ciphertext, 1)
 
-	ks.protocol = newProtocol(pd, sess, id)
+	ks.protocol = newProtocol(params, pd, sk, pid, nid)
 	var err error
 	switch pd.Type {
 	case CKS:
 		return nil, fmt.Errorf("generic standalone CKS protocol not supported yet") // TODO
 	case DEC:
-		ks.proto, err = NewCKSProtocol(*sess.Params, pd.Args)
-		ks.outputKey = rlwe.NewSecretKey(*sess.Params) // target key is zero for decryption
+		ks.proto, err = NewCKSProtocol(params, pd.Args)
+		ks.outputKey = rlwe.NewSecretKey(params) // target key is zero for decryption
 	case PCKS:
-		// targetPk, exists := sess.GetPkForNode(ks.target)
-		// if !exists {
-		// 	return nil, fmt.Errorf("no pk for node with id %s", target)
-		// }
-		ks.proto, err = NewPCKSProtocol(*sess.Params, pd.Args)
-		// ks.outputKey = &targetPk
+		ks.proto, err = NewPCKSProtocol(params, pd.Args)
+		ks.outputKey = outputKey
 	}
 	if err != nil {
 		ks = nil
@@ -56,15 +52,15 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (
 	return ks, nil
 }
 
-func (p *keySwitchProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
+func (p *keySwitchProtocol) Aggregate(ctx context.Context, env Transport) chan AggregationOutput {
 	agg := make(chan AggregationOutput, 1)
 	go func() {
-		agg <- p.aggregate(ctx, session, env)
+		agg <- p.aggregate(ctx, env)
 	}()
 	return agg
 }
 
-func (p *keySwitchProtocol) aggregate(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
+func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) AggregationOutput {
 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
 
 	// part := utils.NewSet(p.Descriptor.Participants) // TODO: reads from protomap for now
@@ -89,18 +85,7 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, session *pkg.Session,
 		if p.Type == DEC {
 			skGroup.Add(p.target)
 		}
-		sk, errSk := session.SecretKeyForGroup(skGroup.Elements())
-		if errSk != nil {
-			return AggregationOutput{Error: errSk}
-		}
-		if p.Type == PCKS {
-			var err error
-			p.outputKey, err = session.GetOutputPkForNode(p.target)
-			if err != nil {
-				return AggregationOutput{Error: fmt.Errorf("no pk for node with ID %s", p.target)}
-			}
-		}
-		errGen := p.proto.GenShare(sk, p.outputKey, p.input, share)
+		errGen := p.proto.GenShare(p.sk, p.outputKey, p.input, share)
 		if errGen != nil {
 			panic(errGen)
 		}

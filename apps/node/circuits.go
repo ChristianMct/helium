@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/services/compute"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/bfv"
 )
 

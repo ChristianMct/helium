@@ -5,9 +5,9 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/compute"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 )
 

@@ -6,17 +6,18 @@ import (
 	"fmt"
 	"log"
 
-	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
+	lattigoUtils "github.com/tuneinsight/lattigo/v4/utils"
 )
 
 type Descriptor struct {
 	ID pkg.ProtocolID
 	Signature
-	Aggregator   pkg.NodeID
 	Participants []pkg.NodeID
+	Aggregator   pkg.NodeID
 }
 
 type ShareDescriptor struct {
@@ -53,7 +54,7 @@ type Instance interface {
 	ID() pkg.ProtocolID
 	Desc() Descriptor
 
-	Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput
+	Aggregate(ctx context.Context, env Transport) chan AggregationOutput
 	Output(AggregationOutput) chan Output
 }
 
@@ -153,12 +154,15 @@ type protocol struct {
 	Descriptor
 
 	self pkg.NodeID
+	sk   *rlwe.SecretKey
 
 	shareProviders utils.Set[pkg.NodeID]
 }
 
 type skgProtocol struct {
 	*protocol
+	T     int
+	spks  map[pkg.NodeID]drlwe.ShamirPublicPoint
 	proto SKGProtocol
 }
 
@@ -178,68 +182,68 @@ type rkgProtocol struct {
 	crp        CRP
 }
 
-// pkProtocol is the protocol used to share public keys among parties.
-type pkProtocol struct {
-	*protocol
-	proto LattigoKeygenProtocol
-	agg   shareAggregator
-	crs   drlwe.CRS
-	crp   CRP
-}
+// // pkProtocol is the protocol used to share public keys among parties.
+// type pkProtocol struct {
+// 	*protocol
+// 	proto LattigoKeygenProtocol
+// 	agg   shareAggregator
+// 	crs   drlwe.CRS
+// 	crp   CRP
+// }
 
-func NewProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Instance, error) {
-	switch pd.Type {
-	case SKG:
-		p := newProtocol(pd, sess, id)
-		return &skgProtocol{protocol: p, proto: SKGProtocol{Thresholdizer: *drlwe.NewThresholdizer(*sess.Params)}}, nil
-	case CKG, RTG, RKG, PK:
-		return NewKeygenProtocol(pd, sess, id)
-	case CKS, DEC, PCKS:
-		return NewKeyswitchProtocol(pd, sess, id)
-	default:
-		return nil, fmt.Errorf("unknown protocol type: %s", pd.Type)
-	}
-}
+// func NewProtocol(params rlwe.Parameters, pd Descriptor, sk *rlwe.SecretKey, pid pkg.ProtocolID, nid pkg.NodeID) (Instance, error) {
+// 	switch pd.Type {
+// 	// case SKG:
+// 	// 	p := newProtocol(pd, sk, id)
+// 	// 	return &skgProtocol{protocol: p, T: sess.T, proto: SKGProtocol{Thresholdizer: *drlwe.NewThresholdizer(*sess.Params)}}, nil
+// 	case CKG, RTG, RKG, PK:
+// 		return NewKeygenProtocol(params, pd, sk, pid, nid)
+// 	case CKS, DEC, PCKS:
+// 		return NewKeyswitchProtocol(params, pd, sk, pid, nid)
+// 	default:
+// 		return nil, fmt.Errorf("unknown protocol type: %s", pd.Type)
+// 	}
+// }
 
-func newProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) *protocol {
+func newProtocol(params rlwe.Parameters, pd Descriptor, sk *rlwe.SecretKey, pid pkg.ProtocolID, nid pkg.NodeID) *protocol {
 	p := new(protocol)
-	p.self = sess.NodeID
+	p.self = nid
 	p.Descriptor = pd
-	p.ProtocolID = id
+	p.ProtocolID = pid
 	p.shareProviders = utils.NewSet(pd.Participants)
 	return p
 }
 
-func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Instance, error) {
+func NewKeygenProtocol(params rlwe.Parameters, pd Descriptor, sk *rlwe.SecretKey, pid pkg.ProtocolID, nid pkg.NodeID) (Instance, error) {
 	var err error
 	var inst Instance
-	protocol := newProtocol(pd, sess, id)
+	protocol := newProtocol(params, pd, sk, pid, nid)
 	var p *cpkProtocol
 	switch pd.Type {
 	case CKG:
 		p = new(cpkProtocol)
 		p.protocol = protocol
-		p.crs = sess.GetCRSForProtocol(pd.ID)
-		p.proto, err = NewCKGProtocol(*sess.Params, pd.Args)
+		p.crs = GetCRSForProtocol(pd)
+		p.proto, err = NewCKGProtocol(params, pd.Args)
 		inst = p
 	case RTG:
 		p = new(cpkProtocol)
 		p.protocol = protocol
-		p.crs = sess.GetCRSForProtocol(pd.ID)
-		p.proto, err = NewRTGProtocol(*sess.Params, pd.Args)
+		p.crs = GetCRSForProtocol(pd)
+		p.proto, err = NewRTGProtocol(params, pd.Args)
 		inst = p
 	case RKG:
 		p := new(rkgProtocol)
 		p.protocol = protocol
-		p.crp = sess.GetCRSForProtocol(pd.ID)
-		p.proto, err = NewRKGProtocol(*sess.Params, pd.Args)
+		p.crs = GetCRSForProtocol(pd)
+		p.proto, err = NewRKGProtocol(params, pd.Args)
 		inst = p
-	case PK:
-		p := new(pkProtocol)
-		p.protocol = protocol
-		p.crs = sess.GetCRSForProtocol(pd.ID)
-		p.proto, err = NewCKGProtocol(*sess.Params, pd.Args)
-		inst = p
+	// case PK:
+	// 	p := new(pkProtocol)
+	// 	p.protocol = protocol
+	// 	p.crs = sess.GetCRSForProtocol(pd.ID)
+	// 	p.proto, err = NewCKGProtocol(*sess.Params, pd.Args)
+	// 	inst = p
 	default:
 		err = fmt.Errorf("unknown protocol type: %s", pd.Type)
 	}
@@ -249,8 +253,19 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, id pkg.ProtocolID) (Ins
 	return inst, err
 }
 
+func GetCRSForProtocol(pd Descriptor, publicSeed []byte) drlwe.CRS {
+	crsKey := make([]byte, 0, len(publicSeed)+len(pid))
+	crsKey = append(crsKey, publicSeed...)
+	crsKey = append(crsKey, []byte(pid)...)
+	prng, err := lattigoUtils.NewKeyedPRNG(crsKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return prng
+}
+
 // run runs the cpkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
-func (p *cpkProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
+func (p *cpkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
 
 	var err error
@@ -270,12 +285,7 @@ func (p *cpkProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 	}
 
 	if p.shareProviders.Contains(p.self) {
-		sk, errSk := session.SecretKeyForGroup(p.shareProviders.Elements())
-		if errSk != nil {
-			log.Printf("%s | error in getting sk: %s\n", p.self, errSk)
-			return AggregationOutput{Error: errSk}
-		}
-		errGen := p.proto.GenShare(sk, p.crp, share)
+		errGen := p.proto.GenShare(p.sk, p.crp, share)
 		if errGen != nil {
 			panic(errGen)
 		}
@@ -303,10 +313,10 @@ func (p *cpkProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 	return AggregationOutput{}
 }
 
-func (p *cpkProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
+func (p *cpkProtocol) Aggregate(ctx context.Context, env Transport) chan AggregationOutput {
 	output := make(chan AggregationOutput)
 	go func() {
-		output <- p.run(ctx, session, env)
+		output <- p.run(ctx, env)
 	}()
 	return output
 }
@@ -334,116 +344,105 @@ func (p *cpkProtocol) Output(agg AggregationOutput) chan Output {
 	return out
 }
 
-// run runs the pkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
-func (p *pkProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
-	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
+// // run runs the pkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
+// func (p *pkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
+// 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
 
-	// pkProtocols can only have one participant: the sender of the public key
-	if len(p.Participants) != 1 {
-		panic(fmt.Errorf("error: a pkProtocol must have exactly one participant. p.Participants: %v", p.Participants))
-	}
+// 	// pkProtocols can only have one participant: the sender of the public key
+// 	if len(p.Participants) != 1 {
+// 		panic(fmt.Errorf("error: a pkProtocol must have exactly one participant. p.Participants: %v", p.Participants))
+// 	}
 
-	if p.shareProviders.Contains(p.self) {
-		kg := rlwe.NewKeyGenerator(*session.Params)
-		outputSk := kg.GenSecretKey()
-		if err := session.SetOuputSk(outputSk); err != nil {
-			panic(err)
-		}
+// 	if p.shareProviders.Contains(p.self) {
+// 		var err error
+// 		p.crp, err = p.proto.ReadCRP(p.crs)
+// 		if err != nil {
+// 			panic(err)
+// 		}
 
-		var err error
-		p.crp, err = p.proto.ReadCRP(p.crs)
-		if err != nil {
-			panic(err)
-		}
+// 		share := p.proto.AllocateShare()
+// 		share.ProtocolID = p.ID()
+// 		share.Type = p.Type
+// 		share.To = []pkg.NodeID{p.Desc().Aggregator}
+// 		share.From = p.self
+// 		share.Round = 1
 
-		share := p.proto.AllocateShare()
-		share.ProtocolID = p.ID()
-		share.Type = p.Type
-		share.To = []pkg.NodeID{p.Desc().Aggregator}
-		share.From = p.self
-		share.Round = 1
+// 		errGen := p.proto.GenShare(p.sk, p.crp, share)
+// 		if errGen != nil {
+// 			panic(errGen)
+// 		}
 
-		errGen := p.proto.GenShare(outputSk, p.crp, share)
-		if errGen != nil {
-			panic(errGen)
-		}
+// 		env.OutgoingShares() <- share
+// 		log.Printf("%s | [%s] completed participanting\n", p.self, p.ID())
+// 	}
 
-		env.OutgoingShares() <- share
-		log.Printf("%s | [%s] completed participanting\n", p.self, p.ID())
-	}
+// 	if p.IsAggregator() {
+// 		select {
+// 		case incShare := <-env.IncomingShares():
+// 			log.Printf("%s | [%s] new share from %s\n", p.self, p.ID(), incShare.From)
+// 			log.Printf("%s | [%s] completed aggregating\n", p.self, p.ID())
+// 			return AggregationOutput{Round: []Share{incShare}}
+// 			// share.
+// 		case <-ctx.Done():
+// 			return AggregationOutput{Error: fmt.Errorf("%s | timeout while aggregating shares for protocol %s, missing: %v", p.self, p.ID(), p.Participants)}
+// 		}
+// 	}
 
-	if p.IsAggregator() {
-		select {
-		case incShare := <-env.IncomingShares():
-			log.Printf("%s | [%s] new share from %s\n", p.self, p.ID(), incShare.From)
-			log.Printf("%s | [%s] completed aggregating\n", p.self, p.ID())
-			return AggregationOutput{Round: []Share{incShare}}
-			// share.
-		case <-ctx.Done():
-			return AggregationOutput{Error: fmt.Errorf("%s | timeout while aggregating shares for protocol %s, missing: %v", p.self, p.ID(), p.Participants)}
-		}
-	}
+// 	log.Printf("%s | [%s] completed running\n", p.self, p.ID())
+// 	return AggregationOutput{}
+// }
 
-	log.Printf("%s | [%s] completed running\n", p.self, p.ID())
-	return AggregationOutput{}
-}
+// // Aggregate runs the protocol and returns a channel through which the output is send.
+// func (p *pkProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
+// 	output := make(chan AggregationOutput)
+// 	go func() {
+// 		output <- p.run(ctx, session, env)
+// 	}()
+// 	return output
+// }
 
-// Aggregate runs the protocol and returns a channel through which the output is send.
-func (p *pkProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
+// // Output takes an aggregation output and samples the CRP to reconstruct the Public Key.
+// func (p *pkProtocol) Output(agg AggregationOutput) chan Output {
+// 	out := make(chan Output, 1)
+// 	if agg.Error != nil {
+// 		out <- Output{Error: fmt.Errorf("error at aggregation: %w", agg.Error)}
+// 		return out
+// 	}
+// 	if p.crp == nil {
+// 		var err error
+// 		p.crp, err = p.proto.ReadCRP(p.crs)
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 	}
+// 	res, err := p.proto.Finalize(p.crp, agg.Round...)
+// 	if err != nil {
+// 		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
+// 		return out
+// 	}
+// 	log.Printf("%s | [%s] finalized protocol\n", p.self, p.ID())
+// 	out <- Output{Result: res}
+// 	return out
+// }
+
+func (p *skgProtocol) Aggregate(ctx context.Context, env Transport) chan AggregationOutput {
 	output := make(chan AggregationOutput)
 	go func() {
-		output <- p.run(ctx, session, env)
+		output <- p.aggregate(ctx, env)
 	}()
 	return output
 }
 
-// Output takes an aggregation output and samples the CRP to reconstruct the Public Key.
-func (p *pkProtocol) Output(agg AggregationOutput) chan Output {
-	out := make(chan Output, 1)
-	if agg.Error != nil {
-		out <- Output{Error: fmt.Errorf("error at aggregation: %w", agg.Error)}
-		return out
-	}
-	if p.crp == nil {
-		var err error
-		p.crp, err = p.proto.ReadCRP(p.crs)
-		if err != nil {
-			panic(err)
-		}
-	}
-	res, err := p.proto.Finalize(p.crp, agg.Round...)
-	if err != nil {
-		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
-		return out
-	}
-	log.Printf("%s | [%s] finalized protocol\n", p.self, p.ID())
-	out <- Output{Result: res}
-	return out
-}
-
-func (p *skgProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
-	output := make(chan AggregationOutput)
-	go func() {
-		output <- p.aggregate(ctx, session, env)
-	}()
-	return output
-}
-
-func (p *skgProtocol) aggregate(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
+func (p *skgProtocol) aggregate(ctx context.Context, env Transport) AggregationOutput {
 
 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
 
-	if !p.shareProviders.Contains(p.self) || session.T == len(session.Nodes) {
+	if !p.shareProviders.Contains(p.self) {
 		log.Printf("%s | [%s] finalized protocol (N=T)\n", p.self, p.ID())
 		return AggregationOutput{}
 	}
 
-	sk, err := session.SecretKeyForGroup(p.shareProviders.Elements())
-	if err != nil {
-		return AggregationOutput{Error: err}
-	}
-
-	shamirPoly, err := p.proto.GenShamirPolynomial(session.T, sk)
+	shamirPoly, err := p.proto.GenShamirPolynomial(p.T, p.sk)
 	if err != nil {
 		return AggregationOutput{Error: err}
 	}
@@ -454,7 +453,7 @@ func (p *skgProtocol) aggregate(ctx context.Context, session *pkg.Session, env T
 		go func() {
 
 			share := p.proto.AllocateShare()
-			errGen := p.proto.GenShareForParty(*shamirPoly, session.SPKS[nodeID], share)
+			errGen := p.proto.GenShareForParty(*shamirPoly, p.spks[nodeID], share)
 			if errGen != nil {
 				panic(errGen)
 			}
@@ -497,21 +496,21 @@ func (p skgProtocol) Output(agg AggregationOutput) chan Output { // TODO Copy-pa
 	return out
 }
 
-func (p *rkgProtocol) Aggregate(ctx context.Context, session *pkg.Session, env Transport) chan AggregationOutput {
+func (p *rkgProtocol) Aggregate(ctx context.Context, env Transport) chan AggregationOutput {
 	output := make(chan AggregationOutput)
 	go func() {
-		output <- p.run(ctx, session, env)
+		output <- p.run(ctx, env)
 	}()
 	return output
 }
 
 // run runs the rkgProtocol allowing participants to provide shares and aggregators to aggregate such shares.
-func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transport) AggregationOutput {
+func (p *rkgProtocol) run(ctx context.Context, env Transport) AggregationOutput {
 
 	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
 
 	var err error
-	p.crp, err = p.proto.ReadCRP(session.GetCRSForProtocol(p.ID()))
+	p.crp, err = p.proto.ReadCRP(p.crs)
 	if err != nil {
 		panic(err)
 	}
@@ -525,11 +524,7 @@ func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 	}
 
 	if p.shareProviders.Contains(p.self) {
-		sk, errSk := session.SecretKeyForGroup(p.shareProviders.Elements())
-		if errSk != nil {
-			return AggregationOutput{Error: errSk}
-		}
-		errGen := p.proto.GenShareRoundOne(sk, p.crp, ephSk, shareR1)
+		errGen := p.proto.GenShareRoundOne(p.sk, p.crp, ephSk, shareR1)
 		if errGen != nil {
 			panic(errGen)
 		}
@@ -567,7 +562,6 @@ func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 	// === ROUND 2 ====
 
 	var aggR1 Share
-
 	if p.shareProviders.Contains(p.self) {
 		select {
 		case aggR1 = <-env.IncomingShares():
@@ -580,12 +574,7 @@ func (p *rkgProtocol) run(ctx context.Context, session *pkg.Session, env Transpo
 
 	if p.shareProviders.Contains(p.self) {
 
-		sk, errSk := session.SecretKeyForGroup(p.shareProviders.Elements())
-		if errSk != nil {
-			return AggregationOutput{Error: errSk}
-		}
-
-		errGen := p.proto.GenShareRoundTwo(ephSk, sk, aggR1, shareR2)
+		errGen := p.proto.GenShareRoundTwo(ephSk, p.sk, aggR1, shareR2)
 		if errGen != nil {
 			panic(errGen)
 		}

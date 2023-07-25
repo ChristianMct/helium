@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

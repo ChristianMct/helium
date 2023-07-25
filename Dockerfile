@@ -29,9 +29,7 @@ WORKDIR /helium
 # RUN apk add --no-cache git
 
 RUN apt update
-RUN apt install -y iperf3 git iproute2 kmod
-
-RUN git clone https://github.com/magnific0/wondershaper.git
+RUN apt install -y iperf3 git iproute2
 
 COPY deployment/apps/startnode.sh /helium/startnode.sh
 COPY --from=builder /helium/node /helium/node

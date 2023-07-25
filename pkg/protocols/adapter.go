@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )

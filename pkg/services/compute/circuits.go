@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bfv"
 	"github.com/tuneinsight/lattigo/v4/ring"

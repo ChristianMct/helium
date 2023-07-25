@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
 	. "github.com/ldsec/helium/pkg/services/compute"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
 
@@ -457,12 +457,8 @@ func TestCloudPCKS(t *testing.T) {
 
 				decoder := bfv.NewEncoder(bfvParams)
 
-				recSk, recPk := kg.GenKeyPair()
-
-				// save the secret key of the external node in its objectstore (emulate setup phase)
-				if err := external_0Sess.SetOuputSk(recSk); err != nil {
-					t.Fatal(err)
-				}
+				var recPk *rlwe.PublicKey
+				//recPk := external_0Sess.GetPublicKey() TODO
 
 				if err := clou.Session.SetOutputPkForNode("external-0", recPk); err != nil {
 					t.Fatal(err)
@@ -538,7 +534,7 @@ func TestCloudPCKS(t *testing.T) {
 					}
 
 					if len(out) > 0 {
-						outputSk, err := external_0Sess.GetOutputSk()
+						outputSk, err := external_0Sess.GetSecretKey()
 						if err != nil {
 							return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
 

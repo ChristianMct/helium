@@ -10,9 +10,9 @@ import (
 	"net"
 	"time"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/protocols"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils/crypto"
 

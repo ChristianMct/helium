@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bfv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

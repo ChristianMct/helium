@@ -1,5 +1,4 @@
-// Package badgerobjectstore contains a permanent-storage-backend implementation of the interface objectstore.ObjectStore.
-package badgerobjectstore
+package objectstore
 
 import (
 	"encoding"
@@ -7,20 +6,16 @@ import (
 	"log"
 
 	"github.com/dgraph-io/badger/v3"
-	"github.com/ldsec/helium/pkg/session/objectstore"
 )
 
 // ObjectStore is a type implementing the objectstore.ObjectStore interface with a permanent storage backend.
-type ObjectStore struct {
+type badgerObjectStore struct {
 	db          *badger.DB
 	bytesStored int
 }
 
 // NewObjectStore creates a new ObjectStore instance.
-func NewObjectStore(conf *objectstore.Config) (ks *ObjectStore, err error) {
-	if conf == nil {
-		return nil, fmt.Errorf("BadgerDB ObjectStore requires a Config")
-	}
+func NewBadgerObjectStore(conf Config) (ks *badgerObjectStore, err error) {
 	// SynchWrites writes any change to disk immediately.
 	// Maximum size of a single log file = 10MB
 	// Maximum size of memtable table = 5MB
@@ -30,10 +25,10 @@ func NewObjectStore(conf *objectstore.Config) (ks *ObjectStore, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("Could not instantiate BadgerDB: %s\n", err)
 	}
-	return &ObjectStore{db: db, bytesStored: 0}, nil
+	return &badgerObjectStore{db: db, bytesStored: 0}, nil
 }
 
-func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarshaler) error {
+func (objstore *badgerObjectStore) Store(objectID string, object encoding.BinaryMarshaler) error {
 	encodedObject, err := object.MarshalBinary()
 	if err != nil {
 		return err
@@ -52,7 +47,7 @@ func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarsha
 	return nil
 }
 
-func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarshaler) error {
+func (objstore *badgerObjectStore) Load(objectID string, object encoding.BinaryUnmarshaler) error {
 	var encodedObject []byte
 	err := objstore.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(objectID))
@@ -75,7 +70,7 @@ func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarsh
 	return err
 }
 
-func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
+func (objstore *badgerObjectStore) IsPresent(objectID string) (bool, error) {
 	present := false
 	err := objstore.db.View(func(txn *badger.Txn) error {
 		_, err := txn.Get([]byte(objectID))
@@ -98,7 +93,7 @@ func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
 	return present, nil
 }
 
-func (objstore *ObjectStore) Close() error {
+func (objstore *badgerObjectStore) Close() error {
 	log.Printf("Total bytes stored: %dB\n", objstore.bytesStored)
 	return objstore.db.Close()
 }

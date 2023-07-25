@@ -15,10 +15,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/transport"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 
-	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -29,13 +30,14 @@ import (
 // LocalTestConfig is a configuration structure for LocalTest types. It is used to
 // specify the number of full, light and helper nodes in the local test.
 type LocalTestConfig struct {
-	FullNodes        int // Number of full nodes in the session
-	LightNodes       int // Number of light nodes in the session
-	HelperNodes      int // number of helper nodes (full nodes that are not in the session key)
-	ExternalNodes    int
-	Session          *pkg.SessionParameters
-	DoThresholdSetup bool
-	InsecureChannels bool // are we using (m)TLS to establish the channels between nodes?
+	FullNodes     int // Number of full nodes in the session
+	LightNodes    int // Number of light nodes in the session
+	HelperNodes   int // number of helper nodes (full nodes that are not in the session key)
+	ExternalNodes int
+	Session       *pkg.SessionParameters
+	//DoThresholdSetup bool
+	InsecureChannels  bool // are we using (m)TLS to establish the channels between nodes?
+	ObjectStoreConfig *objectstore.Config
 }
 
 // LocalTest represent a local test setting with several nodes and a single
@@ -90,29 +92,29 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 			test.Params.RingQP().AddLvl(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level(), sk.Value, test.SkIdeal.Value, test.SkIdeal.Value)
 		}
 
-		if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {
-			shares := make(map[pkg.NodeID]map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
-			thresholdizer := drlwe.NewThresholdizer(test.Params)
-			for i, ni := range test.SessionNodes() {
-				shares[ni.id] = make(map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
-				sk, err := sess[i].GetSecretKey()
-				if err != nil {
-					panic(err)
-				}
-				shamirPoly, _ := thresholdizer.GenShamirPolynomial(config.Session.T, sk)
-				for _, nj := range test.SessionNodes() {
-					shares[ni.id][nj.id] = thresholdizer.AllocateThresholdSecretShare()
-					thresholdizer.GenShamirSecretShare(sess[i].SPKS[nj.ID()], shamirPoly, shares[ni.id][nj.id])
-				}
-			}
-			for i, ni := range test.SessionNodes() {
-				tsk := thresholdizer.AllocateThresholdSecretShare()
-				for _, nj := range test.SessionNodes() {
-					thresholdizer.AggregateShares(shares[nj.id][ni.id], tsk, tsk)
-				}
-				sess[i].SetTSK(tsk)
-			}
-		}
+		// if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {
+		// 	shares := make(map[pkg.NodeID]map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
+		// 	thresholdizer := drlwe.NewThresholdizer(test.Params)
+		// 	for i, ni := range test.SessionNodes() {
+		// 		shares[ni.id] = make(map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
+		// 		sk, err := sess[i].GetSecretKey()
+		// 		if err != nil {
+		// 			panic(err)
+		// 		}
+		// 		shamirPoly, _ := thresholdizer.GenShamirPolynomial(config.Session.T, sk)
+		// 		for _, nj := range test.SessionNodes() {
+		// 			shares[ni.id][nj.id] = thresholdizer.AllocateThresholdSecretShare()
+		// 			thresholdizer.GenShamirSecretShare(sess[i].SPKS[nj.ID()], shamirPoly, shares[ni.id][nj.id])
+		// 		}
+		// 	}
+		// 	for i, ni := range test.SessionNodes() {
+		// 		tsk := thresholdizer.AllocateThresholdSecretShare()
+		// 		for _, nj := range test.SessionNodes() {
+		// 			thresholdizer.AggregateShares(shares[nj.id][ni.id], tsk, tsk)
+		// 		}
+		// 		sess[i].SetTSK(tsk)
+		// 	}
+		// }
 	}
 
 	return test
@@ -204,12 +206,22 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	if config.Session != nil {
 		config.Session.ID = "test-session" // forces the session id
 		config.Session.Nodes = sessionNodesIds
-		config.Session.CRSKey = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
+		config.Session.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
 
 		for i := range ncs {
 			ncs[i].SessionParameters = []pkg.SessionParameters{*config.Session}
 			ncs[i].SessionParameters[0].ShamirPks = nodeShamirPks // forces the Shamir pts
 		}
+	}
+
+	objstoreconf := objectstore.Config{
+		BackendName: "mem",
+	}
+	if config.ObjectStoreConfig != nil {
+		objstoreconf = *config.ObjectStoreConfig
+	}
+	for i := range ncs {
+		ncs[i].ObjectStoreConfig = objstoreconf
 	}
 
 	return ncs, nl

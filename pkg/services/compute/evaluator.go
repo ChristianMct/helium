@@ -6,8 +6,8 @@ import (
 	"log"
 	"sync"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bfv"
@@ -259,7 +259,7 @@ func (se *fullEvaluatorContext) runKeySwitch(id pkg.ProtocolID, in pkg.Operand, 
 
 	cksInt.Input(in.Ciphertext)
 
-	agg := <-cksInt.Aggregate(context.Background(), se.sess, &ProtocolEnvironment{incoming: incShares, outgoing: se.transport.OutgoingShares()})
+	agg := <-cksInt.Aggregate(context.Background(), &ProtocolEnvironment{incoming: incShares, outgoing: se.transport.OutgoingShares()})
 	if agg.Error != nil {
 		return pkg.Operand{}, agg.Error
 	}

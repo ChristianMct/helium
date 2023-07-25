@@ -9,19 +9,16 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/ldsec/helium/pkg/session/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/services/setup"
-	pkg "github.com/ldsec/helium/pkg/session"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
-
-var DBPath = "./SetupProtocolDB"
 
 var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
 
@@ -63,22 +60,15 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				var testname = fmt.Sprintf("TestCloudAssistedSetup-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
-
-				var objstoreconf = objectstore.Config{
-					BackendName: "mem",
-					DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
-				}
 				var sessParams = &pkg.SessionParameters{
-					RLWEParams:        literalParams,
-					T:                 ts.T,
-					ObjectStoreConfig: objstoreconf,
+					RLWEParams: literalParams,
+					T:          ts.T,
 				}
 				var testConfig = node.LocalTestConfig{
-					HelperNodes:      1, // the cloud
-					LightNodes:       ts.N,
-					Session:          sessParams,
-					DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+					HelperNodes: 1, // the cloud
+					LightNodes:  ts.N,
+					Session:     sessParams,
+					//DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 				}
 
 				localTest := node.NewLocalTest(testConfig)
@@ -221,23 +211,15 @@ func TestSkinnyCloudAssistedSetup(t *testing.T) {
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				var testname = fmt.Sprintf("TestCloudAssistedSetupSkinny-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
-
-				var objstoreconf = objectstore.Config{
-					BackendName: "mem",
-					DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
-				}
-
 				var sessParams = &pkg.SessionParameters{
-					RLWEParams:        literalParams,
-					T:                 ts.T,
-					ObjectStoreConfig: objstoreconf,
+					RLWEParams: literalParams,
+					T:          ts.T,
 				}
 				var testConfig = node.LocalTestConfig{
-					HelperNodes:      1, // the cloud
-					LightNodes:       ts.N,
-					Session:          sessParams,
-					DoThresholdSetup: false, // no t-out-of-N TSK gen in the cloud-based model yet
+					HelperNodes: 1, // the cloud
+					LightNodes:  ts.N,
+					Session:     sessParams,
+					//DoThresholdSetup: false, // no t-out-of-N TSK gen in the cloud-based model yet
 				}
 				localTest := node.NewLocalTest(testConfig)
 				defer func() {
@@ -329,23 +311,15 @@ func TestSimpleSetup(t *testing.T) {
 
 	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-		var testname = fmt.Sprintf("TestSimpleSetup-NParty=%dT=%dlogN=%d", ts.N, ts.T, literalParams.LogN)
-
-		var objstoreconf = objectstore.Config{
-			BackendName: "mem",
-			DBPath:      fmt.Sprintf("%s/%s", DBPath, testname),
-		}
-
 		var sessParams = &pkg.SessionParameters{
-			RLWEParams:        literalParams,
-			T:                 ts.T,
-			ObjectStoreConfig: objstoreconf,
+			RLWEParams: literalParams,
+			T:          ts.T,
 		}
 		var testConfig = node.LocalTestConfig{
-			HelperNodes:      1, // the cloud
-			LightNodes:       ts.N,
-			Session:          sessParams,
-			DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+			HelperNodes: 1, // the cloud
+			LightNodes:  ts.N,
+			Session:     sessParams,
+			//DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 		}
 		localTest := node.NewLocalTest(testConfig)
 		defer func() {
@@ -421,11 +395,11 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 			T:          testSettings[1].N,
 		}
 		var testConfig = node.LocalTestConfig{
-			HelperNodes:      1,                 // the cloud
-			LightNodes:       testSettings[1].N, // node_0, node_1, node_2
-			ExternalNodes:    1,                 // node_R
-			Session:          sessParams,
-			DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+			HelperNodes:   1,                 // the cloud
+			LightNodes:    testSettings[1].N, // node_0, node_1, node_2
+			ExternalNodes: 1,                 // node_R
+			Session:       sessParams,
+			//DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
 		}
 		localTest := node.NewLocalTest(testConfig)
 		defer func() {
@@ -503,7 +477,7 @@ func TestSetupPublicKeyExchange(t *testing.T) {
 			}
 
 			// check if setup material was correctly generated
-			outputSk, err := node_Rsess.GetOutputSk()
+			outputSk, err := node_Rsess.GetSecretKey()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -535,10 +509,10 @@ func TestQuery(t *testing.T) {
 			T:          ts.T,
 		}
 		var testConfig = node.LocalTestConfig{
-			HelperNodes:      1,
-			LightNodes:       ts.N,
-			Session:          sessParams,
-			DoThresholdSetup: true,
+			HelperNodes: 1,
+			LightNodes:  ts.N,
+			Session:     sessParams,
+			//DoThresholdSetup: true,
 		}
 		localTest := node.NewLocalTest(testConfig)
 		defer func() {
@@ -640,116 +614,116 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 	require.Equal(t, present, expectedPresence)
 }
 
-// TestPeerToPeerSetup tests the peer to peer setup with N full nodes.
-func TestPeerToPeerSetup(t *testing.T) {
+// // TestPeerToPeerSetup tests the peer to peer setup with N full nodes.
+// func TestPeerToPeerSetup(t *testing.T) {
 
-	t.Skip("skipped: current version focuses on cloud-based model")
+// 	t.Skip("skipped: current version focuses on cloud-based model")
 
-	for _, literalParams := range rangeParam {
-		for _, ts := range testSettings {
+// 	for _, literalParams := range rangeParam {
+// 		for _, ts := range testSettings {
 
-			if ts.T == 0 {
-				ts.T = ts.N // N-out-of-N scenario
-			}
+// 			if ts.T == 0 {
+// 				ts.T = ts.N // N-out-of-N scenario
+// 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+// 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				var testConfig = node.LocalTestConfig{
-					FullNodes:  ts.N,
-					LightNodes: 0,
-					Session: &pkg.SessionParameters{
-						RLWEParams: literalParams,
-						T:          ts.T,
-					},
-					DoThresholdSetup: true,
-				}
-				localTest := node.NewLocalTest(testConfig)
-				defer func() {
-					err := localTest.Close()
-					if err != nil {
-						panic(err)
-					}
-				}()
+// 				var testConfig = node.LocalTestConfig{
+// 					FullNodes:  ts.N,
+// 					LightNodes: 0,
+// 					Session: &pkg.SessionParameters{
+// 						RLWEParams: literalParams,
+// 						T:          ts.T,
+// 					},
+// 					//DoThresholdSetup: true,
+// 				}
+// 				localTest := node.NewLocalTest(testConfig)
+// 				defer func() {
+// 					err := localTest.Close()
+// 					if err != nil {
+// 						panic(err)
+// 					}
+// 				}()
 
-				params := localTest.Params
-				peerIds := localTest.NodeIds()
-				sd := setup.Description{
-					Cpk: localTest.SessionNodesIds(),
-					GaloisKeys: []struct {
-						GaloisEl  uint64
-						Receivers []pkg.NodeID
-					}{
-						{5, localTest.SessionNodesIds()},
-						{25, localTest.SessionNodesIds()},
-						{125, localTest.SessionNodesIds()},
-					},
-					Rlk: localTest.SessionNodesIds(),
-				}
+// 				params := localTest.Params
+// 				peerIds := localTest.NodeIds()
+// 				sd := setup.Description{
+// 					Cpk: localTest.SessionNodesIds(),
+// 					GaloisKeys: []struct {
+// 						GaloisEl  uint64
+// 						Receivers []pkg.NodeID
+// 					}{
+// 						{5, localTest.SessionNodesIds()},
+// 						{25, localTest.SessionNodesIds()},
+// 						{125, localTest.SessionNodesIds()},
+// 					},
+// 					Rlk: localTest.SessionNodesIds(),
+// 				}
 
-				var err error
+// 				var err error
 
-				nodes := make(map[pkg.NodeID]*peer, ts.N)
-				// initialise nodes, sessions and load protocols
-				for _, n := range localTest.Nodes {
-					n := &peer{Node: n}
+// 				nodes := make(map[pkg.NodeID]*peer, ts.N)
+// 				// initialise nodes, sessions and load protocols
+// 				for _, n := range localTest.Nodes {
+// 					n := &peer{Node: n}
 
-					n.Service = n.Node.GetSetupService()
-					if err != nil {
-						t.Error(err)
-					}
+// 					n.Service = n.Node.GetSetupService()
+// 					if err != nil {
+// 						t.Error(err)
+// 					}
 
-					nodes[n.ID()] = n
-				}
+// 					nodes[n.ID()] = n
+// 				}
 
-				localTest.Start()
+// 				localTest.Start()
 
-				// launch public key generation and check correctness
-				t.Run("FullSetup", func(t *testing.T) {
+// 				// launch public key generation and check correctness
+// 				t.Run("FullSetup", func(t *testing.T) {
 
-					g := new(errgroup.Group)
+// 					g := new(errgroup.Group)
 
-					for _, id := range peerIds {
-						node := nodes[id]
+// 					for _, id := range peerIds {
+// 						node := nodes[id]
 
-						g.Go(
-							func() error {
-								return node.Service.Execute(sd, localTest.NodesList)
-							},
-						)
+// 						g.Go(
+// 							func() error {
+// 								return node.Service.Execute(sd, localTest.NodesList)
+// 							},
+// 						)
 
-					}
-					err = g.Wait()
-					if err != nil {
-						t.Fatal(err)
-					}
+// 					}
+// 					err = g.Wait()
+// 					if err != nil {
+// 						t.Fatal(err)
+// 					}
 
-					// Checks that a random client set of size T can reconstruct the ideal secret-key
-					grp := pkg.GetRandomClientSlice(testConfig.Session.T, localTest.NodeIds())
-					skagg := rlwe.NewSecretKey(params)
-					for _, nodeid := range grp {
-						node := nodes[nodeid]
-						sess, _ := node.GetSessionFromID("test-session")
-						skp, errSk := sess.SecretKeyForGroup(grp)
+// 					// Checks that a random client set of size T can reconstruct the ideal secret-key
+// 					grp := pkg.GetRandomClientSlice(testConfig.Session.T, localTest.NodeIds())
+// 					skagg := rlwe.NewSecretKey(params)
+// 					for _, nodeid := range grp {
+// 						node := nodes[nodeid]
+// 						sess, _ := node.GetSessionFromID("test-session")
+// 						skp, errSk := sess.SecretKeyForGroup(grp)
 
-						if errSk != nil {
-							panic(errSk)
-						}
-						localTest.Params.RingQP().AddLvl(skagg.LevelQ(), skagg.LevelP(), skp.Value, skagg.Value, skagg.Value)
-					}
-					require.True(t, localTest.Params.RingQ().Equal(skagg.Value.Q, localTest.SkIdeal.Value.Q))
-					require.True(t, localTest.Params.RingP().Equal(skagg.Value.P, localTest.SkIdeal.Value.P))
+// 						if errSk != nil {
+// 							panic(errSk)
+// 						}
+// 						localTest.Params.RingQP().AddLvl(skagg.LevelQ(), skagg.LevelP(), skp.Value, skagg.Value, skagg.Value)
+// 					}
+// 					require.True(t, localTest.Params.RingQ().Equal(skagg.Value.Q, localTest.SkIdeal.Value.Q))
+// 					require.True(t, localTest.Params.RingP().Equal(skagg.Value.P, localTest.SkIdeal.Value.P))
 
-					// checks that all nodes have a complete setup
-					for _, node := range nodes {
-						// node.PrintNetworkStats()
-						sess, _ := node.GetSessionFromID("test-session")
-						checkKeyGenProt(t, localTest, sd, sess)
-					}
-				})
-			})
-		}
-	}
-}
+// 					// checks that all nodes have a complete setup
+// 					for _, node := range nodes {
+// 						// node.PrintNetworkStats()
+// 						sess, _ := node.GetSessionFromID("test-session")
+// 						checkKeyGenProt(t, localTest, sd, sess)
+// 					}
+// 				})
+// 			})
+// 		}
+// 	}
+// }
 
 // Based on the session information, check if the protocol was performed correctly.
 func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, sess *pkg.Session, externalSk ...*rlwe.SecretKey) {

@@ -26,3 +26,24 @@ type ObjectStore interface {
 	// Close releases the resources allocated by the ObjectStore.
 	Close() error
 }
+
+func NewObjectStoreFromConfig(config Config) (objs ObjectStore, err error) {
+	switch config.BackendName {
+	case "null":
+		objs = NewNullObjectStore()
+	case "mem":
+		objs = NewMemObjectStore()
+	case "badgerdb":
+		if objs, err = NewBadgerObjectStore(config); err != nil {
+			return nil, err
+		}
+	case "hybrid":
+		if objs, err = NewHybridObjectStore(config); err != nil {
+			return nil, err
+		}
+	// use in-memory backend as default case.
+	default:
+		objs = NewMemObjectStore()
+	}
+	return
+}

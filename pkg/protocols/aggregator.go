@@ -3,7 +3,7 @@ package protocols
 import (
 	"fmt"
 
-	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 )
 

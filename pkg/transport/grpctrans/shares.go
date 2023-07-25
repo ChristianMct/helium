@@ -7,9 +7,9 @@ import (
 	"io"
 	"log"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/protocols"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

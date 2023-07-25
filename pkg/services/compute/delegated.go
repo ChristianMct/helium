@@ -10,7 +10,7 @@ import (
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
 
-	pkg "github.com/ldsec/helium/pkg/session"
+	"github.com/ldsec/helium/pkg"
 	"github.com/tuneinsight/lattigo/v4/bfv"
 )
 
@@ -146,7 +146,7 @@ func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, id pk
 
 	cks.Input(op.Ciphertext)
 
-	cks.Aggregate(context.Background(), de.sess, &ProtocolEnvironment{outgoing: de.transport.OutgoingShares()})
+	cks.Aggregate(context.Background(), &ProtocolEnvironment{outgoing: de.transport.OutgoingShares()})
 
 	// agg, err := de.transport.GetAggregationFrom(pkg.NewContext(&de.sess.ID, &de.id), de.delegateID, pd.ID)
 	// if agg.Error != nil {

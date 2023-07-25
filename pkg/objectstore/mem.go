@@ -1,5 +1,4 @@
-// Package memobjectstore contains a main-memory-backend implementation of the interface objectstore.ObjectStore.
-package memobjectstore
+package objectstore
 
 import (
 	"encoding"
@@ -10,24 +9,24 @@ import (
 )
 
 // ObjectStore is a type implementing the objectstore.ObjectStore interface with a main memory backend.
-type ObjectStore struct {
+type memObjectStore struct {
 	objstore map[string]any
 	mtx      sync.RWMutex
 }
 
 // NewObjectStore creates a new ObjectStore instance.
-func NewObjectStore() *ObjectStore {
-	return &ObjectStore{objstore: make(map[string]any)}
+func NewMemObjectStore() *memObjectStore {
+	return &memObjectStore{objstore: make(map[string]any)}
 }
 
-func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarshaler) error {
+func (objstore *memObjectStore) Store(objectID string, object encoding.BinaryMarshaler) error {
 	objstore.mtx.Lock()
 	defer objstore.mtx.Unlock()
 	objstore.objstore[objectID] = object
 	return nil
 }
 
-func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarshaler) error {
+func (objstore *memObjectStore) Load(objectID string, object encoding.BinaryUnmarshaler) error {
 	objstore.mtx.RLock()
 	defer objstore.mtx.RUnlock()
 
@@ -83,7 +82,7 @@ func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarsh
 	return nil
 }
 
-func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
+func (objstore *memObjectStore) IsPresent(objectID string) (bool, error) {
 	objstore.mtx.RLock()
 	defer objstore.mtx.RUnlock()
 
@@ -92,4 +91,4 @@ func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
 	return ok, nil
 }
 
-func (objstore *ObjectStore) Close() error { return nil }
+func (objstore *memObjectStore) Close() error { return nil }

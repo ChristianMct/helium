@@ -4,15 +4,13 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
-	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -50,12 +48,15 @@ type Node struct {
 	compute *compute.Service
 
 	transport transport.Transport
+
+	objectstore.ObjectStore
 }
 
 type Config struct {
 	ID                pkg.NodeID
 	Address           pkg.NodeAddress
 	SessionParameters []pkg.SessionParameters
+	ObjectStoreConfig objectstore.Config
 	TLSConfig         grpctrans.TLSConfig
 }
 
@@ -85,8 +86,13 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	}
 	node.nodeList = nodeList
 
+	os, err := objectstore.NewObjectStoreFromConfig(config.ObjectStoreConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, sp := range config.SessionParameters {
-		_, err = node.CreateNewSession(sp)
+		_, err = node.CreateNewSession(sp, os)
 		if err != nil {
 			panic(err)
 		}
@@ -179,37 +185,11 @@ type SignatureParameters struct {
 }
 
 // CreateNewSession takes an int id and creates a new rlwe session with this node and its peers and a sessionID constructed using the given id.
-func (node *Node) CreateNewSession(sessParams pkg.SessionParameters) (sess *pkg.Session, err error) {
-	fheParams, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams)
-	if err != nil {
-		return
-	}
-
-	if sessParams.T == 0 {
-		sessParams.T = len(sessParams.Nodes)
-	}
-
-	var sk *rlwe.SecretKey
-	var tsk *drlwe.ShamirSecretShare
-
-	// node generates its secret-key for the session
-	if utils.NewSet(sessParams.Nodes).Contains(node.id) {
-		// kg := rlwe.NewKeyGenerator(fheParams)
-		// sk = kg.GenSecretKey()
-		sk, tsk, err = pkg.GetTestSecretKeys(sessParams, node.id) // TODO: locally generated keys
-		if err != nil {
-			panic(err)
-		}
-	}
-
+func (node *Node) CreateNewSession(sessParams pkg.SessionParameters, objstore objectstore.ObjectStore) (sess *pkg.Session, err error) {
 	// note: this creates a session with no secret key for nodes outside the session.
-	sess, err = node.sessions.NewRLWESession(&sessParams, &fheParams, sk, sessParams.CRSKey, node.id, sessParams.Nodes, sessParams.T, sessParams.ShamirPks, sessParams.ID)
+	sess, err = node.sessions.NewRLWESession(sessParams, node.id, objstore)
 	if err != nil {
 		return sess, err
-	}
-
-	if utils.NewSet(sessParams.Nodes).Contains(node.id) {
-		sess.SetTSK(tsk) // TODO: locally generated keys
 	}
 
 	log.Printf("Node %s | created rlwe session with id: %s and nodes: %s \n", node.id, sess.ID, sess.Nodes)

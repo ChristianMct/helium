@@ -1,33 +1,28 @@
-// Package hybridobjectstore contains a hybrid-storage-backend implementation of the interface objectstore.ObjectStore.
-package hybridobjectstore
+package objectstore
 
 import (
 	"encoding"
 	"fmt"
 	"log"
-
-	"github.com/ldsec/helium/pkg/session/objectstore"
-	"github.com/ldsec/helium/pkg/session/objectstore/badgerobjectstore"
-	"github.com/ldsec/helium/pkg/session/objectstore/memobjectstore"
 )
 
 // ObjectStore is a type implementing the objectstore.ObjectStore interface with a hybrid storage backend.
 // It combines an in-memory backend and a persistent backend.
-type ObjectStore struct {
-	badgerObjectStore *badgerobjectstore.ObjectStore
-	memObjectStore    *memobjectstore.ObjectStore
+type hybridObjectStore struct {
+	badgerObjectStore *badgerObjectStore
+	memObjectStore    *memObjectStore
 }
 
 // NewObjectStore creates a new ObjectStore instance.
-func NewObjectStore(conf *objectstore.Config) (*ObjectStore, error) {
-	badgerObjectStore, err := badgerobjectstore.NewObjectStore(conf)
+func NewHybridObjectStore(conf Config) (*hybridObjectStore, error) {
+	badgerObjectStore, err := NewBadgerObjectStore(conf)
 	if err != nil {
 		return nil, fmt.Errorf("error while creating BadgerDB ObjectStore in hybrid ObjectStore :%w", err)
 	}
 
-	memObjectStore := memobjectstore.NewObjectStore()
+	memObjectStore := NewMemObjectStore()
 
-	objstore := &ObjectStore{
+	objstore := &hybridObjectStore{
 		badgerObjectStore: badgerObjectStore,
 		memObjectStore:    memObjectStore,
 	}
@@ -35,7 +30,7 @@ func NewObjectStore(conf *objectstore.Config) (*ObjectStore, error) {
 	return objstore, nil
 }
 
-func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarshaler) error {
+func (objstore *hybridObjectStore) Store(objectID string, object encoding.BinaryMarshaler) error {
 	// no error handling necessary for Store() in-memory ObjectStore
 	objstore.memObjectStore.Store(objectID, object)
 
@@ -46,7 +41,7 @@ func (objstore *ObjectStore) Store(objectID string, object encoding.BinaryMarsha
 	return nil
 }
 
-func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarshaler) error {
+func (objstore *hybridObjectStore) Load(objectID string, object encoding.BinaryUnmarshaler) error {
 	// attempt to load the object from the in-memory ObjectStore
 	if err := objstore.memObjectStore.Load(objectID, object); err == nil {
 		return nil
@@ -69,7 +64,7 @@ func (objstore *ObjectStore) Load(objectID string, object encoding.BinaryUnmarsh
 	return nil
 }
 
-func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
+func (objstore *hybridObjectStore) IsPresent(objectID string) (bool, error) {
 	// no error handling necessary for IsPresent() in-memory ObjectStore
 	if present, _ := objstore.memObjectStore.IsPresent(objectID); present {
 		return true, nil
@@ -81,7 +76,7 @@ func (objstore *ObjectStore) IsPresent(objectID string) (bool, error) {
 	return present, err
 }
 
-func (objstore *ObjectStore) Close() error {
+func (objstore *hybridObjectStore) Close() error {
 	if err := objstore.badgerObjectStore.Close(); err != nil {
 		return err
 	}

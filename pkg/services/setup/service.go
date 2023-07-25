@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/protocols"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
@@ -40,6 +40,8 @@ type Service struct {
 
 	outLock    sync.RWMutex
 	aggOutputs map[pkg.ProtocolID]*protocols.AggregationOutput
+
+	*drlwe.Combiner
 }
 
 func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transport.SetupServiceTransport) (s *Service, err error) {
@@ -131,28 +133,6 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 			log.Println(fmt.Errorf("%s | received share from sender %s for protocol %s", s.self, incShare.From, incShare.ProtocolID))
 		}
 	}()
-
-	// if first protocol to execute is SKG and this node is part of the session nodes.
-	// execute aggregation to set share of SK T-out-of-N.
-	if len(sigListNoResult) > 0 && sigListNoResult[0].Type == protocols.SKG && utils.NewSet(sess.Nodes).Contains(s.self) {
-		skgpd := protocols.Descriptor{ID: "SKG", Signature: sigListNoResult[0], Participants: sess.Nodes}
-		proto, err := protocols.NewProtocol(skgpd, sess, skgpd.ID)
-		if err != nil {
-			return err
-		}
-		inc := make(chan protocols.Share)
-		s.runningProtosMu.Lock()
-		s.runningProtos[skgpd.ID] = struct {
-			pd       protocols.Descriptor
-			incoming chan protocols.Share
-		}{skgpd, inc}
-		s.runningProtosMu.Unlock()
-		res := <-proto.Aggregate(ctx, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
-		if res.Error != nil {
-			return res.Error
-		}
-		sess.SetTSK(res.Round[0].MHEShare.(*drlwe.ShamirSecretShare))
-	}
 
 	// 3A PARTICIPATION: node participate to protocols if they are in the list of participants
 	allPartsDone := s.participate(ctx, sigListNoResult, protoToRun, sess)
@@ -297,7 +277,7 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 				}
 
 				ctxdl, _ := context.WithTimeout(ctx, 10*time.Second)
-				aggOut := <-proto.Aggregate(ctxdl, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
+				aggOut := <-proto.Aggregate(ctxdl, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					//panic(aggOut.Error)
 					log.Println(aggOut.Error)
@@ -409,7 +389,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				}
 				ctxAgg, _ := context.WithTimeout(ctx, timeout)
 				// log.Printf("%s | [Aggregate] Service is %v", s.self, s)
-				aggOut := <-proto.Aggregate(ctxAgg, sess, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
+				aggOut := <-proto.Aggregate(ctxAgg, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					//panic(aggOut.Error)
 					log.Println(aggOut.Error)
@@ -645,6 +625,34 @@ func (s *Service) registeredIDs() utils.Set[pkg.NodeID] {
 		connected.Add(peerID)
 	}
 	return connected
+}
+
+func (s *Service) SecretKeyForGroup(sess *pkg.Session, parties []pkg.NodeID) (sk *rlwe.SecretKey, err error) {
+	switch {
+	case len(parties) == len(sess.Nodes):
+		sk, err := sess.GetSecretKey()
+		if err != nil {
+			return nil, err
+		}
+		if sk == nil {
+			return nil, fmt.Errorf("party has no secret-key in the session")
+		}
+		return sk, nil
+	case len(parties) >= sess.T:
+		sk = rlwe.NewSecretKey(*sess.Params)
+		spks := make([]drlwe.ShamirPublicPoint, len(parties))
+		for i, pid := range parties {
+			spks[i] = sess.SPKS[pid]
+		}
+		tsk, err := sess.GetThresholdSecretKey()
+		if err != nil {
+			return nil, err
+		}
+		s.Combiner.GenAdditiveShare(spks, sess.SPKS[sess.NodeID], tsk, sk)
+		return sk, nil
+	default:
+		return nil, fmt.Errorf("not enough participants to reconstruct")
+	}
 }
 
 type ProtocolTransport struct {

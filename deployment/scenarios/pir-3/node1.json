@@ -7,7 +7,7 @@
         "ID": "test-session",
         "RLWEParams": {"LogN":13,"Q":[18014398508400641,18014398510645249,18014398510661633],"P":[36028797018652673]},
         "Nodes": ["node-0", "node-1", "node-2"],
-		"CRSKey": "bGF0dGlnMA==",
+		"PublicSeed": "bGF0dGlnMA==",
         "ObjectStoreConfig": {
             "BackendName": "mem"       
         }

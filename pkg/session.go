@@ -7,17 +7,12 @@ import (
 	"math/rand"
 
 	"github.com/ldsec/helium/pkg/api"
-	"github.com/ldsec/helium/pkg/session/objectstore"
-	"github.com/ldsec/helium/pkg/session/objectstore/badgerobjectstore"
-	"github.com/ldsec/helium/pkg/session/objectstore/hybridobjectstore"
-	"github.com/ldsec/helium/pkg/session/objectstore/memobjectstore"
-	"github.com/ldsec/helium/pkg/session/objectstore/nullobjectstore"
+	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/tuneinsight/lattigo/v4/drlwe"
-	lattigoUtils "github.com/tuneinsight/lattigo/v4/utils"
 
 	"sync"
 )
@@ -135,149 +130,78 @@ func (na NodeAddress) String() string {
 
 // Session is the context of an MPC protocol execution.
 type Session struct {
-	*drlwe.Combiner
-	*CiphertextStore
-
-	objectstore.ObjectStore
-
 	ID     SessionID
 	NodeID NodeID
 	Nodes  []NodeID
 
-	T       int
-	SPKS    map[NodeID]drlwe.ShamirPublicPoint
-	tsk     *drlwe.ShamirSecretShare
-	tskDone sync.Cond
+	T    int
+	SPKS map[NodeID]drlwe.ShamirPublicPoint
+	sk   *rlwe.SecretKey
+	tsk  *drlwe.ShamirSecretShare
 
-	CRSKey []byte
-	Params *rlwe.Parameters
+	PublicSeed []byte
+	Params     *rlwe.Parameters
+
+	*CiphertextStore
+	objectstore.ObjectStore
 
 	mutex sync.RWMutex
 }
 
 // SessionParameters contains data used to initialize a Session.
 type SessionParameters struct {
-	ID         SessionID
-	RLWEParams rlwe.ParametersLiteral
-	T          int
-	Nodes      []NodeID
-	ShamirPks  map[NodeID]drlwe.ShamirPublicPoint
-	CRSKey     []byte
-
-	ObjectStoreConfig objectstore.Config
+	ID                      SessionID
+	Nodes                   []NodeID
+	RLWEParams              rlwe.ParametersLiteral
+	T                       int
+	ShamirPks               map[NodeID]drlwe.ShamirPublicPoint
+	PublicSeed, PrivateSeed []byte
 }
 
-type SessionProvider interface {
-	GetSessionFromID(sessionID SessionID) (*Session, bool)
-	GetSessionFromContext(ctx context.Context) (*Session, bool)
-	GetSessionFromIncomingContext(ctx context.Context) (*Session, bool)
-}
-
-type SessionStore struct {
-	lock     sync.RWMutex
-	sessions map[SessionID]*Session
-}
-
-func NewSessionStore() *SessionStore {
-	ss := new(SessionStore)
-	ss.sessions = make(map[SessionID]*Session)
-	return ss
-}
-
-func NewSession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPts map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
-
+func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstore.ObjectStore) (sess *Session, err error) {
 	sess = new(Session)
-	sess.ID = sessionID
 	sess.NodeID = nodeID
-	sess.Nodes = nodes
-	sess.Params = params
-
-	switch sessParams.ObjectStoreConfig.BackendName {
-	case "null":
-		sess.ObjectStore = nullobjectstore.NewObjectStore()
-		break
-
-	case "mem":
-		sess.ObjectStore = memobjectstore.NewObjectStore()
-		break
-
-	case "badgerdb":
-		if sess.ObjectStore, err = badgerobjectstore.NewObjectStore(&sessParams.ObjectStoreConfig); err != nil {
-			return nil, err
-		}
-		break
-
-	case "hybrid":
-		if sess.ObjectStore, err = hybridobjectstore.NewObjectStore(&sessParams.ObjectStoreConfig); err != nil {
-			return nil, err
-		}
-		break
-
-	// use in-memory backend as default case.
-	default:
-		log.Printf("Node %s | using default ObjectStore backend for session creation\n", sess.NodeID)
-		sess.ObjectStore = memobjectstore.NewObjectStore()
-	}
-
-	// only set the session secret key for session nodes
-	if sess.Contains(sess.NodeID) {
-		if err := sess.SetSecretKey(sk); err != nil {
-			return nil, err
-		}
-	}
-
-	sess.CRSKey = crsKey
-
-	sess.T = t
-	sess.SPKS = make(map[NodeID]drlwe.ShamirPublicPoint, len(shamirPts))
-	for id, spk := range shamirPts {
+	sess.ObjectStore = objStore
+	sess.ID = sessParams.ID
+	sess.Nodes = sessParams.Nodes
+	sess.T = sessParams.T
+	sess.PublicSeed = sessParams.PublicSeed
+	sess.SPKS = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
+	for id, spk := range sessParams.ShamirPks {
 		sess.SPKS[id] = spk
 	}
-	spts := make([]drlwe.ShamirPublicPoint, 0, len(shamirPts))
-	for _, pt := range shamirPts {
-		spts = append(spts, pt)
+
+	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams)
+	sess.Params = &params
+
+	if sessParams.T == 0 {
+		sessParams.T = len(sessParams.Nodes)
 	}
 
-	sess.tskDone = *sync.NewCond(&sync.Mutex{})
+	// node generates its secret-key for the session
+	if utils.NewSet(sessParams.Nodes).Contains(nodeID) {
+		// kg := rlwe.NewKeyGenerator(fheParams)
+		// sk = kg.GenSecretKey()
 
-	sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
+		var errSk, errTsk error
+		sess.sk, errSk = sess.GetSecretKey()
+		sess.tsk, errTsk = sess.GetThresholdSecretKey()
+
+		if errSk != nil || errTsk != nil {
+			log.Println("%s | no sk and tsk found, node will generate them", sess.NodeID)
+			sess.sk, sess.tsk, err = GetTestSecretKeys(sessParams, nodeID) // TODO: local generation for testing
+			if err != nil {
+				panic(err)
+			}
+			sess.SetSecretKey(sess.sk)
+		}
+
+	}
+
+	//sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
 	sess.CiphertextStore = NewCiphertextStore()
 
 	return sess, nil
-}
-
-func (s *SessionStore) NewRLWESession(sessParams *SessionParameters, params *rlwe.Parameters, sk *rlwe.SecretKey, crsKey []byte, nodeID NodeID, nodes []NodeID, t int, shamirPks map[NodeID]drlwe.ShamirPublicPoint, sessionID SessionID) (sess *Session, err error) {
-
-	if _, exists := s.sessions[sessionID]; exists {
-		return nil, fmt.Errorf("session id already exists: %s", sessionID)
-	}
-
-	sess, err = NewSession(sessParams, params, sk, crsKey, nodeID, nodes, t, shamirPks, sessionID)
-	if err != nil {
-		return nil, err
-	}
-
-	s.sessions[sess.ID] = sess
-
-	return sess, err
-}
-
-func (s *SessionStore) GetSessionFromID(id SessionID) (*Session, bool) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	sess, ok := s.sessions[id]
-	return sess, ok
-}
-
-// Close releases the resources allocated all the sessions in the SessionStore.
-func (s *SessionStore) Close() error {
-	for _, session := range s.sessions {
-		err := session.Close()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // GetCollectivePublicKey loads the collective public key from the ObjectStore.
@@ -366,25 +290,25 @@ func (s *Session) SetOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error
 	return nil
 }
 
-// GetOutputSk loads the output secret key of this node from the ObjectStore.
-func (s *Session) GetOutputSk() (*rlwe.SecretKey, error) {
-	outputSk := rlwe.NewSecretKey(*s.Params)
+// // GetOutputSk loads the output secret key of this node from the ObjectStore.
+// func (s *Session) GetOutputSk() (*rlwe.SecretKey, error) {
+// 	outputSk := rlwe.NewSecretKey(*s.Params)
 
-	if err := s.ObjectStore.Load("outputSK", outputSk); err != nil {
-		return nil, fmt.Errorf("error while loading the output secret key: %w", err)
-	}
+// 	if err := s.ObjectStore.Load("outputSK", outputSk); err != nil {
+// 		return nil, fmt.Errorf("error while loading the output secret key: %w", err)
+// 	}
 
-	return outputSk, nil
-}
+// 	return outputSk, nil
+// }
 
-// SetOuputSk stores the output secret key of this node into the ObjectStore.
-func (s *Session) SetOuputSk(outputSk *rlwe.SecretKey) error {
-	if err := s.ObjectStore.Store("outputSK", outputSk); err != nil {
-		return fmt.Errorf("error while storing the output secret key: %w", err)
-	}
+// // SetOuputSk stores the output secret key of this node into the ObjectStore.
+// func (s *Session) SetOuputSk(outputSk *rlwe.SecretKey) error {
+// 	if err := s.ObjectStore.Store("outputSK", outputSk); err != nil {
+// 		return fmt.Errorf("error while storing the output secret key: %w", err)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 // GetSecretKey loads the secret key from the ObjectStore.
 func (s *Session) GetSecretKey() (*rlwe.SecretKey, error) {
@@ -396,6 +320,16 @@ func (s *Session) GetSecretKey() (*rlwe.SecretKey, error) {
 	return sk, nil
 }
 
+// GetThresholdSecretKey loads the secret key from the ObjectStore.
+func (s *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
+	tsk := new(drlwe.ShamirSecretShare)
+	if err := s.ObjectStore.Load("sessionThresholdSK", tsk); err != nil {
+		return nil, fmt.Errorf("error while loading the session secret key: %w", err)
+	}
+
+	return tsk, nil
+}
+
 // SetSecretKey stores the secret key into the ObjectStore.
 func (s *Session) SetSecretKey(sk *rlwe.SecretKey) error {
 	if err := s.ObjectStore.Store("sessionSK", sk); err != nil {
@@ -405,58 +339,20 @@ func (s *Session) SetSecretKey(sk *rlwe.SecretKey) error {
 	return nil
 }
 
-func (s *Session) SetTSK(tsk *drlwe.ShamirSecretShare) {
-	s.tskDone.L.Lock()
-	defer s.tskDone.L.Unlock()
-
-	s.tsk = &drlwe.ShamirSecretShare{Poly: tsk.CopyNew()}
-	s.tskDone.Broadcast()
-}
-
-func (s *Session) HasTSK() bool {
-	s.tskDone.L.Lock()
-	defer s.tskDone.L.Unlock()
-	return s.tsk != nil
-}
-
-func (s *Session) SecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err error) {
-	switch {
-	case len(parties) == len(s.Nodes):
-		sk, err := s.GetSecretKey()
-		if err != nil {
-			return nil, err
-		}
-		if sk == nil {
-			return nil, fmt.Errorf("party has no secret-key in the session")
-		}
-		return sk, nil
-	case len(parties) >= s.T:
-		s.tskDone.L.Lock() // TODO might be overkill as condition is irreversible
-		for s.tsk == nil {
-			s.tskDone.Wait()
-		}
-		sk = rlwe.NewSecretKey(*s.Params)
-		spks := make([]drlwe.ShamirPublicPoint, len(parties))
-		for i, pid := range parties {
-			spks[i] = s.SPKS[pid]
-		}
-		s.Combiner.GenAdditiveShare(spks, s.SPKS[s.NodeID], s.tsk, sk)
-		s.tskDone.L.Unlock()
-		return sk, nil
-	default:
-		return nil, fmt.Errorf("not enough participants to reconstruct")
+func (s *Session) GetShamirPublicPoints() map[NodeID]drlwe.ShamirPublicPoint {
+	spts := make(map[NodeID]drlwe.ShamirPublicPoint, len(s.SPKS))
+	for p, spt := range s.SPKS {
+		spts[p] = spt
 	}
+	return spts
 }
 
-func (s *Session) GetCRSForProtocol(pid ProtocolID) drlwe.CRS {
-	crsKey := make([]byte, 0, len(s.CRSKey)+len(pid))
-	crsKey = append(crsKey, s.CRSKey...)
-	crsKey = append(crsKey, []byte(pid)...)
-	prng, err := lattigoUtils.NewKeyedPRNG(crsKey)
-	if err != nil {
-		log.Fatal(err)
+func (s *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
+	spts := make([]drlwe.ShamirPublicPoint, 0, len(s.SPKS))
+	for _, spt := range s.SPKS {
+		spts = append(spts, spt)
 	}
-	return prng
+	return spts
 }
 
 func (s *Session) Contains(nodeID NodeID) bool {
@@ -480,5 +376,5 @@ func (s *Session) String() string {
 		Nodes: %v,
 		T: %d,
 		CRSKey: %v,
-	}`, s.ID, s.NodeID, s.Nodes, s.T, s.CRSKey)
+	}`, s.ID, s.NodeID, s.Nodes, s.T, s.PublicSeed)
 }

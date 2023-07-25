@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
 	. "github.com/ldsec/helium/pkg/protocols"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -82,7 +82,7 @@ func newTestEnvironment(ts testSetting, params rlwe.ParametersLiteral) *testEnvi
 			RLWEParams: params,
 			T:          ts.T,
 		},
-		DoThresholdSetup: true,
+		//DoThresholdSetup: true,
 	}
 	if ts.Helper {
 		tc.HelperNodes = 1
@@ -119,7 +119,7 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		aggOutputs[node.ID()] = instances[node.ID()].Aggregate(context.Background(), sess, te.envForNode(sess.NodeID))
+		aggOutputs[node.ID()] = instances[node.ID()].Aggregate(context.Background(), te.envForNode(sess.NodeID))
 	}
 
 	for _, node := range te.Nodes {

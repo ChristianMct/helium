@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	pkg "github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 )
 

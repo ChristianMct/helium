@@ -12,7 +12,7 @@
             "Sigma": 3.2
         },
         "Nodes": ["node-a", "node-b"],
-		"CRSKey": "bGF0dGlnMA==",
+		"PublicSeed": "bGF0dGlnMA==",
         "ObjectStoreConfig": {
             "BackendName": "hybrid",
             "DBPath": "./data/db"            
