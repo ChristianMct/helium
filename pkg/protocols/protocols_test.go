@@ -47,7 +47,7 @@ func TestProtocols(t *testing.T) {
 				te := newTestEnvironment(ts, rlwe.TestPN12QP109)
 				pd := Descriptor{Signature: Signature{Type: pType}}
 				if pType == RTG {
-					pd.Args = map[string]string{"GalEl": "5"}
+					pd.Signature.Args = map[string]string{"GalEl": "5"}
 				}
 				if pType == SKG {
 					pd.Participants = te.SessionNodesIds()
@@ -115,7 +115,7 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 	var err error
 	for _, node := range te.LocalTest.Nodes {
 		sess, _ := node.GetSessionFromID("test-session")
-		instances[node.ID()], err = NewProtocol(pd, sess, pkg.ProtocolID(pd.Type.String()))
+		instances[node.ID()], err = NewProtocol(pd, sess)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +127,7 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 		aggOut := <-aggOutputs[node.ID()]
 		require.Nil(t, aggOut.Error)
 
-		isAggregator := pd.Type == SKG || pd.Aggregator == node.ID()
+		isAggregator := pd.Signature.Type == SKG || pd.Aggregator == node.ID()
 
 		if !isAggregator {
 			require.Nil(t, aggOut.Round)
@@ -135,11 +135,11 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 
 			out := <-instances[node.ID()].Output(aggOut)
 
-			if pd.Type != SKG || te.T != te.N {
+			if pd.Signature.Type != SKG || te.T != te.N {
 				require.NotNil(t, out.Result)
 			}
 
-			switch pd.Type {
+			switch pd.Signature.Type {
 			case SKG:
 				_, isShamirShare := out.Result.(*drlwe.ShamirSecretShare)
 				require.True(t, isShamirShare)
@@ -156,8 +156,8 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 					te.Params.N() * len(swk.Value) * len(swk.Value[0]) *
 						(te.Params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
 							2*3*int(math.Floor(rlwe.DefaultSigma*6)) + te.Params.N()*3)))
-				galEl, _ := strconv.ParseUint(pd.Args["GalEl"], 10, 64)
-				require.True(t, rlwe.RotationKeyIsCorrect(swk, galEl, te.SkIdeal, te.Params, log2BoundRtk), "rtk for galEl %d should be correct", pd.Args["GaloisEl"])
+				galEl, _ := strconv.ParseUint(pd.Signature.Args["GalEl"], 10, 64)
+				require.True(t, rlwe.RotationKeyIsCorrect(swk, galEl, te.SkIdeal, te.Params, log2BoundRtk), "rtk for galEl %d should be correct", pd.Signature.Args["GaloisEl"])
 			case RKG:
 				rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
 				require.True(t, isRlk)

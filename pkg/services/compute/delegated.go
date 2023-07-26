@@ -136,7 +136,7 @@ func (de *delegatedEvaluatorContext) Output(op pkg.Operand, to pkg.NodeID) {
 }
 
 func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, id pkg.ProtocolID, in pkg.Operand) (out pkg.Operand, err error) {
-	p, err := protocols.NewProtocol(pd, de.sess, id)
+	p, err := protocols.NewProtocol(pd, de.sess)
 	if err != nil {
 		return pkg.Operand{}, err
 	}

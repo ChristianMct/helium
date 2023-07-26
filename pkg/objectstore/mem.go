@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
@@ -32,52 +33,50 @@ func (objstore *memObjectStore) Load(objectID string, object encoding.BinaryUnma
 
 	untypedValue, ok := objstore.objstore[objectID]
 	if !ok {
-		return fmt.Errorf("No value found for key string %s in in-memory ObjectStore", objectID)
+		return fmt.Errorf("no value found for key string %s in in-memory ObjectStore", objectID)
 	}
 
 	switch value := object.(type) {
-	case *rlwe.PublicKey:
-		typedValue, ok := untypedValue.(*rlwe.PublicKey)
-		if !ok {
-			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
-		}
-		*value = *typedValue
-		break
-
 	case *rlwe.SecretKey:
 		typedValue, ok := untypedValue.(*rlwe.SecretKey)
 		if !ok {
-			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
+			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
 		}
 		*value = *typedValue
-		break
-
+	case *drlwe.ShamirSecretShare:
+		typedValue, ok := untypedValue.(*drlwe.ShamirSecretShare)
+		if !ok {
+			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
+		}
+		*value = *typedValue
+	case *rlwe.PublicKey:
+		typedValue, ok := untypedValue.(*rlwe.PublicKey)
+		if !ok {
+			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
+		}
+		*value = *typedValue
 	case *rlwe.RelinearizationKey:
 		typedValue, ok := untypedValue.(*rlwe.RelinearizationKey)
 		if !ok {
-			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
+			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
 		}
 		*value = *typedValue
-		break
 
 	case *rlwe.SwitchingKey:
 		typedValue, ok := untypedValue.(*rlwe.SwitchingKey)
 		if !ok {
-			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
+			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
 		}
 		*value = *typedValue
-		break
 
 	case *rlwe.Ciphertext:
 		typedValue, ok := untypedValue.(*rlwe.Ciphertext)
 		if !ok {
-			return fmt.Errorf("Type mismatch between requested type %T and actual stored type", value)
+			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
 		}
 		*value = *typedValue
-		break
-
 	default:
-		return fmt.Errorf("Unexpected request type %T\n", value)
+		return fmt.Errorf("unexpected request type %T", value)
 	}
 	return nil
 }

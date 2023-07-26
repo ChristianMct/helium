@@ -233,7 +233,7 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	}
 
 	if externalReceivers.Contains(a.node.ID()) {
-		outputSk, err = a.sess.GetOutputSk()
+		outputSk, err = a.sess.GetSecretKey()
 		if err != nil {
 			panic(err)
 		}

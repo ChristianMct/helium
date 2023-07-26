@@ -59,12 +59,11 @@ enum ProtocolStatus {
 and arguments. It should be sufficient for parties to instantiate a protocol
 within a given session */
 message ProtocolDescriptor {
-    ProtocolID ProtocolID = 1;
-    ProtocolType ProtocolType = 2;
-    map<string, string> Args = 3;
-    NodeID Aggregator = 4;
-    repeated NodeID Participants = 5;
-    repeated NodeID Receivers = 6;
+    ProtocolType ProtocolType = 1;
+    map<string, string> Args = 2;
+    NodeID Aggregator = 3;
+    repeated NodeID Participants = 4;
+    repeated NodeID Receivers = 5;
 }
 
 message ProtocolUpdate {

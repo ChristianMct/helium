@@ -19,7 +19,7 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      - RATE_LIMIT=5mbit
+      - RATE_LIMIT=50mbit
     volumes:
       - ../node0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
@@ -37,7 +37,7 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      - RATE_LIMIT=5mbit
+      - RATE_LIMIT=50mbit
     volumes:
       - ../node1.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
@@ -54,7 +54,7 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
-      - RATE_LIMIT=5mbit
+      - RATE_LIMIT=50mbit
     volumes:
       - ../node2.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json

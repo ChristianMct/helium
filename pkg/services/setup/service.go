@@ -71,7 +71,7 @@ func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transpor
 // protocol and aggregating the shares.
 func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 
-	log.Printf("%s | started Execute\n", s.self)
+	s.Logf("started Execute")
 
 	sessID := pkg.SessionID("test-session") // TODO non-hardcoded session
 
@@ -105,7 +105,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		// every time it receives a protocol update, puts the protocol descriptor
 		// in the protocols to run or in the protocols completed
 		for protoUpdate := range protosUpdatesChan {
-			log.Printf("%s | got protocol update for protocol %s : status: %v \n", s.self, protoUpdate.ID, protoUpdate.Status)
+			s.Logf("got protocol update for protocol %s : status: %v ", protoUpdate.HID(), protoUpdate.Status)
 			switch protoUpdate.Status {
 			case protocols.OK:
 				protoCompleted <- protoUpdate.Descriptor
@@ -125,12 +125,12 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 			proto, protoExists := s.runningProtos[incShare.ProtocolID]
 			s.runningProtosMu.RUnlock()
 			if !protoExists {
-				log.Println(fmt.Errorf("%s | dropped share from sender %s: protocol %s is not running", s.self, incShare.From, incShare.ProtocolID))
+				s.Logf("dropped share from sender %s: protocol %s is not running", incShare.From, incShare.ProtocolID)
 				continue
 			}
 			// sends received share to the incoming channel of the destination protocol.
 			proto.incoming <- incShare
-			log.Println(fmt.Errorf("%s | received share from sender %s for protocol %s", s.self, incShare.From, incShare.ProtocolID))
+			//s.Logf("received share from sender %s for protocol %s", incShare.From, incShare.ProtocolID)
 		}
 	}()
 
@@ -158,18 +158,18 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 	// close the output channel and print status.
 	go func() {
 		<-allAggsDone
-		log.Printf("%s | completed all aggregations\n", s.self)
+		s.Logf("completed all aggregations")
 		<-allPartsDone
-		log.Printf("%s | completed all participations\n", s.self)
+		s.Logf("completed all participations")
 		<-outQueriesDone
-		log.Printf("%s | completed all queries\n", s.self)
+		s.Logf("completed all queries")
 		close(outputs) // close output channel, no more values will be sent through it.
 	}()
 
 	// 5. STORE OUTPUT: store output after receiving it from the aggregator
 	s.storeProtocolOutput(outputs, sess)
 
-	log.Printf("%s | execute returned\n", s.self)
+	s.Logf("execute returned")
 	return nil
 }
 
@@ -204,11 +204,11 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 		}
 		aggDone.Add(1)
 		go func() {
-			log.Printf("%s | [Register] registering to aggregator %s\n", s.self, agg)
+			s.Logf("[Register] registering to aggregator %s", agg)
 			// register aggregator to the transport for the setup protocol.
 			protoUpdateChannel, err := s.transport.RegisterForSetupAt(outCtx, agg)
 			if err != nil {
-				log.Printf("%s | could not register to aggregator %s: %s\n", s.self, agg, err)
+				s.Logf("could not register to aggregator %s: %s", agg, err)
 				aggDone.Done()
 				return
 			}
@@ -218,7 +218,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 				protosUpdatesChan <- protoStatusUpdate
 			}
 			// no more updates from this aggregator.
-			log.Printf("%s | [Register] aggregator %s done\n", s.self, agg)
+			s.Logf("[Register] aggregator %s done", agg)
 
 			aggDone.Done()
 		}()
@@ -228,7 +228,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeI
 	go func() {
 		// when all aggregators have been registered and have no more updates.
 		aggDone.Wait()
-		log.Printf("%s | [Register] registration to all aggregators done\n", s.self)
+		s.Logf("[Register] registration to all aggregators done")
 		// close the global update channels, others will know that no more updates are coming.
 		close(protosUpdatesChan)
 	}()
@@ -246,12 +246,14 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 		go func() {
 			for pd := range protoToRun {
 
+				pid := pd.ID()
+
 				if !sigList.Contains(pd.Signature) {
-					panic(fmt.Errorf("%s | [Participate] error: protocol descriptor %s signature %s is not in the signature list", s.self, pd, pd.Signature))
+					panic(fmt.Errorf("error: protocol descriptor %s signature %s is not in the signature list", pd, pd.Signature))
 				}
 
 				s.runningProtosMu.Lock()
-				_, running := s.runningProtos[pd.ID]
+				_, running := s.runningProtos[pid]
 				// already running, next pd.
 				if running {
 					s.runningProtosMu.Unlock()
@@ -260,7 +262,7 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 
 				// add protocols to running protocols
 				inc := make(chan protocols.Share)
-				s.runningProtos[pd.ID] = struct {
+				s.runningProtos[pid] = struct {
 					pd       protocols.Descriptor
 					incoming chan protocols.Share
 				}{
@@ -270,13 +272,19 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 				s.runningProtosMu.Unlock()
 
 				// DEBUG
-				log.Printf("%s | [Participate] Making new protocol pd: %v\n", s.self, pd)
-				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
+				s.Logf("[Participate] Making new protocol pd: %v", pd)
+				proto, err := protocols.NewProtocol(pd, sess)
 				if err != nil {
 					panic(err)
 				}
 
-				ctxdl, _ := context.WithTimeout(ctx, 10*time.Second)
+				var ctxdl context.Context
+				if sess.T != len(sess.Nodes) {
+					ctxdl, _ = context.WithTimeout(ctx, 10*time.Second)
+				} else {
+					ctxdl = ctx
+				}
+
 				aggOut := <-proto.Aggregate(ctxdl, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					//panic(aggOut.Error)
@@ -310,8 +318,8 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 	pdAggs := make(chan protocols.Descriptor, len(sigList))
 	wgSig := sync.WaitGroup{}
 	wgSig.Add(len(sigList))
-	for i, sig := range sigList {
-		pdAggs <- protocols.Descriptor{ID: pkg.ProtocolID(fmt.Sprintf("%s-%d", sig.Type, i)), Signature: sig, Aggregator: s.self}
+	for _, sig := range sigList {
+		pdAggs <- protocols.Descriptor{Signature: sig, Aggregator: s.self}
 	}
 
 	go func() {
@@ -359,15 +367,16 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					}
 				}
 
-				log.Printf("%s | [Aggregate] Making new protocol pd: %v\n", s.self, pd)
-				proto, err := protocols.NewProtocol(pd, sess, pd.ID)
+				s.Logf("[Aggregate] Making new protocol pd: %v", pd)
+				proto, err := protocols.NewProtocol(pd, sess)
 				if err != nil {
 					panic(err)
 				}
 
+				pid := pd.ID()
 				inc := make(chan protocols.Share)
 				s.runningProtosMu.Lock()
-				s.runningProtos[pd.ID] = struct {
+				s.runningProtos[pid] = struct {
 					pd       protocols.Descriptor
 					incoming chan protocols.Share
 				}{
@@ -380,31 +389,38 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running}
 
 				// blocking, returns the result of the aggregation.
-				log.Printf("%s | [Aggregate] Waiting to finish aggregation for pd: %v\n", s.self, pd)
-				var timeout time.Duration
-				if proto.Desc().Type == protocols.RKG {
-					timeout = 3 * time.Second
+				s.Logf("[Aggregate] Waiting to finish aggregation for pd: %v", pd)
+
+				var ctxdl context.Context
+				if sess.T != len(sess.Nodes) {
+					var timeout time.Duration
+					if proto.Desc().Signature.Type == protocols.RKG {
+						timeout = 3 * time.Second
+					} else {
+						timeout = 10 * time.Second
+					}
+					ctxdl, _ = context.WithTimeout(ctx, timeout)
 				} else {
-					timeout = 10 * time.Second
+					ctxdl = ctx
 				}
-				ctxAgg, _ := context.WithTimeout(ctx, timeout)
-				// log.Printf("%s | [Aggregate] Service is %v", s.self, s)
-				aggOut := <-proto.Aggregate(ctxAgg, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
+
+				// s.Logf("[Aggregate] Service is %v", s)
+				aggOut := <-proto.Aggregate(ctxdl, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					//panic(aggOut.Error)
 					log.Println(aggOut.Error)
-					pdAggs <- protocols.Descriptor{ID: pd.ID + "-R", Signature: pd.Signature, Aggregator: s.self}
+					pdAggs <- protocols.Descriptor{Signature: pd.Signature, Aggregator: s.self}
 					s.runningProtosMu.Lock()
-					delete(s.runningProtos, pd.ID)
+					delete(s.runningProtos, pid)
 					s.runningProtosMu.Unlock()
 					continue
 				}
-				log.Printf("%s | [Aggregate] Finished aggregating for pd: %v\n", s.self, pd)
+				s.Logf("[Aggregate] Finished aggregating for pd: %v", pd)
 
 				s.saveAggOut(aggOut, pd, proto, outputs)
 
 				s.runningProtosMu.Lock()
-				delete(s.runningProtos, pd.ID)
+				delete(s.runningProtos, pid)
 				s.runningProtosMu.Unlock()
 
 				s.completedProtoMu.Lock()
@@ -447,12 +463,12 @@ func (s *Service) saveAggOut(aggOut protocols.AggregationOutput,
 		protocols.Descriptor
 		protocols.Output
 	}) {
-
+	pid := pd.ID()
 	s.outLock.Lock()
-	if _, outputExists := s.aggOutputs[pd.ID]; outputExists {
+	if _, outputExists := s.aggOutputs[pid]; outputExists {
 		panic("already has input for protocol")
 	}
-	s.aggOutputs[pd.ID] = &aggOut
+	s.aggOutputs[pid] = &aggOut
 	s.outLock.Unlock()
 }
 
@@ -468,36 +484,38 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 		// every completed protocol yields a result.
 		for pd := range protoCompleted {
 
+			pid := pd.ID()
+
 			// this node is not in the set of receivers for this output
 			if !sigToReceiverSet[pd.Signature.String()].Contains(s.self) {
 				continue
 			}
 
-			log.Printf("%s | [QueryForOutput] [%s] received aggregated completed\n", s.self, pd.ID)
+			s.Logf("[QueryForOutput] [%s] received aggregated completed", pid)
 
 			if !sigListNoResult.Contains(pd.Signature) {
-				log.Printf("%s | [QueryForOutput] not querying known output for protocol %s\n", s.self, pd.ID)
+				s.Logf("[QueryForOutput] not querying known output for protocol %s", pid)
 				continue
 			}
 
 			// requests output to aggregator.
-			aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, pd.ID)
+			aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, pid)
 			if err != nil {
-				log.Printf("%s | [QueryForOutput] [%s] got error on output query: %s\n", s.self, pd.ID, err)
+				s.Logf("[QueryForOutput] [%s] got error on output query: %s", pid, err)
 				panic(err)
 			}
 
-			log.Printf("%s | [QueryForOutput] queried node %s for the protocol %s output", s.self, pd.Aggregator, pd.ID)
+			s.Logf("[QueryForOutput] queried node %s for the protocol %s output", pd.Aggregator, pid)
 
 			var proto protocols.Instance
-			proto, err = protocols.NewProtocol(pd, sess, pd.ID) // TODO this resamples the CRP (could be done while waiting for agg)
+			proto, err = protocols.NewProtocol(pd, sess) // TODO this resamples the CRP (could be done while waiting for agg)
 			if err != nil {
 				panic(err)
 			}
 			out := <-proto.Output(*aggregatedOutput)
 
 			if out.Error != nil {
-				log.Printf("%s | [QueryForOutput] Error in protocol %s output: %v", s.self, pd.ID, out.Error)
+				s.Logf("[QueryForOutput] Error in protocol %s output: %v", pid, out.Error)
 				continue
 			}
 
@@ -518,27 +536,27 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 	protocols.Output
 }, sess *pkg.Session) {
 	for output := range outputs {
-		// log.Printf("%s | [Store] Storing output for protocol %s under %s\n", s.self, output.Descriptor.ID, output.Signature.String())
+		// s.Logf("[Store] Storing output for protocol %s under %s", output.Descriptor.ID, output.Signature.String())
 
 		if output.Result != nil {
 			switch res := output.Result.(type) {
 			case *rlwe.PublicKey:
 				if err := sess.ObjectStore.Store(output.Signature.ToObjectStore(), res); err != nil {
-					log.Printf("%s | error on Public Key store: %s", s.self, err)
+					s.Logf("error on Public Key store: %s", err)
 				}
 				break
 			case *rlwe.RelinearizationKey:
 				if err := sess.ObjectStore.Store(output.Signature.ToObjectStore(), res); err != nil {
-					log.Printf("%s | error on Relinearization Key store: %s", s.self, err)
+					s.Logf("error on Relinearization Key store: %s", err)
 				}
 				break
 			case *rlwe.SwitchingKey:
 				if err := sess.ObjectStore.Store(output.Signature.ToObjectStore(), res); err != nil {
-					log.Printf("%s | error on Rotation Key Store: %s", s.self, err)
+					s.Logf("error on Rotation Key Store: %s", err)
 				}
 				break
 			default:
-				log.Printf("%s | got output for protocol %s: %v\n", s.self, output.ID, output)
+				s.Logf("got output for protocol %s: %v", output.ID(), output)
 			}
 		}
 	}
@@ -548,12 +566,12 @@ func (s *Service) Register(peer transport.Peer) error {
 	s.cPeers.L.Lock()
 	if _, exists := s.peers[peer.ID()]; exists {
 		// return fmt.Errorf("peer with id %s already registered", peer.ID())
-		log.Printf("%s | peer %s was already registered", s.self, peer.ID())
+		s.Logf("peer %s was already registered", peer.ID())
 	}
 	s.peers[peer.ID()] = peer
 	s.cPeers.L.Unlock()
 	s.cPeers.Broadcast()
-	log.Printf("%s | peer %v registered for setup\n", s.self, peer.ID())
+	s.Logf("peer %v registered for setup", peer.ID())
 	return nil
 }
 
@@ -561,12 +579,12 @@ func (s *Service) Unregister(peer transport.Peer) error {
 	s.cPeers.L.Lock()
 	defer s.cPeers.L.Unlock()
 	if _, exists := s.peers[peer.ID()]; !exists {
-		log.Printf("%s | trying to unregister unregistered peer %s", s.self, peer.ID())
+		s.Logf("trying to unregister unregistered peer %s", peer.ID())
 		return nil
 	}
 	delete(s.peers, peer.ID())
 	s.cPeers.Broadcast()
-	log.Printf("%s | peer %v unregistered\n", s.self, peer.ID())
+	s.Logf("peer %v unregistered", peer.ID())
 	return nil
 }
 
@@ -627,32 +645,8 @@ func (s *Service) registeredIDs() utils.Set[pkg.NodeID] {
 	return connected
 }
 
-func (s *Service) SecretKeyForGroup(sess *pkg.Session, parties []pkg.NodeID) (sk *rlwe.SecretKey, err error) {
-	switch {
-	case len(parties) == len(sess.Nodes):
-		sk, err := sess.GetSecretKey()
-		if err != nil {
-			return nil, err
-		}
-		if sk == nil {
-			return nil, fmt.Errorf("party has no secret-key in the session")
-		}
-		return sk, nil
-	case len(parties) >= sess.T:
-		sk = rlwe.NewSecretKey(*sess.Params)
-		spks := make([]drlwe.ShamirPublicPoint, len(parties))
-		for i, pid := range parties {
-			spks[i] = sess.SPKS[pid]
-		}
-		tsk, err := sess.GetThresholdSecretKey()
-		if err != nil {
-			return nil, err
-		}
-		s.Combiner.GenAdditiveShare(spks, sess.SPKS[sess.NodeID], tsk, sk)
-		return sk, nil
-	default:
-		return nil, fmt.Errorf("not enough participants to reconstruct")
-	}
+func (s *Service) Logf(msg string, v ...any) {
+	log.Printf("%s | %s\n", s.self, fmt.Sprintf(msg, v...))
 }
 
 type ProtocolTransport struct {

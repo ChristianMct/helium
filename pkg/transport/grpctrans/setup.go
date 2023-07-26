@@ -139,13 +139,12 @@ func (t *setupTransport) RegisterForSetupAt(ctx context.Context, peerID pkg.Node
 
 func getAPIProtocolDesc(pd *protocols.Descriptor) *api.ProtocolDescriptor {
 	apiDesc := &api.ProtocolDescriptor{
-		ProtocolID:   &api.ProtocolID{ProtocolID: string(pd.ID)},
-		ProtocolType: api.ProtocolType(pd.Type),
-		Args:         make(map[string]string, len(pd.Args)),
+		ProtocolType: api.ProtocolType(pd.Signature.Type),
+		Args:         make(map[string]string, len(pd.Signature.Args)),
 		Aggregator:   &api.NodeID{NodeId: string(pd.Aggregator)},
 		Participants: make([]*api.NodeID, 0, len(pd.Participants)),
 	}
-	for k, v := range pd.Args {
+	for k, v := range pd.Signature.Args {
 		apiDesc.Args[k] = v
 	}
 	for _, p := range pd.Participants {
@@ -156,13 +155,12 @@ func getAPIProtocolDesc(pd *protocols.Descriptor) *api.ProtocolDescriptor {
 
 func getProtocolDescFromAPI(apiPD *api.ProtocolDescriptor) *protocols.Descriptor {
 	desc := &protocols.Descriptor{
-		ID:           pkg.ProtocolID(apiPD.ProtocolID.ProtocolID),
 		Signature:    protocols.Signature{Type: protocols.Type(apiPD.ProtocolType), Args: make(map[string]string)},
 		Aggregator:   pkg.NodeID(apiPD.Aggregator.NodeId),
 		Participants: make([]pkg.NodeID, 0, len(apiPD.Participants)),
 	}
 	for k, v := range apiPD.Args {
-		desc.Args[k] = v
+		desc.Signature.Args[k] = v
 	}
 	for _, p := range apiPD.Participants {
 		desc.Participants = append(desc.Participants, pkg.NodeID(p.NodeId))

@@ -155,13 +155,13 @@ func (e *circuitParserContext) SubCircuit(id pkg.CircuitID, cd Circuit) (Evaluat
 
 func (e *circuitParserContext) registerKeyOps(id pkg.ProtocolID, pd protocols.Descriptor) error {
 
-	target, hasTarget := pd.Args["target"]
+	target, hasTarget := pd.Signature.Args["target"]
 	if !hasTarget {
 		return fmt.Errorf("protocol parameter should have a target")
 	}
 
 	if e.nodeMapping != nil {
-		pd.Args["target"] = string(e.nodeMapping[target])
+		pd.Signature.Args["target"] = string(e.nodeMapping[target])
 	}
 
 	if _, exists := e.cDesc.KeySwitchOps[id]; exists {

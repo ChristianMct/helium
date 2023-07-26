@@ -28,8 +28,8 @@ type testSetting struct {
 }
 
 var testSettings = []testSetting{
-	// {N: 2},
-	// {N: 3},
+	{N: 2},
+	{N: 3},
 	{N: 3, T: 2},
 }
 

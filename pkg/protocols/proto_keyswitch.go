@@ -20,30 +20,35 @@ type keySwitchProtocol struct {
 	input     *rlwe.Ciphertext
 }
 
-func NewKeyswitchProtocol(params rlwe.Parameters, pd Descriptor, sk *rlwe.SecretKey, outputKey OutputKey, pid pkg.ProtocolID, nid pkg.NodeID) (KeySwitchInstance, error) {
+func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, outputKey OutputKey) (KeySwitchInstance, error) {
 
-	if _, hasArg := pd.Args["target"]; !hasArg {
+	params := *sess.Params
+
+	if _, hasArg := pd.Signature.Args["target"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: target")
 	}
-	target, isString := pd.Args["target"]
+	target, isString := pd.Signature.Args["target"]
 	if !isString {
-		return nil, fmt.Errorf("invalid target type %T instead of %T", pd.Args["target"], target)
+		return nil, fmt.Errorf("invalid target type %T instead of %T", pd.Signature.Args["target"], target)
 	}
 
 	ks := new(keySwitchProtocol)
 	ks.target = pkg.NodeID(target)
 	ks.inputChan = make(chan *rlwe.Ciphertext, 1)
 
-	ks.protocol = newProtocol(params, pd, sk, pid, nid)
 	var err error
-	switch pd.Type {
+	ks.protocol, err = newProtocol(pd, sess)
+	if err != nil {
+		return nil, err
+	}
+	switch pd.Signature.Type {
 	case CKS:
 		return nil, fmt.Errorf("generic standalone CKS protocol not supported yet") // TODO
 	case DEC:
-		ks.proto, err = NewCKSProtocol(params, pd.Args)
+		ks.proto, err = NewCKSProtocol(params, pd.Signature.Args)
 		ks.outputKey = rlwe.NewSecretKey(params) // target key is zero for decryption
 	case PCKS:
-		ks.proto, err = NewPCKSProtocol(params, pd.Args)
+		ks.proto, err = NewPCKSProtocol(params, pd.Signature.Args)
 		ks.outputKey = outputKey
 	}
 	if err != nil {
@@ -61,7 +66,7 @@ func (p *keySwitchProtocol) Aggregate(ctx context.Context, env Transport) chan A
 }
 
 func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) AggregationOutput {
-	log.Printf("%s | [%s] started running with %v\n", p.self, p.ID(), p.Descriptor)
+	p.Logf("started running with %v", p.Descriptor)
 
 	// part := utils.NewSet(p.Descriptor.Participants) // TODO: reads from protomap for now
 	// if p.Descriptor.Type == CKS || p.Descriptor.Type == DEC {
@@ -74,7 +79,7 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
 		share = p.proto.AllocateShare()
 		share.ProtocolID = p.ID()
-		share.Type = p.Type
+		share.Type = p.Signature.Type
 		share.From = p.self
 		share.AggregateFor = utils.NewEmptySet[pkg.NodeID]()
 		share.Round = 1
@@ -82,7 +87,7 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 
 	if p.shareProviders.Contains(p.self) {
 		skGroup := p.shareProviders.Copy()
-		if p.Type == DEC {
+		if p.Signature.Type == DEC {
 			skGroup.Add(p.target)
 		}
 		errGen := p.proto.GenShare(p.sk, p.outputKey, p.input, share)
@@ -127,7 +132,7 @@ func (p *keySwitchProtocol) Output(agg AggregationOutput) chan Output {
 		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
 		return out
 	}
-	log.Printf("%s | [%s] finalized protocol\n", p.self, p.ID())
+	p.Logf("finalized protocol")
 	out <- Output{Result: res}
 	return out
 }

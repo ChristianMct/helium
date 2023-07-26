@@ -106,21 +106,21 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 
 	for protoID, protoDesc := range se.cDesc.KeySwitchOps {
 		var aggregator pkg.NodeID
-		if agg, hasAgg := protoDesc.Args["aggregator"]; hasAgg {
+		if agg, hasAgg := protoDesc.Signature.Args["aggregator"]; hasAgg {
 			aggregator = pkg.NodeID(agg)
 		} else {
-			aggregator = pkg.NodeID(protoDesc.Args["target"]) // TODO: check that aggregator is full node
+			aggregator = pkg.NodeID(protoDesc.Signature.Args["target"]) // TODO: check that aggregator is full node
 		}
 
 		protoDesc.Aggregator = aggregator
 
 		part := utils.NewSet(sess.Nodes)
-		if protoDesc.Type == protocols.DEC {
-			part.Remove(pkg.NodeID(protoDesc.Args["target"]))
+		if protoDesc.Signature.Type == protocols.DEC {
+			part.Remove(pkg.NodeID(protoDesc.Signature.Args["target"]))
 		}
 
 		protoDesc.Participants = part.Elements() // TODO decide on exec
-		proto, err := protocols.NewProtocol(protoDesc, sess, protoID)
+		proto, err := protocols.NewProtocol(protoDesc, sess)
 		if err != nil {
 			panic(err)
 		}

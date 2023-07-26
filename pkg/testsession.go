@@ -22,7 +22,13 @@ func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.Se
 	ts := ring.NewTernarySampler(prng, params.RingQ(), 0.5, false)
 
 	sks := make([]*rlwe.SecretKey, len(sessParams.Nodes))
-	for i := range sks {
+	var index int
+	for i, ni := range sessParams.Nodes {
+
+		if ni == nodeid {
+			index = i
+		}
+
 		sk := new(rlwe.SecretKey)
 		ringQP := params.RingQP()
 		sk.Value = ringQP.NewPoly()
@@ -39,20 +45,14 @@ func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.Se
 	}
 
 	if sessParams.T == 0 || sessParams.T == len(sessParams.Nodes) {
-		return
+		return sks[index], nil, nil
 	}
 
 	shares := make(map[NodeID]map[NodeID]*drlwe.ShamirSecretShare, len(sessParams.Nodes))
 	thresholdizer := drlwe.NewThresholdizer(params)
 	usampler := ringqp.NewUniformSampler(prng, *params.RingQP())
 
-	var index int
-
 	for i, ni := range sessParams.Nodes {
-
-		if ni == nodeid {
-			index = i
-		}
 
 		shares[ni] = make(map[NodeID]*drlwe.ShamirSecretShare, len(sessParams.Nodes))
 		sk := sks[i]

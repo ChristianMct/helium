@@ -128,6 +128,10 @@ func (na NodeAddress) String() string {
 	return string(na)
 }
 
+func (pid ProtocolID) String() string {
+	return string(pid)
+}
+
 // Session is the context of an MPC protocol execution.
 type Session struct {
 	ID     SessionID
@@ -164,7 +168,11 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 	sess.ObjectStore = objStore
 	sess.ID = sessParams.ID
 	sess.Nodes = sessParams.Nodes
-	sess.T = sessParams.T
+	if sess.T > 0 && sess.T < len(sess.Nodes) {
+		sess.T = sessParams.T
+	} else {
+		sess.T = len(sess.Nodes)
+	}
 	sess.PublicSeed = sessParams.PublicSeed
 	sess.SPKS = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
 	for id, spk := range sessParams.ShamirPks {
@@ -188,12 +196,13 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 		sess.tsk, errTsk = sess.GetThresholdSecretKey()
 
 		if errSk != nil || errTsk != nil {
-			log.Println("%s | no sk and tsk found, node will generate them", sess.NodeID)
+			log.Printf("%s | no sk and tsk found, node will generate them\n", sess.NodeID)
 			sess.sk, sess.tsk, err = GetTestSecretKeys(sessParams, nodeID) // TODO: local generation for testing
 			if err != nil {
 				panic(err)
 			}
 			sess.SetSecretKey(sess.sk)
+			sess.SetThresholdSecretKey(sess.tsk)
 		}
 
 	}
@@ -290,6 +299,37 @@ func (s *Session) SetOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error
 	return nil
 }
 
+func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err error) {
+	switch {
+	case len(parties) == len(sess.Nodes):
+		sk, err := sess.GetSecretKey()
+		if err != nil {
+			return nil, err
+		}
+		if sk == nil {
+			return nil, fmt.Errorf("party has no secret-key in the session")
+		}
+		return sk, nil
+	case len(parties) >= sess.T:
+		sk = rlwe.NewSecretKey(*sess.Params)
+		spks := make([]drlwe.ShamirPublicPoint, len(parties))
+		for i, pid := range parties {
+			spks[i] = sess.SPKS[pid]
+		}
+		tsk, err := sess.GetThresholdSecretKey()
+		if err != nil {
+			return nil, err
+		}
+		drlwe.NewCombiner(*sess.Params,
+			sess.GetShamirPublicPoints()[sess.NodeID],
+			sess.GetShamirPublicPointsList(),
+			sess.T).GenAdditiveShare(spks, sess.SPKS[sess.NodeID], tsk, sk)
+		return sk, nil
+	default:
+		return nil, fmt.Errorf("not enough participants to reconstruct")
+	}
+}
+
 // // GetOutputSk loads the output secret key of this node from the ObjectStore.
 // func (s *Session) GetOutputSk() (*rlwe.SecretKey, error) {
 // 	outputSk := rlwe.NewSecretKey(*s.Params)
@@ -335,7 +375,14 @@ func (s *Session) SetSecretKey(sk *rlwe.SecretKey) error {
 	if err := s.ObjectStore.Store("sessionSK", sk); err != nil {
 		return fmt.Errorf("error while storing the session secret key: %w", err)
 	}
+	return nil
+}
 
+// SetThresholdSecretKey stores the secret key into the ObjectStore.
+func (s *Session) SetThresholdSecretKey(tsk *drlwe.ShamirSecretShare) error {
+	if err := s.ObjectStore.Store("sessionThresholdSK", tsk); err != nil {
+		return fmt.Errorf("error while storing the session threshold secret key: %w", err)
+	}
 	return nil
 }
 
