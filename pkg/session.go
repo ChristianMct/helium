@@ -138,10 +138,11 @@ type Session struct {
 	NodeID NodeID
 	Nodes  []NodeID
 
-	T    int
-	SPKS map[NodeID]drlwe.ShamirPublicPoint
-	sk   *rlwe.SecretKey
-	tsk  *drlwe.ShamirSecretShare
+	T        int
+	SPKS     map[NodeID]drlwe.ShamirPublicPoint
+	sk       *rlwe.SecretKey
+	tsk      *drlwe.ShamirSecretShare
+	rlkEphSk *rlwe.SecretKey
 
 	PublicSeed []byte
 	Params     *rlwe.Parameters
@@ -168,10 +169,10 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 	sess.ObjectStore = objStore
 	sess.ID = sessParams.ID
 	sess.Nodes = sessParams.Nodes
-	if sess.T > 0 && sess.T < len(sess.Nodes) {
+	if sessParams.T > 0 && sessParams.T < len(sessParams.Nodes) {
 		sess.T = sessParams.T
 	} else {
-		sess.T = len(sess.Nodes)
+		sess.T = len(sessParams.Nodes)
 	}
 	sess.PublicSeed = sessParams.PublicSeed
 	sess.SPKS = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
@@ -205,6 +206,8 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 			sess.SetThresholdSecretKey(sess.tsk)
 		}
 
+		sess.rlkEphSk = rlwe.NewKeyGenerator(*sess.Params).GenSecretKey()
+		sess.SetRLKEphemeralSecretKey(sess.rlkEphSk)
 	}
 
 	//sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
@@ -237,7 +240,7 @@ func (s *Session) SetCollectivePublicKey(cpk *rlwe.PublicKey) error {
 func (s *Session) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
 	rlk := new(rlwe.RelinearizationKey)
 
-	if err := s.ObjectStore.Load(api.ProtocolType_RKG.String(), rlk); err != nil {
+	if err := s.ObjectStore.Load("RLK", rlk); err != nil {
 		return nil, fmt.Errorf("error while loading the relinearization key: %w", err)
 	}
 
@@ -246,7 +249,7 @@ func (s *Session) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
 
 // SetRelinearizationKey stores the relinearization key into the ObjectStore.
 func (s *Session) SetRelinearizationKey(rlk *rlwe.RelinearizationKey) error {
-	if err := s.ObjectStore.Store(api.ProtocolType_RKG.String(), rlk); err != nil {
+	if err := s.ObjectStore.Store("RLK", rlk); err != nil {
 		return fmt.Errorf("error while storing the relinearization key: %w", err)
 	}
 
@@ -360,6 +363,15 @@ func (s *Session) GetSecretKey() (*rlwe.SecretKey, error) {
 	return sk, nil
 }
 
+func (s *Session) GetRLKEphemeralSecretKey() (*rlwe.SecretKey, error) {
+	sk := new(rlwe.SecretKey)
+	if err := s.ObjectStore.Load("rlkEphSK", sk); err != nil {
+		return nil, fmt.Errorf("error while loading the session rlk ephemeral secret key: %w", err)
+	}
+
+	return sk, nil
+}
+
 // GetThresholdSecretKey loads the secret key from the ObjectStore.
 func (s *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
 	tsk := new(drlwe.ShamirSecretShare)
@@ -382,6 +394,13 @@ func (s *Session) SetSecretKey(sk *rlwe.SecretKey) error {
 func (s *Session) SetThresholdSecretKey(tsk *drlwe.ShamirSecretShare) error {
 	if err := s.ObjectStore.Store("sessionThresholdSK", tsk); err != nil {
 		return fmt.Errorf("error while storing the session threshold secret key: %w", err)
+	}
+	return nil
+}
+
+func (s *Session) SetRLKEphemeralSecretKey(sk *rlwe.SecretKey) error {
+	if err := s.ObjectStore.Store("rlkEphSK", sk); err != nil {
+		return fmt.Errorf("error while storing the session rlk ephemeral  secret key: %w", err)
 	}
 	return nil
 }

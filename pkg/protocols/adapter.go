@@ -232,15 +232,18 @@ func (rtg *RTGProtocol) Finalize(crp CRP, aggShare ...Share) (swk interface{}, e
 type RKGProtocol struct {
 	drlwe.RKGProtocol
 	params *rlwe.Parameters
+
+	round uint64
+	ephSk *rlwe.SecretKey
 }
 
-func NewRKGProtocol(params rlwe.Parameters, _ map[string]string) (*RKGProtocol, error) {
-	return &RKGProtocol{RKGProtocol: *drlwe.NewRKGProtocol(params), params: &params}, nil
+func NewRKGProtocol(params rlwe.Parameters, ephSk *rlwe.SecretKey, round uint64, _ map[string]string) (*RKGProtocol, error) {
+	return &RKGProtocol{RKGProtocol: *drlwe.NewRKGProtocol(params), params: &params, round: round, ephSk: ephSk}, nil
 }
 
-func (rkg *RKGProtocol) AllocateShare() (ephSk *rlwe.SecretKey, r1Share, r2Share Share) {
-	ephSk, s1, s2 := rkg.RKGProtocol.AllocateShare()
-	return ephSk, Share{MHEShare: s1}, Share{MHEShare: s2}
+func (rkg *RKGProtocol) AllocateShare() (share Share) {
+	_, s1, _ := rkg.RKGProtocol.AllocateShare()
+	return Share{MHEShare: s1}
 }
 
 func (rkg *RKGProtocol) AggregatedShares(dst Share, ss ...Share) error {
@@ -268,29 +271,25 @@ func (rkg *RKGProtocol) ReadCRP(crs drlwe.CRS) (CRP, error) {
 	return rkg.RKGProtocol.SampleCRP(crs), nil
 }
 
-func (rkg *RKGProtocol) GenShareRoundOne(sk *rlwe.SecretKey, crp CRP, ephSkOut *rlwe.SecretKey, share Share) error {
-	rkgcrp, ok := crp.(drlwe.RKGCRP)
-	if !ok {
-		return fmt.Errorf("bad input type: %T instead of %T", crp, rkgcrp)
-	}
+func (rkg *RKGProtocol) GenShare(sk *rlwe.SecretKey, crp CRP, share Share) error {
 	rkgShare, ok := share.MHEShare.(*drlwe.RKGShare)
 	if !ok {
 		return fmt.Errorf("invalid share type: %T instead of %T", share, rkgShare)
 	}
-	rkg.RKGProtocol.GenShareRoundOne(sk, rkgcrp, ephSkOut, rkgShare)
-	return nil
-}
+	if rkg.round == 1 {
+		rkgcrp, ok := crp.(drlwe.RKGCRP)
+		if !ok {
+			return fmt.Errorf("bad input type: %T instead of %T", crp, rkgcrp)
+		}
+		rkg.RKGProtocol.GenShareRoundOne(sk, rkgcrp, rkg.ephSk, rkgShare)
+	} else {
+		rkgShareRoundOne, ok := crp.(*drlwe.RKGShare)
+		if !ok {
+			return fmt.Errorf("bad input type: %T instead of %T", crp, rkgShareRoundOne)
+		}
+		rkg.RKGProtocol.GenShareRoundTwo(rkg.ephSk, sk, rkgShareRoundOne, rkgShare)
+	}
 
-func (rkg *RKGProtocol) GenShareRoundTwo(ephSk, sk *rlwe.SecretKey, aggRound1Share, share Share) error {
-	rkgAggShareRound1, ok := aggRound1Share.MHEShare.(*drlwe.RKGShare)
-	if !ok {
-		return fmt.Errorf("invalid share type: %T instead of %T", aggRound1Share.MHEShare, rkgAggShareRound1)
-	}
-	rkgShare, ok := share.MHEShare.(*drlwe.RKGShare)
-	if !ok {
-		return fmt.Errorf("invalid share type: %T instead of %T", share.MHEShare, rkgShare)
-	}
-	rkg.RKGProtocol.GenShareRoundTwo(ephSk, sk, rkgAggShareRound1, rkgShare)
 	return nil
 }
 

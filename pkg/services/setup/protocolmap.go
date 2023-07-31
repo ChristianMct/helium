@@ -105,11 +105,10 @@ func DescriptionToSignatureList(sd Description) (SignatureList, ReceiversMap) {
 
 	}
 	if len(sd.Rlk) > 0 {
-		sign := protocols.Signature{Type: protocols.RKG}
-		sl = append(sl, sign)
+		sl = append(sl, protocols.Signature{Type: protocols.RKG_1}, protocols.Signature{Type: protocols.RKG_2})
 
 		rlkReceivers := utils.NewSet(sd.Rlk)
-		rm[sign.String()] = rlkReceivers
+		rm[protocols.Signature{Type: protocols.RKG_2}.String()] = rlkReceivers
 	}
 	for _, pk := range sd.Pk {
 		if len(pk.Receivers) > 0 {

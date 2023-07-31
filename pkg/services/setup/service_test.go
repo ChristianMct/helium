@@ -587,8 +587,8 @@ func TestQuery(t *testing.T) {
 			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.CKG}, false)
 
 			// rlk: {light-0, light-1}
-			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RKG}, true)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RKG}, true)
+			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RKG_2}, true)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RKG_2}, true)
 
 			// rtk[5]: {light-1}
 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, false)

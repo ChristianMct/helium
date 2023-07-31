@@ -25,18 +25,24 @@ type testSetting struct {
 var testSettings = []testSetting{
 	{N: 2},
 	{N: 3},
-	{N: 3, T: 2},
 	{N: 3, Helper: true},
+	{N: 3, T: 2},
 	{N: 3, T: 2, Helper: true},
 }
 
 func TestProtocols(t *testing.T) {
+
 	for _, ts := range testSettings {
+
+		te := newTestEnvironment(ts, rlwe.TestPN12QP109)
+
+		rkgPart := te.getParticipants(ts.T)
 		for _, pType := range []Type{
-			SKG,
+			//SKG,
 			CKG,
 			RTG,
-			RKG,
+			RKG_1,
+			RKG_2,
 		} {
 
 			if pType == SKG && (ts.Helper || ts.T == 0) {
@@ -44,7 +50,6 @@ func TestProtocols(t *testing.T) {
 			}
 
 			t.Run(fmt.Sprintf("Type=%s/N=%d/T=%d/Helper=%v", pType, ts.N, ts.T, ts.Helper), func(t *testing.T) {
-				te := newTestEnvironment(ts, rlwe.TestPN12QP109)
 				pd := Descriptor{Signature: Signature{Type: pType}}
 				if pType == RTG {
 					pd.Signature.Args = map[string]string{"GalEl": "5"}
@@ -54,6 +59,9 @@ func TestProtocols(t *testing.T) {
 				} else {
 					pd.Participants = te.getParticipants(ts.T)
 					pd.Aggregator = te.getAggregatorID()
+				}
+				if pType == RKG_1 || pType == RKG_2 {
+					pd.Participants = rkgPart
 				}
 				te.runAndCheck(pd, t)
 			})
@@ -66,6 +74,7 @@ type testEnvironment struct {
 	*node.LocalTest
 	allOutgoingShares chan Share
 	incShareForParty  map[pkg.NodeID]chan Share
+	aggShareRkg1      Share
 }
 
 func newTestEnvironment(ts testSetting, params rlwe.ParametersLiteral) *testEnvironment {
@@ -112,14 +121,23 @@ func newTestEnvironment(ts testSetting, params rlwe.ParametersLiteral) *testEnvi
 func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 	aggOutputs := make(map[pkg.NodeID]chan AggregationOutput)
 	instances := make(map[pkg.NodeID]Instance)
+
 	var err error
 	for _, node := range te.LocalTest.Nodes {
 		sess, _ := node.GetSessionFromID("test-session")
+
 		instances[node.ID()], err = NewProtocol(pd, sess)
 		if err != nil {
-			t.Fatal(err)
+			panic(err)
 		}
-		aggOutputs[node.ID()] = instances[node.ID()].Aggregate(context.Background(), te.envForNode(sess.NodeID))
+
+		nodeEnv := te.envForNode(sess.NodeID)
+		if pd.Signature.Type == RKG_2 {
+			go func() {
+				nodeEnv.incomingShares <- te.aggShareRkg1
+			}()
+		}
+		aggOutputs[node.ID()] = instances[node.ID()].Aggregate(context.Background(), nodeEnv)
 	}
 
 	for _, node := range te.Nodes {
@@ -133,43 +151,52 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 			require.Nil(t, aggOut.Round)
 		} else {
 
-			out := <-instances[node.ID()].Output(aggOut)
-
-			if pd.Signature.Type != SKG || te.T != te.N {
-				require.NotNil(t, out.Result)
+			if pd.Signature.Type == RKG_1 {
+				require.NotNil(t, aggOut.Round[0])
+				te.aggShareRkg1 = aggOut.Round[0]
 			}
 
-			switch pd.Signature.Type {
-			case SKG:
-				_, isShamirShare := out.Result.(*drlwe.ShamirSecretShare)
-				require.True(t, isShamirShare)
-				// TODO check SKG correct
-			case CKG:
-				pk, isPk := out.Result.(*rlwe.PublicKey)
-				require.True(t, isPk)
-				log2BoundPk := bits.Len64(uint64(len(te.SessionNodes())) * te.Params.NoiseBound() * uint64(te.Params.N()))
-				require.True(t, rlwe.PublicKeyIsCorrect(pk, te.SkIdeal, te.Params, log2BoundPk))
-			case RTG:
-				swk, isSwk := out.Result.(*rlwe.SwitchingKey)
-				require.True(t, isSwk)
-				log2BoundRtk := bits.Len64(uint64(
-					te.Params.N() * len(swk.Value) * len(swk.Value[0]) *
-						(te.Params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
-							2*3*int(math.Floor(rlwe.DefaultSigma*6)) + te.Params.N()*3)))
-				galEl, _ := strconv.ParseUint(pd.Signature.Args["GalEl"], 10, 64)
-				require.True(t, rlwe.RotationKeyIsCorrect(swk, galEl, te.SkIdeal, te.Params, log2BoundRtk), "rtk for galEl %d should be correct", pd.Signature.Args["GaloisEl"])
-			case RKG:
-				rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
-				require.True(t, isRlk)
-				levelQ, levelP := te.Params.QCount()-1, te.Params.PCount()-1
-				decompSize := te.Params.DecompPw2(levelQ, levelP) * te.Params.DecompRNS(levelQ, levelP)
-				log2BoundRlk := bits.Len64(uint64(
-					te.Params.N() * decompSize * (te.Params.N()*3*int(te.Params.NoiseBound()) +
-						2*3*int(te.Params.NoiseBound()) + te.Params.N()*3)))
+			if pd.Signature.Type == RKG_2 {
+				aggOut.Round = []Share{te.aggShareRkg1, aggOut.Round[0]}
+			}
 
-				require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], te.SkIdeal, te.Params, log2BoundRlk))
-			default:
-				t.Fatalf("invalid protocol type")
+			if pd.Signature.Type != RKG_1 {
+
+				out := <-instances[node.ID()].Output(aggOut)
+				require.NoError(t, out.Error)
+
+				switch pd.Signature.Type {
+				case SKG:
+					_, isShamirShare := out.Result.(*drlwe.ShamirSecretShare)
+					require.True(t, isShamirShare)
+					// TODO check SKG correct
+				case CKG:
+					pk, isPk := out.Result.(*rlwe.PublicKey)
+					require.True(t, isPk)
+					log2BoundPk := bits.Len64(uint64(len(te.SessionNodes())) * te.Params.NoiseBound() * uint64(te.Params.N()))
+					require.True(t, rlwe.PublicKeyIsCorrect(pk, te.SkIdeal, te.Params, log2BoundPk))
+				case RTG:
+					swk, isSwk := out.Result.(*rlwe.SwitchingKey)
+					require.True(t, isSwk)
+					log2BoundRtk := bits.Len64(uint64(
+						te.Params.N() * len(swk.Value) * len(swk.Value[0]) *
+							(te.Params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
+								2*3*int(math.Floor(rlwe.DefaultSigma*6)) + te.Params.N()*3)))
+					galEl, _ := strconv.ParseUint(pd.Signature.Args["GalEl"], 10, 64)
+					require.True(t, rlwe.RotationKeyIsCorrect(swk, galEl, te.SkIdeal, te.Params, log2BoundRtk), "rtk for galEl %d should be correct", pd.Signature.Args["GaloisEl"])
+				case RKG_2:
+					rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
+					require.True(t, isRlk)
+					levelQ, levelP := te.Params.QCount()-1, te.Params.PCount()-1
+					decompSize := te.Params.DecompPw2(levelQ, levelP) * te.Params.DecompRNS(levelQ, levelP)
+					log2BoundRlk := bits.Len64(uint64(
+						te.Params.N() * decompSize * (te.Params.N()*3*int(te.Params.NoiseBound()) +
+							2*3*int(te.Params.NoiseBound()) + te.Params.N()*3)))
+
+					require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], te.SkIdeal, te.Params, log2BoundRlk))
+				default:
+					t.Fatalf("invalid protocol type")
+				}
 			}
 		}
 	}

@@ -2,6 +2,8 @@ module github.com/ldsec/helium
 
 go 1.20
 
+replace github.com/tuneinsight/lattigo/v4 => /Users/mouchet/go/src/github.com/ldsec/lattigo-helium
+
 require (
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/stretchr/testify v1.8.0

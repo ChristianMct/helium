@@ -285,6 +285,17 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 					ctxdl = ctx
 				}
 
+				if pd.Signature.Type == protocols.RKG_2 {
+					aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants}.ID())
+					if err != nil {
+						s.Logf("[participate] [%s] got error on output query: %s", pid, err)
+						panic(err)
+					}
+					go func() {
+						inc <- aggregatedOutput.Round[0]
+					}()
+				}
+
 				aggOut := <-proto.Aggregate(ctxdl, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
 				if aggOut.Error != nil {
 					//panic(aggOut.Error)
@@ -319,13 +330,17 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 	wgSig := sync.WaitGroup{}
 	wgSig.Add(len(sigList))
 	for _, sig := range sigList {
-		pdAggs <- protocols.Descriptor{Signature: sig, Aggregator: s.self}
+		if sig.Type != protocols.RKG_2 {
+			pdAggs <- protocols.Descriptor{Signature: sig, Aggregator: s.self}
+		}
 	}
 
 	go func() {
 		wgSig.Wait()
 		close(pdAggs)
 	}()
+
+	var currRlkShare protocols.Share
 
 	var wg sync.WaitGroup
 	for w := 0; w < parallelAggregation; w++ {
@@ -394,7 +409,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				var ctxdl context.Context
 				if sess.T != len(sess.Nodes) {
 					var timeout time.Duration
-					if proto.Desc().Signature.Type == protocols.RKG {
+					if proto.Desc().Signature.Type == protocols.RKG_1 {
 						timeout = 3 * time.Second
 					} else {
 						timeout = 10 * time.Second
@@ -402,6 +417,12 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					ctxdl, _ = context.WithTimeout(ctx, timeout)
 				} else {
 					ctxdl = ctx
+				}
+
+				if pd.Signature.Type == protocols.RKG_2 {
+					go func() {
+						inc <- currRlkShare
+					}()
 				}
 
 				// s.Logf("[Aggregate] Service is %v", s)
@@ -429,8 +450,20 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 
 				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)}
 
+				if pd.Signature.Type == protocols.RKG_1 {
+					currRlkShare = aggOut.Round[0]
+					pdAggs <- protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_2}, Participants: pd.Participants, Aggregator: s.self}
+				}
+
+				if pd.Signature.Type == protocols.RKG_2 {
+					aggOut.Round = []protocols.Share{currRlkShare, aggOut.Round[0]}
+				}
+
 				// block until it gets a value from the channel
 				out := <-proto.Output(aggOut)
+				if out.Error != nil {
+					s.Logf("Error in protocol %s output: %v", pid, out.Error)
+				}
 
 				outputs <- struct {
 					protocols.Descriptor
@@ -488,6 +521,7 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 
 			// this node is not in the set of receivers for this output
 			if !sigToReceiverSet[pd.Signature.String()].Contains(s.self) {
+				s.Logf("[QueryForOutput] not querying unneeded output for protocol %s", pid)
 				continue
 			}
 
@@ -546,7 +580,7 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 				}
 				break
 			case *rlwe.RelinearizationKey:
-				if err := sess.ObjectStore.Store(output.Signature.ToObjectStore(), res); err != nil {
+				if err := sess.ObjectStore.Store("RLK", res); err != nil {
 					s.Logf("error on Relinearization Key store: %s", err)
 				}
 				break
