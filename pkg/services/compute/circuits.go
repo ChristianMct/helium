@@ -26,11 +26,11 @@ type EvaluationContext interface {
 	// Output outputs the given operand to the context.
 	Output(pkg.Operand, pkg.NodeID)
 
-	// CKS runs a CKS protocol over the provided operand within the context.
-	CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error)
+	// DEC runs a DEC protocol over the provided operand within the context.
+	DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error)
 
 	// PCKS runs a PCKS protocol over the provided operand within the context.
-	PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error)
+	PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error)
 
 	// SubCircuit evaluates a sub-circuit within the context.
 	SubCircuit(pkg.CircuitID, Circuit) (EvaluationContext, error)
@@ -48,7 +48,7 @@ type Circuit func(EvaluationContext) error
 type CircuitDescription struct {
 	InputSet, Ops, OutputSet utils.Set[pkg.OperandLabel]
 	OutputsFor               map[pkg.NodeID]utils.Set[pkg.OperandLabel]
-	KeySwitchOps             map[pkg.ProtocolID]protocols.Descriptor
+	KeySwitchOps             map[string]protocols.Descriptor
 	NeedRlk                  bool
 	GaloisKeys               utils.Set[uint64]
 }
@@ -71,7 +71,7 @@ func newCircuitParserCtx(cid pkg.CircuitID, params bfv.Parameters, nodeMapping m
 			Ops:          utils.NewEmptySet[pkg.OperandLabel](),
 			OutputSet:    utils.NewEmptySet[pkg.OperandLabel](),
 			OutputsFor:   make(map[pkg.NodeID]utils.Set[pkg.OperandLabel]),
-			KeySwitchOps: make(map[pkg.ProtocolID]protocols.Descriptor),
+			KeySwitchOps: make(map[string]protocols.Descriptor),
 			GaloisKeys:   make(utils.Set[uint64]),
 		},
 		SubCtx:      make(map[pkg.CircuitID]*circuitParserContext, 0),
@@ -153,7 +153,7 @@ func (e *circuitParserContext) SubCircuit(id pkg.CircuitID, cd Circuit) (Evaluat
 	return subCtx, err
 }
 
-func (e *circuitParserContext) registerKeyOps(id pkg.ProtocolID, pd protocols.Descriptor) error {
+func (e *circuitParserContext) registerKeyOps(pd protocols.Descriptor) error {
 
 	target, hasTarget := pd.Signature.Args["target"]
 	if !hasTarget {
@@ -164,34 +164,44 @@ func (e *circuitParserContext) registerKeyOps(id pkg.ProtocolID, pd protocols.De
 		pd.Signature.Args["target"] = string(e.nodeMapping[target])
 	}
 
-	if _, exists := e.cDesc.KeySwitchOps[id]; exists {
-		return fmt.Errorf("protocol with id %s exists", id)
+	if _, exists := e.cDesc.KeySwitchOps[pd.Signature.String()]; exists {
+		return fmt.Errorf("protocol with id %s exists", pd.Signature.String())
 	}
 
-	e.cDesc.KeySwitchOps[id] = pd
+	e.cDesc.KeySwitchOps[pd.Signature.String()] = pd
 	return nil
 }
 
-func (e *circuitParserContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	e.Set(in)
-	e.l.Lock()
-	defer e.l.Unlock()
-	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.DEC, Args: params}}
-	if err = e.registerKeyOps(id, pd); err != nil {
-		panic(err)
+func GetProtocolDescriptor(t protocols.Type, in pkg.Operand, params map[string]string) (pd protocols.Descriptor) {
+	parm := make(map[string]string, len(params))
+	for k, v := range params {
+		parm[k] = v
 	}
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))}, nil
+	parm["op"] = string(in.OperandLabel)
+	pd = protocols.Descriptor{Signature: protocols.Signature{Type: t, Args: parm}}
+	return pd
 }
 
-func (e *circuitParserContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+func (e *circuitParserContext) DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.PCKS, Args: params}}
-	if err = e.registerKeyOps(id, pd); err != nil {
+	pd := GetProtocolDescriptor(protocols.DEC, in, params)
+	if err = e.registerKeyOps(pd); err != nil {
 		panic(err)
 	}
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))}, nil
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))}, nil
+}
+
+func (e *circuitParserContext) PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+	e.Set(in)
+	e.l.Lock()
+	defer e.l.Unlock()
+	pd := GetProtocolDescriptor(protocols.PCKS, in, params)
+	if err = e.registerKeyOps(pd); err != nil {
+		panic(err)
+	}
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))}, nil
 }
 
 func (e *circuitParserContext) Parameters() bfv.Parameters {

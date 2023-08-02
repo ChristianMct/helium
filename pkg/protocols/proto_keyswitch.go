@@ -20,7 +20,7 @@ type keySwitchProtocol struct {
 	input     *rlwe.Ciphertext
 }
 
-func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, outputKey OutputKey) (KeySwitchInstance, error) {
+func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session) (KeySwitchInstance, error) {
 
 	params := *sess.Params
 
@@ -49,11 +49,23 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, outputKey OutputKey)
 		ks.outputKey = rlwe.NewSecretKey(params) // target key is zero for decryption
 	case PCKS:
 		ks.proto, err = NewPCKSProtocol(params, pd.Signature.Args)
-		ks.outputKey = outputKey
+		pk, err := sess.GetOutputPkForNode(pkg.NodeID(target))
+		if err != nil {
+			return nil, err
+		}
+		ks.outputKey = pk
 	}
 	if err != nil {
-		ks = nil
+		return nil, err
 	}
+
+	if ks.shareProviders.Contains(ks.self) {
+		ks.sk, err = sess.GetSecretKeyForGroup(pd.Participants)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return ks, nil
 }
 
@@ -85,11 +97,9 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 		share.Round = 1
 	}
 
-	if p.shareProviders.Contains(p.self) {
-		skGroup := p.shareProviders.Copy()
-		if p.Signature.Type == DEC {
-			skGroup.Add(p.target)
-		}
+	providesShare := p.shareProviders.Contains(p.self) && (p.self != p.target || p.Signature.Type != DEC)
+
+	if providesShare {
 		errGen := p.proto.GenShare(p.sk, p.outputKey, p.input, share)
 		if errGen != nil {
 			panic(errGen)
@@ -99,20 +109,27 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 	}
 
 	if p.IsAggregator() {
-		p.agg = *newShareAggregator(p.shareProviders, share, p.proto.AggregatedShares)
+
+		sp := p.shareProviders
+		if p.Signature.Type == DEC {
+			sp.Remove(p.target)
+		}
+
+		p.agg = *newShareAggregator(sp, share, p.proto.AggregatedShares)
 
 		errAggr := p.aggregateShares(ctx, p.agg, env)
 		if errAggr != nil {
-			log.Printf("%s | [%s] failed: %s\n", p.self, p.ID(), errAggr)
+			log.Printf("%s | [%s] failed: %s\n", p.self, p.HID(), errAggr)
 			return AggregationOutput{Error: errAggr}
 		}
 		share.AggregateFor = p.shareProviders.Copy()
 		return AggregationOutput{Round: []Share{share}}
 	}
-	if p.shareProviders.Contains(p.self) {
+
+	if providesShare {
 		env.OutgoingShares() <- share
 	}
-	log.Printf("%s | [%s] completed aggregation\n", p.self, p.ID())
+	log.Printf("%s | [%s] completed aggregation\n", p.self, p.HID())
 	return AggregationOutput{}
 }
 

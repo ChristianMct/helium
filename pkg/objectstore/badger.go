@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v4"
 )
 
 // ObjectStore is a type implementing the objectstore.ObjectStore interface with a permanent storage backend.
@@ -23,7 +23,7 @@ func NewBadgerObjectStore(conf Config) (ks *badgerObjectStore, err error) {
 	opt := badger.DefaultOptions(conf.DBPath).WithValueLogFileSize(10 * (1 << 20)).WithMemTableSize(5 * (1 << 20)).WithValueThreshold(1 << 19)
 	db, err := badger.Open(opt)
 	if err != nil {
-		return nil, fmt.Errorf("Could not instantiate BadgerDB: %s\n", err)
+		return nil, fmt.Errorf("could not instantiate BadgerDB: %s", err)
 	}
 	return &badgerObjectStore{db: db, bytesStored: 0}, nil
 }

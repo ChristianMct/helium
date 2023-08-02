@@ -6,7 +6,6 @@ import (
 	"log"
 	"math/rand"
 
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -144,6 +143,8 @@ type Session struct {
 	tsk      *drlwe.ShamirSecretShare
 	rlkEphSk *rlwe.SecretKey
 
+	pk *rlwe.PublicKey
+
 	PublicSeed []byte
 	Params     *rlwe.Parameters
 
@@ -187,6 +188,8 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 		sessParams.T = len(sessParams.Nodes)
 	}
 
+	kgen := rlwe.NewKeyGenerator(*sess.Params)
+
 	// node generates its secret-key for the session
 	if utils.NewSet(sessParams.Nodes).Contains(nodeID) {
 		// kg := rlwe.NewKeyGenerator(fheParams)
@@ -206,8 +209,12 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 			sess.SetThresholdSecretKey(sess.tsk)
 		}
 
-		sess.rlkEphSk = rlwe.NewKeyGenerator(*sess.Params).GenSecretKey()
+		sess.rlkEphSk = kgen.GenSecretKey()
 		sess.SetRLKEphemeralSecretKey(sess.rlkEphSk)
+	} else {
+		sess.sk, sess.pk = kgen.GenKeyPair()
+		sess.SetSecretKey(sess.sk)
+		sess.SetPublicKey(sess.pk)
 	}
 
 	//sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
@@ -220,7 +227,7 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 func (s *Session) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
 	cpk := new(rlwe.PublicKey)
 
-	if err := s.ObjectStore.Load(api.ProtocolType_CKG.String(), cpk); err != nil {
+	if err := s.ObjectStore.Load("CKG()", cpk); err != nil {
 		return nil, fmt.Errorf("error while loading the collective public key: %w", err)
 	}
 
@@ -229,7 +236,7 @@ func (s *Session) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
 
 // SetCollectivePublicKey stores the collective public key into the ObjectStore.
 func (s *Session) SetCollectivePublicKey(cpk *rlwe.PublicKey) error {
-	if err := s.ObjectStore.Store(api.ProtocolType_CKG.String(), cpk); err != nil {
+	if err := s.ObjectStore.Store("CKG()", cpk); err != nil {
 		return fmt.Errorf("error while storing the collective public key: %w", err)
 	}
 
@@ -240,7 +247,7 @@ func (s *Session) SetCollectivePublicKey(cpk *rlwe.PublicKey) error {
 func (s *Session) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
 	rlk := new(rlwe.RelinearizationKey)
 
-	if err := s.ObjectStore.Load("RLK", rlk); err != nil {
+	if err := s.ObjectStore.Load("RKG_2()", rlk); err != nil {
 		return nil, fmt.Errorf("error while loading the relinearization key: %w", err)
 	}
 
@@ -249,7 +256,7 @@ func (s *Session) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
 
 // SetRelinearizationKey stores the relinearization key into the ObjectStore.
 func (s *Session) SetRelinearizationKey(rlk *rlwe.RelinearizationKey) error {
-	if err := s.ObjectStore.Store("RLK", rlk); err != nil {
+	if err := s.ObjectStore.Store("RKG_2()", rlk); err != nil {
 		return fmt.Errorf("error while storing the relinearization key: %w", err)
 	}
 
@@ -259,9 +266,7 @@ func (s *Session) SetRelinearizationKey(rlk *rlwe.RelinearizationKey) error {
 // SetRotationKey loads the rotation key identified by the Galois element from the ObjectStore.
 func (s *Session) GetRotationKey(galEl uint64) (*rlwe.SwitchingKey, error) {
 	rtk := new(rlwe.SwitchingKey)
-	args := map[string]string{"GalEl": fmt.Sprint(galEl)}
-
-	if err := s.ObjectStore.Load(api.ProtocolType_RTG.String()+fmt.Sprint(args), rtk); err != nil {
+	if err := s.ObjectStore.Load(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
 		return nil, fmt.Errorf("error while loading the rotation key with galEl %d: %w", galEl, err)
 	}
 
@@ -270,10 +275,26 @@ func (s *Session) GetRotationKey(galEl uint64) (*rlwe.SwitchingKey, error) {
 
 // SetRotationKey stores the rotation key identified by the Galois element into the ObjectStore.
 func (s *Session) SetRotationKey(rtk *rlwe.SwitchingKey, galEl uint64) error {
-	args := map[string]string{"GalEl": fmt.Sprint(galEl)}
-
-	if err := s.ObjectStore.Store(api.ProtocolType_RTG.String()+fmt.Sprint(args), rtk); err != nil {
+	if err := s.ObjectStore.Store(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
 		return fmt.Errorf("error while storing the rotation key with galEl %d: %w", galEl, err)
+	}
+
+	return nil
+}
+
+func (s *Session) GetPublicKey() (*rlwe.PublicKey, error) {
+	cpk := new(rlwe.PublicKey)
+
+	if err := s.ObjectStore.Load("PK", cpk); err != nil {
+		return nil, fmt.Errorf("error while loading the collective public key: %w", err)
+	}
+
+	return cpk, nil
+}
+
+func (s *Session) SetPublicKey(cpk *rlwe.PublicKey) error {
+	if err := s.ObjectStore.Store("PK", cpk); err != nil {
+		return fmt.Errorf("error while storing the collective public key: %w", err)
 	}
 
 	return nil
@@ -282,9 +303,8 @@ func (s *Session) SetRotationKey(rtk *rlwe.SwitchingKey, galEl uint64) error {
 // GetOutputPkForNode loads the output public key for a node from the ObjectStore.
 func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists error) {
 	outputPk := rlwe.NewPublicKey(*s.Params)
-	indexStr := fmt.Sprintf("%s%v", api.ProtocolType_PK, map[string]string{"Sender": string(nid)})
 
-	if err := s.ObjectStore.Load(indexStr, outputPk); err != nil {
+	if err := s.ObjectStore.Load(fmt.Sprintf("PK(Sender=%s)", nid), outputPk); err != nil {
 		return nil, fmt.Errorf("error while loading the output public key of node %s: %w", nid, err)
 	}
 
@@ -293,9 +313,7 @@ func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists err
 
 // SetOutputPkForNode stores the output public key for a node into the ObjectStore.
 func (s *Session) SetOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error {
-	indexStr := fmt.Sprintf("%s%v", api.ProtocolType_PK, map[string]string{"Sender": string(nid)})
-
-	if err := s.ObjectStore.Store(indexStr, outputPk); err != nil {
+	if err := s.ObjectStore.Store(fmt.Sprintf("PK(Sender=%s)", nid), outputPk); err != nil {
 		return fmt.Errorf("error while storing the output public key of node %s: %w", nid, err)
 	}
 

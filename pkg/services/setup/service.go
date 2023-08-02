@@ -177,7 +177,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 func (s *Service) filterSignatureList(sl SignatureList, sess *pkg.Session) (noResult, hasResult SignatureList) {
 	noResult, hasResult = make(SignatureList, 0), make(SignatureList, 0)
 	for _, sig := range sl {
-		has, err := sess.ObjectStore.IsPresent(sig.ToObjectStore())
+		has, err := sess.ObjectStore.IsPresent(sig.String())
 		if err != nil {
 			panic(err)
 		}
@@ -575,20 +575,17 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 		if output.Result != nil {
 			switch res := output.Result.(type) {
 			case *rlwe.PublicKey:
-				if err := sess.ObjectStore.Store(output.Signature.ToObjectStore(), res); err != nil {
+				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					s.Logf("error on Public Key store: %s", err)
 				}
-				break
 			case *rlwe.RelinearizationKey:
-				if err := sess.ObjectStore.Store("RLK", res); err != nil {
+				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					s.Logf("error on Relinearization Key store: %s", err)
 				}
-				break
 			case *rlwe.SwitchingKey:
-				if err := sess.ObjectStore.Store(output.Signature.ToObjectStore(), res); err != nil {
+				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					s.Logf("error on Rotation Key Store: %s", err)
 				}
-				break
 			default:
 				s.Logf("got output for protocol %s: %v", output.ID(), output)
 			}

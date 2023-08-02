@@ -527,8 +527,8 @@ func TestQuery(t *testing.T) {
 		clients := localTest.SessionNodes()
 
 		setup := setup.Description{
-			Cpk: []pkg.NodeID{clients[0].ID()},
-			Rlk: localTest.SessionNodesIds(),
+			Cpk: localTest.SessionNodesIds(),
+			Rlk: []pkg.NodeID{cloud.ID()},
 			GaloisKeys: []struct {
 				GaloisEl  uint64
 				Receivers []pkg.NodeID
@@ -584,11 +584,11 @@ func TestQuery(t *testing.T) {
 
 			// cpk: {light-0}
 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.CKG}, true)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.CKG}, false)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.CKG}, true)
 
 			// rlk: {light-0, light-1}
-			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RKG_2}, true)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RKG_2}, true)
+			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RKG_2}, false)
+			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RKG_2}, false)
 
 			// rtk[5]: {light-1}
 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, false)
@@ -606,12 +606,12 @@ func TestQuery(t *testing.T) {
 }
 
 func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signature, expectedPresence bool) {
-	present, err := sess.IsPresent(sign.ToObjectStore())
+	present, err := sess.IsPresent(sign.String())
 	if err != nil {
 		panic("Error in IsPresent")
 	}
 
-	require.Equal(t, present, expectedPresence)
+	require.Equal(t, expectedPresence, present)
 }
 
 // // TestPeerToPeerSetup tests the peer to peer setup with N full nodes.

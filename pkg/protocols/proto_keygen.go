@@ -116,19 +116,6 @@ func (t Signature) String() string {
 	return fmt.Sprintf("%s(%s)", t.Type, strings.Join(args, ","))
 }
 
-// ToObjectStore returns a string used to index the output of the protocol into the ObjectStore.
-func (t Signature) ToObjectStore() string {
-	if t.Args == nil {
-		t.Args = map[string]string{} // prevents different rep for nil and empty
-	}
-	s := fmt.Sprint(t.Type)
-	if len(t.Args) > 0 {
-		s += fmt.Sprint(t.Args)
-	}
-
-	return s
-}
-
 func (s Signature) Equals(other Signature) bool {
 	if s.Type != other.Type {
 		return false
@@ -158,20 +145,7 @@ type cpkProtocol struct {
 	agg   shareAggregator
 	crs   drlwe.CRS
 	crp   CRP
-	//prevRoundShare *Share
 }
-
-// type rkgProtocol struct {
-// 	*protocol
-// 	proto      LattigoKeygenProtocol
-// 	agg1, agg2 shareAggregator
-// 	crs        drlwe.CRS
-// 	crp        CRP
-
-// 	// state
-// 	ephSk      *rlwe.SecretKey
-// 	aggShareR1 *Share
-// }
 
 func NewProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 	switch pd.Signature.Type {
@@ -181,7 +155,7 @@ func NewProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 	case CKG, RTG, RKG_1, RKG_2, PK:
 		return NewKeygenProtocol(pd, sess)
 	case CKS, DEC, PCKS:
-		return NewKeyswitchProtocol(pd, sess, nil)
+		return NewKeyswitchProtocol(pd, sess)
 	default:
 		return nil, fmt.Errorf("unknown protocol type: %s", pd.Signature.Type)
 	}
@@ -193,9 +167,6 @@ func newProtocol(pd Descriptor, sess *pkg.Session) (p *protocol, err error) {
 	p.Descriptor = pd
 	p.ProtocolID = pd.ID()
 	p.shareProviders = utils.NewSet(pd.Participants)
-	if p.shareProviders.Contains(p.self) {
-		p.sk, err = sess.GetSecretKeyForGroup(pd.Participants)
-	}
 	return p, err
 }
 
@@ -245,18 +216,28 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 		}
 		p.proto, err = NewRKGProtocol(*sess.Params, ephSk, 2, pd.Signature.Args)
 		inst = p
-	// case PK:
-	// 	p := new(pkProtocol)
-	// 	p.protocol = protocol
-	// 	p.crs = sess.GetCRSForProtocol(pd.ID)
-	// 	p.proto, err = NewCKGProtocol(*sess.Params, pd.Args)
-	// 	inst = p
+	case PK:
+		p := new(pkProtocol)
+		p.protocol = protocol
+		p.crs = GetCRSForProtocol(pd, sess)
+		p.proto, err = NewCKGProtocol(*sess.Params, pd.Signature.Args)
+		inst = p
 	default:
 		err = fmt.Errorf("unknown protocol type: %s", pd.Signature.Type)
 	}
 	if err != nil {
 		inst = nil
 	}
+
+	if protocol.shareProviders.Contains(protocol.self) {
+		switch pd.Signature.Type {
+		case CKG, RKG_1, RKG_2, RTG:
+			protocol.sk, err = sess.GetSecretKeyForGroup(pd.Participants)
+		case PK:
+			protocol.sk, err = sess.GetSecretKey()
+		}
+	}
+
 	return inst, err
 }
 
@@ -377,165 +358,6 @@ func (p *cpkProtocol) Output(agg AggregationOutput) chan Output {
 	return out
 }
 
-// func (p *rkgProtocol) Aggregate(ctx context.Context, env Transport) chan AggregationOutput {
-// 	output := make(chan AggregationOutput)
-// 	go func() {
-// 		switch p.Signature.Type {
-// 		case RKG_1:
-// 			output <- p.runRoundOne(ctx, env)
-// 		case RKG_2:
-// 			output <- p.runRoundTwo(ctx, env)
-// 		default:
-// 			panic("bad protocol type")
-// 		}
-
-// 	}()
-// 	return output
-// }
-
-// // runRoundOne runs the rkgProtocol allowing participants to provide shares and aggregators to aggregate such shares.
-// func (p *rkgProtocol) runRoundOne(ctx context.Context, env Transport) AggregationOutput {
-
-// 	p.Logf("started running with %v", p.Descriptor)
-
-// 	var err error
-// 	p.crp, err = p.proto.ReadCRP(p.crs)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	var shareR1, shareR2 Share
-// 	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
-// 		p.ephSk, shareR1, shareR2 = p.proto.AllocateShare()
-// 		shareR1.AggregateFor = utils.NewEmptySet[pkg.NodeID]()
-// 		shareR2.AggregateFor = utils.NewEmptySet[pkg.NodeID]()
-// 	}
-
-// 	if p.shareProviders.Contains(p.self) {
-// 		errGen := p.proto.GenShareRoundOne(p.sk, p.crp, p.ephSk, shareR1)
-// 		if errGen != nil {
-// 			panic(errGen)
-// 		}
-// 		shareR1.ProtocolID = p.ID()
-// 		shareR1.Type = p.Signature.Type
-// 		shareR1.From = p.self
-// 		shareR1.To = []pkg.NodeID{p.Desc().Aggregator}
-// 		shareR1.AggregateFor = utils.NewSingletonSet(p.self)
-// 		shareR1.Round = 1
-// 	}
-
-// 	if p.IsAggregator() {
-// 		p.agg1 = *newShareAggregator(p.shareProviders, shareR1, p.proto.AggregatedShares)
-
-// 		errAggr := p.aggregateShares(ctx, p.agg1, env)
-// 		if errAggr != nil {
-// 			p.Logf("failed: %s", errAggr)
-// 			return AggregationOutput{Error: errAggr}
-// 		}
-
-// 		p.Logf("completed round 1 aggregation")
-
-// 		shareR1 = p.agg1.GetAggregatedShare()
-// 		shareR1.ProtocolID = p.ID()
-// 		shareR1.Type = p.Signature.Type
-// 		shareR1.From = p.self
-// 		shareR1.To = p.Participants
-// 		shareR1.AggregateFor = p.shareProviders.Copy()
-// 		p.Signature.Type = RKG_2
-// 		p.aggShareR1 = &shareR1
-// 		return AggregationOutput{Round: []Share{shareR1}}
-// 	}
-
-// 	p.Signature.Type = RKG_2
-
-// 	if p.shareProviders.Contains(p.self) {
-// 		env.OutgoingShares() <- shareR1 // must be done after aggregator reads from incoming chan
-// 	}
-
-// 	return AggregationOutput{}
-// }
-
-// func (p *rkgProtocol) runRoundTwo(ctx context.Context, env Transport) AggregationOutput {
-
-// 	p.Logf("started running with %v", p.Descriptor)
-
-// 	var err error
-// 	if p.aggShareR1 == nil && p.shareProviders.Contains(p.self) {
-// 		select {
-// 		case s := <-env.IncomingShares():
-// 			p.aggShareR1 = &s
-// 		case <-ctx.Done():
-// 			err = fmt.Errorf("%s | timeout while waiting for round 1 aggregated share for protocol %s", p.self, p.ID())
-// 			return AggregationOutput{Error: err}
-// 		}
-// 		log.Printf("%s | got round 1 aggregated share\n", p.self)
-// 	}
-
-// 	shareR2 := p.proto.AllocateShare()
-// 	shareR2.AggregateFor = utils.NewEmptySet[pkg.NodeID]()
-// 	if p.shareProviders.Contains(p.self) {
-
-// 		errGen := p.proto.GenShare(p.sk, *p.aggShareR1, shareR2)
-// 		if errGen != nil {
-// 			panic(errGen)
-// 		}
-// 		shareR2.ProtocolID = p.ID()
-// 		shareR2.Type = p.Signature.Type
-// 		shareR2.From = p.self
-// 		shareR2.To = []pkg.NodeID{p.Desc().Aggregator}
-// 		shareR2.AggregateFor = utils.NewSingletonSet(p.self)
-// 		shareR2.Round = 2
-// 	}
-
-// 	if p.IsAggregator() {
-// 		p.agg2 = *newShareAggregator(p.shareProviders, shareR2, p.proto.AggregatedShares)
-// 		errAggr := p.aggregateShares(ctx, p.agg2, env)
-// 		if errAggr != nil {
-// 			p.Logf("failed: %s", errAggr)
-// 			return AggregationOutput{Error: errAggr}
-// 		}
-
-// 		p.Logf("completed round 2 aggregation")
-
-// 		shareR2 = p.agg2.GetAggregatedShare()
-// 		shareR2.ProtocolID = p.ID()
-// 		shareR2.Type = p.Signature.Type
-// 		shareR2.From = p.self
-// 		shareR2.AggregateFor = p.shareProviders.Copy()
-// 		p.Logf("completed aggregation")
-// 		return AggregationOutput{Round: []Share{shareR2}}
-// 	}
-
-// 	if p.shareProviders.Contains(p.self) {
-// 		env.OutgoingShares() <- shareR2 // must be done after aggregator reads from incoming chan
-// 	}
-
-// 	return AggregationOutput{}
-// }
-
-// func (p rkgProtocol) Output(agg AggregationOutput) chan Output { // TODO Copy-past from pkProtocol
-// 	out := make(chan Output, 1)
-// 	if agg.Error != nil {
-// 		out <- Output{Error: fmt.Errorf("error at aggregation: %w", agg.Error)}
-// 		return out
-// 	}
-// 	if p.crp == nil {
-// 		var err error
-// 		p.crp, err = p.proto.ReadCRP(p.crs)
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 	}
-// 	res, err := p.proto.Finalize(p.crp, agg.Round...)
-// 	if err != nil {
-// 		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
-// 		return out
-// 	}
-// 	p.Logf("finalized protocol")
-// 	out <- Output{Result: res}
-// 	return out
-// }
-
 func (p *protocol) ID() pkg.ProtocolID {
 	return p.ProtocolID
 }
@@ -555,11 +377,6 @@ func (p *skgProtocol) AllocateShare() Share {
 func (p *keySwitchProtocol) AllocateShare() Share {
 	return p.proto.AllocateShare()
 }
-
-// func (p *rkgProtocol) AllocateShare() Share {
-// 	s := p.proto.AllocateShare()
-// 	return s
-// }
 
 func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregator, env Transport) error {
 	for {

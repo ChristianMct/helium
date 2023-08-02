@@ -52,7 +52,7 @@ type fullEvaluatorContext struct {
 
 	outgoingOps, ops, inputOps map[pkg.OperandLabel]*FutureOperand
 
-	protos map[pkg.ProtocolID]protocols.KeySwitchInstance
+	protos map[string]protocols.KeySwitchInstance
 
 	inputs, outputs chan pkg.Operand
 
@@ -102,23 +102,11 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 		se.ops[opl] = &FutureOperand{}
 	}
 
-	se.protos = make(map[pkg.ProtocolID]protocols.KeySwitchInstance)
+	se.protos = make(map[string]protocols.KeySwitchInstance)
 
 	for protoID, protoDesc := range se.cDesc.KeySwitchOps {
-		var aggregator pkg.NodeID
-		if agg, hasAgg := protoDesc.Signature.Args["aggregator"]; hasAgg {
-			aggregator = pkg.NodeID(agg)
-		} else {
-			aggregator = pkg.NodeID(protoDesc.Signature.Args["target"]) // TODO: check that aggregator is full node
-		}
-
-		protoDesc.Aggregator = aggregator
-
+		protoDesc.Aggregator = s.id
 		part := utils.NewSet(sess.Nodes)
-		if protoDesc.Signature.Type == protocols.DEC {
-			part.Remove(pkg.NodeID(protoDesc.Signature.Args["target"]))
-		}
-
 		protoDesc.Participants = part.Elements() // TODO decide on exec
 		proto, err := protocols.NewProtocol(protoDesc, sess)
 		if err != nil {
@@ -234,24 +222,28 @@ func (se *fullEvaluatorContext) SubCircuit(_ pkg.CircuitID, _ Circuit) (Evaluati
 	panic("not implemented") // TODO: Implement
 }
 
-func (se *fullEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	return se.runKeySwitch(id, in, params)
+func (se *fullEvaluatorContext) DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+	pd := GetProtocolDescriptor(protocols.DEC, in, params)
+	pd.Aggregator = se.sess.NodeID
+	pd.Participants = se.sess.Nodes
+	return se.runKeySwitch(pd, in)
 }
 
-func (se *fullEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	return se.runKeySwitch(id, in, params)
+func (se *fullEvaluatorContext) PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+	pd := GetProtocolDescriptor(protocols.PCKS, in, params)
+	pd.Aggregator = se.sess.NodeID
+	pd.Participants = se.sess.Nodes
+	return se.runKeySwitch(pd, in)
 }
 
-func (se *fullEvaluatorContext) runKeySwitch(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+func (se *fullEvaluatorContext) runKeySwitch(pd protocols.Descriptor, in pkg.Operand) (out pkg.Operand, err error) {
 	se.Set(in)
 
-	_ = params // TODO will need this for dynamic participant sets
-
-	cksInt := se.protos[id]
+	cksInt := se.protos[pd.Signature.String()]
 
 	incShares := make(chan protocols.Share)
 	se.runningProtosMu.Lock()
-	se.runningProtos[id] = struct {
+	se.runningProtos[cksInt.ID()] = struct {
 		pd       protocols.Descriptor
 		incoming chan protocols.Share
 	}{cksInt.Desc(), incShares}
@@ -266,7 +258,7 @@ func (se *fullEvaluatorContext) runKeySwitch(id pkg.ProtocolID, in pkg.Operand, 
 
 	out = pkg.Operand{Ciphertext: (<-cksInt.Output(agg)).Result.(*rlwe.Ciphertext)}
 
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))
+	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))
 	return out, nil
 }
 

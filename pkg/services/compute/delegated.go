@@ -8,7 +8,6 @@ import (
 
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
-	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/ldsec/helium/pkg"
 	"github.com/tuneinsight/lattigo/v4/bfv"
@@ -135,7 +134,7 @@ func (de *delegatedEvaluatorContext) Output(op pkg.Operand, to pkg.NodeID) {
 	}
 }
 
-func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, id pkg.ProtocolID, in pkg.Operand) (out pkg.Operand, err error) {
+func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, in pkg.Operand) (out pkg.Operand, err error) {
 	p, err := protocols.NewProtocol(pd, de.sess)
 	if err != nil {
 		return pkg.Operand{}, err
@@ -157,21 +156,22 @@ func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, id pk
 	// 	out = pkg.Operand{Ciphertext: (<-cks.Output(*agg)).Result.(*rlwe.Ciphertext)}
 	// }
 
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, id))
+	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))
 	return out, nil
 }
 
-func (de *delegatedEvaluatorContext) CKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	parts := utils.NewSet(de.sess.Nodes)
-	parts.Remove(pkg.NodeID(params["target"]))
-	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.DEC, Args: params}, Aggregator: de.delegateID, Participants: parts.Elements()} // TODO receive desc from evaluator
-
-	return de.runKeySwitch(pd, id, in)
+func (de *delegatedEvaluatorContext) DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+	pd := GetProtocolDescriptor(protocols.DEC, in, params)
+	pd.Aggregator = de.delegateID
+	pd.Participants = de.sess.Nodes
+	return de.runKeySwitch(pd, in)
 }
 
-func (de *delegatedEvaluatorContext) PCKS(id pkg.ProtocolID, in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	pd := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.PCKS, Args: params}, Aggregator: de.delegateID, Participants: de.sess.Nodes}
-	return de.runKeySwitch(pd, id, in)
+func (de *delegatedEvaluatorContext) PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
+	pd := GetProtocolDescriptor(protocols.PCKS, in, params)
+	pd.Aggregator = de.delegateID
+	pd.Participants = de.sess.Nodes
+	return de.runKeySwitch(pd, in)
 }
 
 func (de *delegatedEvaluatorContext) SubCircuit(pkg.CircuitID, Circuit) (EvaluationContext, error) {

@@ -98,11 +98,10 @@ var pirN = func(N int, ec compute.EvaluationContext) error {
 	// output encrypted under CPK
 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 
-	opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-		"target":     "node-0",
-		"aggregator": "cloud",
-		"lvl":        strconv.Itoa(params.MaxLevel()),
-		"smudging":   "1.0",
+	opOut, err := ec.DEC(opRes, map[string]string{
+		"target":   "node-0",
+		"lvl":      strconv.Itoa(params.MaxLevel()),
+		"smudging": "1.0",
 	})
 	if err != nil {
 		return err
@@ -155,11 +154,10 @@ var psiN = func(N int, ec compute.EvaluationContext) error {
 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: resOp.Ciphertext}
 
 	params := ec.Parameters().Parameters
-	opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-		"target":     "node-0",
-		"aggregator": "cloud",
-		"lvl":        strconv.Itoa(params.MaxLevel()),
-		"smudging":   "1.0",
+	opOut, err := ec.DEC(opRes, map[string]string{
+		"target":   "node-0",
+		"lvl":      strconv.Itoa(params.MaxLevel()),
+		"smudging": "1.0",
 	})
 	if err != nil {
 		return err
@@ -177,11 +175,10 @@ var testCircuits = map[string]compute.Circuit{
 		opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
 
 		params := ec.Parameters().Parameters
-		opOut, err := ec.CKS("DEC-0", opRes, map[string]string{
-			"target":     "node-0",
-			"aggregator": "cloud",
-			"lvl":        strconv.Itoa(params.MaxLevel()),
-			"smudging":   "1.0",
+		opOut, err := ec.DEC(opRes, map[string]string{
+			"target":   "node-0",
+			"lvl":      strconv.Itoa(params.MaxLevel()),
+			"smudging": "1.0",
 		})
 		if err != nil {
 			return err
@@ -208,11 +205,10 @@ var testCircuits = map[string]compute.Circuit{
 		opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 
 		params := ec.Parameters().Parameters
-		opOut, err := ec.PCKS("PCKSProtocolID", opRes, map[string]string{
-			"target":     "node-R",
-			"aggregator": "cloud",
-			"lvl":        strconv.Itoa(params.MaxLevel()),
-			"smudging":   "1.0",
+		opOut, err := ec.PCKS(opRes, map[string]string{
+			"target":   "node-R",
+			"lvl":      strconv.Itoa(params.MaxLevel()),
+			"smudging": "1.0",
 		})
 		if err != nil {
 			return err

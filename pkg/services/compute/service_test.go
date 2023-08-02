@@ -82,11 +82,10 @@ var TestCircuits = map[string]Circuit{
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-		opout, err := e.CKS("CKS-0", opres, map[string]string{
-			"target":     "full-0",
-			"aggregator": "full-0",
-			"lvl":        strconv.Itoa(params.MaxLevel()),
-			"smudging":   "1.0",
+		opout, err := e.DEC(opres, map[string]string{
+			"target":   "full-0",
+			"lvl":      strconv.Itoa(params.MaxLevel()),
+			"smudging": "1.0",
 		})
 		if err != nil {
 			return err
@@ -127,11 +126,10 @@ var TestCircuits = map[string]Circuit{
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-		opout, err := e.PCKS("PCKS-0", opres, map[string]string{
-			"target":     "full-0",
-			"aggregator": "full-0",
-			"lvl":        strconv.Itoa(params.MaxLevel()),
-			"smudging":   "1.0",
+		opout, err := e.PCKS(opres, map[string]string{
+			"target":   "full-0",
+			"lvl":      strconv.Itoa(params.MaxLevel()),
+			"smudging": "1.0",
 		})
 		if err != nil {
 			return err
@@ -180,11 +178,10 @@ var TestCircuits = map[string]Circuit{
 
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: res}
-		opout, err := e.CKS("DEC-0", opres, map[string]string{
-			"target":     "light-0",
-			"aggregator": "helper-0",
-			"lvl":        strconv.Itoa(params.MaxLevel()),
-			"smudging":   "1.0",
+		opout, err := e.DEC(opres, map[string]string{
+			"target":   "light-0",
+			"lvl":      strconv.Itoa(params.MaxLevel()),
+			"smudging": "1.0",
 		})
 		if err != nil {
 			return err
@@ -203,11 +200,10 @@ var TestCircuits = map[string]Circuit{
 		opRes := pkg.Operand{OperandLabel: "//helper-0/out-0", Ciphertext: res}
 
 		params := ec.Parameters().Parameters
-		opOut, err := ec.PCKS("PCKSProtocolID", opRes, map[string]string{
-			"target":     "external-0",
-			"aggregator": "helper-0",
-			"lvl":        strconv.Itoa(params.MaxLevel()),
-			"smudging":   "1.0",
+		opOut, err := ec.PCKS(opRes, map[string]string{
+			"target":   "external-0",
+			"lvl":      strconv.Itoa(params.MaxLevel()),
+			"smudging": "1.0",
 		})
 		if err != nil {
 			return err
@@ -367,9 +363,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 								return err
 							}
 							decryptor := bfv.NewDecryptor(bfvParams, sk)
-
 							ptdec := decryptor.DecryptNew(out[0].Ciphertext)
-							fmt.Println(decoder.DecodeUintNew(ptdec))
 							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, decoder.DecodeUintNew(ptdec)[:6])
 						}
 						return nil
@@ -457,8 +451,10 @@ func TestCloudPCKS(t *testing.T) {
 
 				decoder := bfv.NewEncoder(bfvParams)
 
-				var recPk *rlwe.PublicKey
-				//recPk := external_0Sess.GetPublicKey() TODO
+				recPk, err := external_0Sess.GetPublicKey()
+				if err != nil {
+					t.Fatal(err)
+				}
 
 				if err := clou.Session.SetOutputPkForNode("external-0", recPk); err != nil {
 					t.Fatal(err)
@@ -540,7 +536,6 @@ func TestCloudPCKS(t *testing.T) {
 
 						}
 						ptdec := bfv.NewDecryptor(bfvParams, outputSk).DecryptNew(out[0].Ciphertext)
-						fmt.Println(decoder.DecodeUintNew(ptdec)[:6])
 						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, decoder.DecodeUintNew(ptdec)[:6])
 					}
 					return nil
@@ -553,124 +548,123 @@ func TestCloudPCKS(t *testing.T) {
 
 		}
 	}
-
 }
 
-func TestPeerEvalCircuit(t *testing.T) {
+// func TestPeerEvalCircuit(t *testing.T) {
 
-	t.Skip("skipped: current version focuses on the cloud-based model")
+// 	t.Skip("skipped: current version focuses on the cloud-based model")
 
-	for label, cDef := range TestCircuits {
-		if err := RegisterCircuit(label, cDef); err != nil {
-			t.Log(err)
-		}
-	}
+// 	for label, cDef := range TestCircuits {
+// 		if err := RegisterCircuit(label, cDef); err != nil {
+// 			t.Log(err)
+// 		}
+// 	}
 
-	for _, literalParams := range rangeParam {
-		for _, ts := range testSettings {
+// 	for _, literalParams := range rangeParam {
+// 		for _, ts := range testSettings {
 
-			if ts.T == 0 {
-				ts.T = ts.N
-			}
+// 			if ts.T == 0 {
+// 				ts.T = ts.N
+// 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+// 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				var testConfig = node.LocalTestConfig{
-					FullNodes: 4,
-					Session: &pkg.SessionParameters{
-						RLWEParams: literalParams,
-						T:          ts.T,
-					},
-					InsecureChannels: true,
-				}
+// 				var testConfig = node.LocalTestConfig{
+// 					FullNodes: 4,
+// 					Session: &pkg.SessionParameters{
+// 						RLWEParams: literalParams,
+// 						T:          ts.T,
+// 					},
+// 					InsecureChannels: true,
+// 				}
 
-				var cDesc = Signature{CircuitName: "Mul4CKS"}
+// 				var cDesc = Signature{CircuitName: "Mul4CKS"}
 
-				sessionID := pkg.SessionID("test-session")
-				cLabel := pkg.CircuitID("test-circuit-0")
+// 				sessionID := pkg.SessionID("test-session")
+// 				cLabel := pkg.CircuitID("test-circuit-0")
 
-				localtest := node.NewLocalTest(testConfig)
+// 				localtest := node.NewLocalTest(testConfig)
 
-				params := localtest.Params
-				bfvParams, _ := bfv.NewParameters(params, 65537)
-				// initialise key generation
-				kg := rlwe.NewKeyGenerator(params)
-				sk := localtest.SkIdeal
-				cpk := kg.GenPublicKey(sk)
-				rlk := kg.GenRelinearizationKey(sk, 1)
+// 				params := localtest.Params
+// 				bfvParams, _ := bfv.NewParameters(params, 65537)
+// 				// initialise key generation
+// 				kg := rlwe.NewKeyGenerator(params)
+// 				sk := localtest.SkIdeal
+// 				cpk := kg.GenPublicKey(sk)
+// 				rlk := kg.GenRelinearizationKey(sk, 1)
 
-				// recSk, recPk := kg.GenKeyPair()
+// 				// recSk, recPk := kg.GenKeyPair()
 
-				var err error
-				nodes := make([]peer, len(localtest.Nodes))
-				for i, node := range localtest.Nodes {
-					nodes[i].Node = node
-					nodes[i].Service = node.GetComputeService()
-					nodes[i].Session, _ = nodes[i].GetSessionFromID(sessionID)
-					if err = nodes[i].Session.SetCollectivePublicKey(cpk); err != nil {
-						t.Fatal(err)
-					}
-					if err = nodes[i].Session.SetRelinearizationKey(rlk); err != nil {
-						t.Fatal(err)
-					}
-				}
+// 				var err error
+// 				nodes := make([]peer, len(localtest.Nodes))
+// 				for i, node := range localtest.Nodes {
+// 					nodes[i].Node = node
+// 					nodes[i].Service = node.GetComputeService()
+// 					nodes[i].Session, _ = nodes[i].GetSessionFromID(sessionID)
+// 					if err = nodes[i].Session.SetCollectivePublicKey(cpk); err != nil {
+// 						t.Fatal(err)
+// 					}
+// 					if err = nodes[i].Session.SetRelinearizationKey(rlk); err != nil {
+// 						t.Fatal(err)
+// 					}
+// 				}
 
-				encryptor := bfv.NewEncryptor(bfvParams, cpk)
-				decoder := bfv.NewEncoder(bfvParams)
+// 				encryptor := bfv.NewEncryptor(bfvParams, cpk)
+// 				decoder := bfv.NewEncoder(bfvParams)
 
-				inputs := make(map[pkg.NodeID]pkg.Operand)
-				for i, node := range nodes {
-					data := []uint64{1, 1, 1, 1, 1, 1}
-					data[i] = uint64(i + 1)
-					pt := decoder.EncodeNew(data, bfvParams.MaxLevel())
-					ct := encryptor.EncryptNew(pt)
-					inputs[node.Node.ID()] = pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", node.Node.ID(), cLabel)), Ciphertext: ct}
-				}
+// 				inputs := make(map[pkg.NodeID]pkg.Operand)
+// 				for i, node := range nodes {
+// 					data := []uint64{1, 1, 1, 1, 1, 1}
+// 					data[i] = uint64(i + 1)
+// 					pt := decoder.EncodeNew(data, bfvParams.MaxLevel())
+// 					ct := encryptor.EncryptNew(pt)
+// 					inputs[node.Node.ID()] = pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", node.Node.ID(), cLabel)), Ciphertext: ct}
+// 				}
 
-				localtest.Start()
+// 				localtest.Start()
 
-				ctx := pkg.NewContext(&sessionID, nil)
+// 				ctx := pkg.NewContext(&sessionID, nil)
 
-				for _, node := range nodes {
-					err = node.LoadCircuit(ctx, cDesc, cLabel)
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
+// 				for _, node := range nodes {
+// 					err = node.LoadCircuit(ctx, cDesc, cLabel)
+// 					if err != nil {
+// 						t.Fatal(err)
+// 					}
+// 				}
 
-				g := new(errgroup.Group)
-				for _, node := range nodes {
-					node := node
-					nodeDecoder := decoder.ShallowCopy()
-					g.Go(func() error {
-						out, errExec := node.Execute(ctx, cLabel, inputs[node.Node.ID()])
-						if errExec != nil {
-							return fmt.Errorf("node %s: %w", node.Node.ID(), errExec)
-						}
-						if len(out) > 0 {
-							sess, _ := node.GetSessionFromID(sessionID)
-							nodeSK, err := sess.GetSecretKey()
-							if err != nil {
-								t.Fatal(err)
-							}
-							// _ = recSk
-							_ = nodeSK
-							ptdec := bfv.NewDecryptor(bfvParams, nodeSK).DecryptNew(out[0].Ciphertext)
-							// fmt.Println(nodeDecoder.DecodeUintNew(ptdec)[:6])
-							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, nodeDecoder.DecodeUintNew(ptdec)[:6])
-						}
-						return nil
-					})
-				}
+// 				g := new(errgroup.Group)
+// 				for _, node := range nodes {
+// 					node := node
+// 					nodeDecoder := decoder.ShallowCopy()
+// 					g.Go(func() error {
+// 						out, errExec := node.Execute(ctx, cLabel, inputs[node.Node.ID()])
+// 						if errExec != nil {
+// 							return fmt.Errorf("node %s: %w", node.Node.ID(), errExec)
+// 						}
+// 						if len(out) > 0 {
+// 							sess, _ := node.GetSessionFromID(sessionID)
+// 							nodeSK, err := sess.GetSecretKey()
+// 							if err != nil {
+// 								t.Fatal(err)
+// 							}
+// 							// _ = recSk
+// 							_ = nodeSK
+// 							ptdec := bfv.NewDecryptor(bfvParams, nodeSK).DecryptNew(out[0].Ciphertext)
+// 							// fmt.Println(nodeDecoder.DecodeUintNew(ptdec)[:6])
+// 							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, nodeDecoder.DecodeUintNew(ptdec)[:6])
+// 						}
+// 						return nil
+// 					})
+// 				}
 
-				err = g.Wait()
-				if err != nil {
-					t.Fatal(err)
-				}
-			})
-		}
-	}
-}
+// 				err = g.Wait()
+// 				if err != nil {
+// 					t.Fatal(err)
+// 				}
+// 			})
+// 		}
+// 	}
+// }
 
 func GetSha256Hex(b []byte, err error) string {
 	return fmt.Sprintf("%x", sha256.Sum256(b))
