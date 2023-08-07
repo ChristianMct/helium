@@ -17,7 +17,14 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var rangeParam = []rlwe.ParametersLiteral{ /*rlwe.TestPN12QP109 , */ rlwe.TestPN13QP218 /* rlwe.TestPN14QP438, rlwe.TestPN15QP880 */}
+var testPN13QP218 = rlwe.ParametersLiteral{
+	LogN:    13,
+	Q:       []uint64{0x3fffffffef8001, 0x4000000011c001, 0x40000000120001}, // 54 + 54 + 54 bits
+	P:       []uint64{0x7ffffffffb4001},                                     // 55 bits
+	NTTFlag: true,                                                           // TODO should not have to specify this in bfv.NewParameters
+}
+
+var rangeParam = []rlwe.ParametersLiteral{ /*rlwe.TestPN12QP109 , */ testPN13QP218 /* rlwe.TestPN14QP438, rlwe.TestPN15QP880 */}
 
 type testSetting struct {
 	N, T int
@@ -38,15 +45,16 @@ var TestCircuits = map[string]Circuit{
 	"Sum2": func(ec EvaluationContext) error {
 		op1 := ec.Input("//full-0/in-0")
 		op2 := ec.Input("//full-1/in-0")
-		res := ec.AddNew(op1.Ciphertext, op2.Ciphertext)
-		ec.Output(pkg.Operand{OperandLabel: "/out-0", Ciphertext: res}, "full-0")
+		ctOut := rlwe.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevelQ())
+		ec.Add(op1.Ciphertext, op2.Ciphertext, ctOut)
+		ec.Output(pkg.Operand{OperandLabel: "/out-0", Ciphertext: ctOut}, "full-0")
 		return nil
 	},
 
 	"Mul2": func(ec EvaluationContext) error {
 		op1 := ec.Input("//full-0/in-0")
 		op2 := ec.Input("//full-1/in-0")
-		res := ec.MulNew(op1.Ciphertext, op2.Ciphertext)
+		res, _ := ec.MulNew(op1.Ciphertext, op2.Ciphertext)
 		ec.Relinearize(res, res)
 		ec.Output(pkg.Operand{OperandLabel: "/out-0", Ciphertext: res}, "full-0")
 		return nil
@@ -60,8 +68,8 @@ var TestCircuits = map[string]Circuit{
 		op1 := e.Input("//full-1/in-0")
 
 		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
+			ev := e.NewEvaluator()
+			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
 			ev.Relinearize(res, res)
 			lvl2 <- res
 		}()
@@ -70,14 +78,14 @@ var TestCircuits = map[string]Circuit{
 		op3 := e.Input("//full-3/in-0")
 
 		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
+			ev := e.NewEvaluator()
+			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
 			ev.Relinearize(res, res)
 			lvl2 <- res
 		}()
 
 		res1, res2 := <-lvl2, <-lvl2
-		res := e.MulNew(res1, res2)
+		res, _ := e.MulNew(res1, res2)
 		e.Relinearize(res, res)
 
 		params := e.Parameters().Parameters
@@ -104,8 +112,8 @@ var TestCircuits = map[string]Circuit{
 		op1 := e.Input("//full-1/in-0")
 
 		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
+			ev := e.NewEvaluator()
+			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
 			ev.Relinearize(res, res)
 			lvl2 <- res
 		}()
@@ -114,14 +122,14 @@ var TestCircuits = map[string]Circuit{
 		op3 := e.Input("//full-3/in-0")
 
 		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
+			ev := e.NewEvaluator()
+			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
 			ev.Relinearize(res, res)
 			lvl2 <- res
 		}()
 
 		res1, res2 := <-lvl2, <-lvl2
-		res := e.MulNew(res1, res2)
+		res, _ := e.MulNew(res1, res2)
 		e.Relinearize(res, res)
 
 		params := e.Parameters().Parameters
@@ -156,8 +164,8 @@ var TestCircuits = map[string]Circuit{
 
 		lvl2 := make(chan *rlwe.Ciphertext, 2)
 		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
+			ev := e.NewEvaluator()
+			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
 			ev.Relinearize(res, res)
 			lvl2 <- res
 		}()
@@ -166,14 +174,14 @@ var TestCircuits = map[string]Circuit{
 		op3 := <-inputs
 
 		go func() {
-			ev := e.ShallowCopy()
-			res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
+			ev := e.NewEvaluator()
+			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
 			ev.Relinearize(res, res)
 			lvl2 <- res
 		}()
 
 		res1, res2 := <-lvl2, <-lvl2
-		res := e.MulNew(res1, res2)
+		res, _ := e.MulNew(res1, res2)
 		e.Relinearize(res, res)
 
 		params := e.Parameters().Parameters
@@ -195,7 +203,7 @@ var TestCircuits = map[string]Circuit{
 		opIn1 := ec.Input("//light-0/in-0")
 		opIn2 := ec.Input("//light-1/in-0")
 
-		res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+		res, _ := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
 		ec.Relinearize(res, res)
 		opRes := pkg.Operand{OperandLabel: "//helper-0/out-0", Ciphertext: res}
 
@@ -234,8 +242,8 @@ type lightNode struct {
 
 type client struct {
 	lightNode
-	bfv.Encoder
-	rlwe.Encryptor
+	*bfv.Encoder
+	*rlwe.Encryptor
 }
 
 func TestCloudEvalCircuit(t *testing.T) {
@@ -285,7 +293,10 @@ func TestCloudEvalCircuit(t *testing.T) {
 				}
 
 				params := localtest.Params
-				bfvParams, _ := bfv.NewParameters(params, 65537)
+				bfvParams, err := bfv.NewParameters(params, 65537)
+				if err != nil {
+					t.Fatal(err)
+				}
 				// initialise key generation
 				kg := rlwe.NewKeyGenerator(params)
 				sk := localtest.SkIdeal
@@ -293,10 +304,15 @@ func TestCloudEvalCircuit(t *testing.T) {
 				if err := clou.Session.SetSecretKey(sk.CopyNew()); err != nil {
 					t.Fatal(err)
 				}
-				if err := clou.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew())); err != nil {
+				pk, err := kg.GenPublicKeyNew(sk.CopyNew())
+				if err != nil {
 					t.Fatal(err)
 				}
-				if err := clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1)); err != nil {
+				if err := clou.SetCollectivePublicKey(pk); err != nil {
+					t.Fatal(err)
+				}
+				rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
+				if err := clou.SetRelinearizationKey(rlk); err != nil {
 					t.Fatal(err)
 				}
 
@@ -310,7 +326,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, cpk)
+					clients[i].Encryptor, err = bfv.NewEncryptor(bfvParams, cpk)
 				}
 
 				var cSign = Signature{
@@ -344,8 +360,16 @@ func TestCloudEvalCircuit(t *testing.T) {
 					g.Go(func() error {
 						data := []uint64{1, 1, 1, 1, 1, 1}
 						data[i] = uint64(i + 1)
-						pt := client.Encoder.EncodeNew(data, bfvParams.MaxLevel())
-						ct := client.Encryptor.EncryptNew(pt)
+						pt := bfv.NewPlaintext(params, params.MaxLevelQ())
+						err := client.Encoder.Encode(data, pt)
+						if err != nil {
+							t.Fatal(err)
+						}
+						ct, err := client.Encryptor.EncryptNew(pt)
+						if err != nil {
+							t.Fatal(err)
+						}
+
 						op := pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.Node.ID(), cLabel)), Ciphertext: ct}
 						out, errExec := client.Execute(ctx, cLabel, op)
 						if errExec != nil {
@@ -362,9 +386,17 @@ func TestCloudEvalCircuit(t *testing.T) {
 							if err != nil {
 								return err
 							}
-							decryptor := bfv.NewDecryptor(bfvParams, sk)
+							decryptor, err := bfv.NewDecryptor(bfvParams, sk)
+							if err != nil {
+								t.Fatal(err)
+							}
 							ptdec := decryptor.DecryptNew(out[0].Ciphertext)
-							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, decoder.DecodeUintNew(ptdec)[:6])
+							res := make([]uint64, bfvParams.PlaintextSlots())
+							err = decoder.Decode(ptdec, res)
+							if err != nil {
+								t.Fatal(err)
+							}
+							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
 						}
 						return nil
 					})
@@ -440,13 +472,17 @@ func TestCloudPCKS(t *testing.T) {
 				if err := clou.Session.SetSecretKey(sk.CopyNew()); err != nil {
 					t.Fatal(err)
 				}
-				if err := clou.Session.SetCollectivePublicKey(kg.GenPublicKey(sk.CopyNew())); err != nil {
+				pk, err := kg.GenPublicKeyNew(sk.CopyNew())
+				if err != nil {
 					t.Fatal(err)
 				}
-				if err := clou.SetRelinearizationKey(kg.GenRelinearizationKey(sk.CopyNew(), 1)); err != nil {
+				if err := clou.SetCollectivePublicKey(pk); err != nil {
 					t.Fatal(err)
 				}
-
+				rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
+				if err := clou.SetRelinearizationKey(rlk); err != nil {
+					t.Fatal(err)
+				}
 				localtest.Start()
 
 				decoder := bfv.NewEncoder(bfvParams)
@@ -469,7 +505,10 @@ func TestCloudPCKS(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					clients[i].Encryptor = bfv.NewEncryptor(bfvParams, cpk)
+					clients[i].Encryptor, err = bfv.NewEncryptor(bfvParams, cpk)
+					if err != nil {
+						t.Fatal(err)
+					}
 					cliSess, _ := clients[i].GetSessionFromID(sessionID)
 					if err = cliSess.SetOutputPkForNode("external-0", recPk); err != nil {
 						t.Fatal(err)
@@ -510,8 +549,12 @@ func TestCloudPCKS(t *testing.T) {
 						data := make([]uint64, 6)
 						data[i] = 1
 						data[i+1] = 1
-						pt := client.Encoder.EncodeNew(data, bfvParams.MaxLevel())
-						ct := client.Encryptor.EncryptNew(pt)
+						pt := bfv.NewPlaintext(params, params.MaxLevelQ())
+						client.Encoder.Encode(data, pt)
+						ct, err := client.Encryptor.EncryptNew(pt)
+						if err != nil {
+							t.Fatal(err)
+						}
 						op := pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.Node.ID(), cLabel)), Ciphertext: ct}
 						_, errExec := client.Execute(ctx, cLabel, op)
 						if errExec != nil {
@@ -535,8 +578,14 @@ func TestCloudPCKS(t *testing.T) {
 							return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
 
 						}
-						ptdec := bfv.NewDecryptor(bfvParams, outputSk).DecryptNew(out[0].Ciphertext)
-						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, decoder.DecodeUintNew(ptdec)[:6])
+						decryptor, err := bfv.NewDecryptor(bfvParams, outputSk)
+						if err != nil {
+							t.Fatal(err)
+						}
+						ptdec := decryptor.DecryptNew(out[0].Ciphertext)
+						res := make([]uint64, bfvParams.PlaintextSlots())
+						decoder.Decode(ptdec, res)
+						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, res[:6])
 					}
 					return nil
 				})

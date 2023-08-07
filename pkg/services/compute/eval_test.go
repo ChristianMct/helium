@@ -8,7 +8,7 @@ import (
 
 	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 )
 
 var ProdCKS Circuit = func(e EvaluationContext) error {
@@ -29,24 +29,25 @@ var ProdCKS Circuit = func(e EvaluationContext) error {
 	op1 := <-ops
 
 	go func() {
-		ev := e.ShallowCopy()
-		res := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
+		ev := e.NewEvaluator()
+		res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
 		ev.Relinearize(res, res)
 		lvl2 <- res
 	}()
+
+	ev2 := e.NewEvaluator()
 
 	op2 := <-ops
 	op3 := <-ops
 
 	go func() {
-		ev := e.ShallowCopy()
-		res := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
-		ev.Relinearize(res, res)
+		res, _ := ev2.MulNew(op2.Ciphertext, op3.Ciphertext)
+		ev2.Relinearize(res, res)
 		lvl2 <- res
 	}()
 
 	res1, res2 := <-lvl2, <-lvl2
-	res := e.MulNew(res1, res2)
+	res, _ := ev2.MulNew(res1, res2)
 	e.Relinearize(res, res)
 
 	// cksCtx, _ := e.SubCircuit("CKS-0", CKS) // TODO pass operands with remapping. Unmapped become inputs ?
@@ -69,8 +70,15 @@ var ProdCKS Circuit = func(e EvaluationContext) error {
 	return nil
 }
 
+var testPN13QP218 = bgv.ParametersLiteral{
+	LogN: 13,
+	Q:    []uint64{0x3fffffffef8001, 0x4000000011c001, 0x40000000120001}, // 54 + 54 + 54 bits
+	P:    []uint64{0x7ffffffffb4001},                                     // 55 bits
+	T:    65537,
+}
+
 func TestEvaluationContext(t *testing.T) {
-	params, _ := bfv.NewParametersFromLiteral(bfv.PN13QP218)
+	params, _ := bgv.NewParametersFromLiteral(testPN13QP218)
 	de := newCircuitParserCtx("PRODCKS-0", params, nil)
 	if err := ProdCKS(de); err != nil {
 		t.Error(err)
@@ -79,7 +87,7 @@ func TestEvaluationContext(t *testing.T) {
 
 func TestEvaluationContextWithNodeMapping(t *testing.T) {
 	t.Skip() // TODO: test is failing
-	params, _ := bfv.NewParametersFromLiteral(bfv.PN13QP218)
+	params, _ := bgv.NewParametersFromLiteral(testPN13QP218)
 	nodeMap := map[string]pkg.NodeID{
 		"node-0": "light-0",
 		"node-1": "light-1",

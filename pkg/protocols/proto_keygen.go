@@ -86,17 +86,17 @@ func (t Type) Share() LattigoShare {
 	case SKG:
 		return &drlwe.ShamirSecretShare{}
 	case CKG:
-		return &drlwe.CKGShare{}
+		return &drlwe.PublicKeyGenShare{}
 	case RKG_1, RKG_2:
-		return &drlwe.RKGShare{}
+		return &drlwe.RelinearizationKeyGenShare{}
 	case RTG:
-		return &drlwe.RTGShare{}
+		return &drlwe.GaloisKeyGenShare{}
 	case CKS, DEC:
-		return &drlwe.CKSShare{}
+		return &drlwe.KeySwitchShare{}
 	case PCKS:
-		return &drlwe.PCKSShare{}
+		return &drlwe.PublicKeySwitchShare{}
 	case PK:
-		return &drlwe.CKGShare{}
+		return &drlwe.PublicKeyGenShare{}
 	default:
 		return nil
 	}
@@ -406,8 +406,8 @@ func (p protocol) Logf(msg string, v ...any) {
 
 func (s Share) Copy() Share {
 	switch st := s.MHEShare.(type) {
-	case *drlwe.CKGShare:
-		return Share{ShareDescriptor: s.ShareDescriptor, MHEShare: &drlwe.CKGShare{Value: st.Value.CopyNew()}}
+	case *drlwe.PublicKeyGenShare:
+		return Share{ShareDescriptor: s.ShareDescriptor, MHEShare: &drlwe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
 	default:
 		panic("not implemented") // TODO: implement on Lattigo side ?
 	}

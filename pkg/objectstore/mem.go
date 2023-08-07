@@ -62,8 +62,8 @@ func (objstore *memObjectStore) Load(objectID string, object encoding.BinaryUnma
 		}
 		*value = *typedValue
 
-	case *rlwe.SwitchingKey:
-		typedValue, ok := untypedValue.(*rlwe.SwitchingKey)
+	case *rlwe.GaloisKey:
+		typedValue, ok := untypedValue.(*rlwe.GaloisKey)
 		if !ok {
 			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
 		}

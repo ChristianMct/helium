@@ -89,7 +89,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 			if err != nil {
 				panic(err)
 			}
-			test.Params.RingQP().AddLvl(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level(), sk.Value, test.SkIdeal.Value, test.SkIdeal.Value)
+			test.Params.RingQP().AtLevel(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level()).Add(sk.Value, test.SkIdeal.Value, test.SkIdeal.Value)
 		}
 
 		// if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {

@@ -10,7 +10,7 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
@@ -40,14 +40,14 @@ type ServiceEvaluationEnvironment interface {
 // It resolve the remote inputs from the full nodes and waits for inputs from the light nodes.
 // It evaluates the homomorphic operations and compute the outputs of the circuit.
 type fullEvaluatorContext struct {
-	bfv.Evaluator
+	*bgv.Evaluator
 
 	isLight map[pkg.NodeID]bool
 
 	transport transport.ComputeServiceTransport
 
 	sess   *pkg.Session
-	params bfv.Parameters
+	params bgv.Parameters
 	id     pkg.CircuitID
 
 	outgoingOps, ops, inputOps map[pkg.OperandLabel]*FutureOperand
@@ -73,7 +73,7 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	se.id = id
 	se.sess = sess
 
-	se.params, _ = bfv.NewParameters(*sess.Params, 65537)
+	se.params, _ = bgv.NewParameters(*sess.Params, 65537)
 
 	se.isLight = make(map[pkg.NodeID]bool)
 
@@ -154,17 +154,22 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 		}
 	}
 
-	rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
+	gks := make([]*rlwe.GaloisKey, 0, len(se.cDesc.GaloisKeys))
 	for galEl := range se.cDesc.GaloisKeys {
 		var err error
-		rtks.Keys[galEl], err = se.sess.GetRotationKey(galEl)
+		gk, err := se.sess.GetRotationKey(galEl)
 		if err != nil {
 			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
+		gks = append(gks, gk)
 	}
 
-	eval := bfv.NewEvaluator(se.params, rlwe.EvaluationKey{Rlk: rlk, Rtks: rtks})
+	//rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
+	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
+	eval := bgv.NewEvaluator(se.params, evk)
 	se.Evaluator = eval
+
+	eval.ShallowCopy()
 
 	se.resolveRemoteInputs(ctx, se.cDesc.InputSet)
 
@@ -262,8 +267,16 @@ func (se *fullEvaluatorContext) runKeySwitch(pd protocols.Descriptor, in pkg.Ope
 	return out, nil
 }
 
-func (se *fullEvaluatorContext) Parameters() bfv.Parameters {
+func (se *fullEvaluatorContext) Parameters() bgv.Parameters {
 	return se.params
+}
+
+func (se *fullEvaluatorContext) NewEvaluator() Evaluator {
+	return se.Evaluator.ShallowCopy()
+}
+
+func (se *fullEvaluatorContext) EvalWithKey(evk rlwe.EvaluationKeySet) Evaluator {
+	return se.Evaluator.WithKey(evk)
 }
 
 func (se *fullEvaluatorContext) CircuitDescription() CircuitDescription {

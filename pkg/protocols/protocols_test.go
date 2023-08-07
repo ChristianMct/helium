@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/bits"
-	"strconv"
 	"testing"
 
 	"github.com/ldsec/helium/pkg"
@@ -30,11 +28,17 @@ var testSettings = []testSetting{
 	{N: 3, T: 2, Helper: true},
 }
 
+var TestPN12QP109 = rlwe.ParametersLiteral{
+	LogN: 12,
+	Q:    []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
+	P:    []uint64{0xa001},                         // 15 bits
+}
+
 func TestProtocols(t *testing.T) {
 
 	for _, ts := range testSettings {
 
-		te := newTestEnvironment(ts, rlwe.TestPN12QP109)
+		te := newTestEnvironment(ts, TestPN12QP109)
 
 		rkgPart := te.getParticipants(ts.T)
 		for _, pType := range []Type{
@@ -165,6 +169,11 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 				out := <-instances[node.ID()].Output(aggOut)
 				require.NoError(t, out.Error)
 
+				nParties := len(te.SessionNodes())
+				sk := te.SkIdeal
+				params := te.Params
+				decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+
 				switch pd.Signature.Type {
 				case SKG:
 					_, isShamirShare := out.Result.(*drlwe.ShamirSecretShare)
@@ -173,27 +182,21 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 				case CKG:
 					pk, isPk := out.Result.(*rlwe.PublicKey)
 					require.True(t, isPk)
-					log2BoundPk := bits.Len64(uint64(len(te.SessionNodes())) * te.Params.NoiseBound() * uint64(te.Params.N()))
-					require.True(t, rlwe.PublicKeyIsCorrect(pk, te.SkIdeal, te.Params, log2BoundPk))
+
+					require.Less(t, rlwe.NoisePublicKey(pk, sk, te.Params), math.Log2(math.Sqrt(float64(nParties))*te.Params.NoiseFreshSK())+1)
 				case RTG:
-					swk, isSwk := out.Result.(*rlwe.SwitchingKey)
+					swk, isSwk := out.Result.(*rlwe.GaloisKey)
 					require.True(t, isSwk)
-					log2BoundRtk := bits.Len64(uint64(
-						te.Params.N() * len(swk.Value) * len(swk.Value[0]) *
-							(te.Params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
-								2*3*int(math.Floor(rlwe.DefaultSigma*6)) + te.Params.N()*3)))
-					galEl, _ := strconv.ParseUint(pd.Signature.Args["GalEl"], 10, 64)
-					require.True(t, rlwe.RotationKeyIsCorrect(swk, galEl, te.SkIdeal, te.Params, log2BoundRtk), "rtk for galEl %d should be correct", pd.Signature.Args["GaloisEl"])
+
+					noise := rlwe.NoiseGaloisKey(swk, sk, params)
+					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+					require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
 				case RKG_2:
 					rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
 					require.True(t, isRlk)
-					levelQ, levelP := te.Params.QCount()-1, te.Params.PCount()-1
-					decompSize := te.Params.DecompPw2(levelQ, levelP) * te.Params.DecompRNS(levelQ, levelP)
-					log2BoundRlk := bits.Len64(uint64(
-						te.Params.N() * decompSize * (te.Params.N()*3*int(te.Params.NoiseBound()) +
-							2*3*int(te.Params.NoiseBound()) + te.Params.N()*3)))
 
-					require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], te.SkIdeal, te.Params, log2BoundRlk))
+					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+					require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 				default:
 					t.Fatalf("invalid protocol type")
 				}

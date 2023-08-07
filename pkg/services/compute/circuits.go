@@ -9,10 +9,22 @@ import (
 	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/bfv"
-	"github.com/tuneinsight/lattigo/v4/ring"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
+
+type Evaluator interface {
+	Add(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error)
+	Sub(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error)
+	Mul(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error)
+	MulNew(op0 *rlwe.Ciphertext, op1 interface{}) (opOut *rlwe.Ciphertext, err error)
+	MulRelin(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error)
+	MulRelinNew(op0 *rlwe.Ciphertext, op1 interface{}) (opOut *rlwe.Ciphertext, err error)
+	MulThenAdd(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error)
+	Relinearize(op0, op1 *rlwe.Ciphertext) (err error)
+	Rescale(op0, op1 *rlwe.Ciphertext) (err error)
+	InnerSum(ctIn *rlwe.Ciphertext, batchSize, n int, opOut *rlwe.Ciphertext) (err error)
+}
 
 // EvaluationContext defines the interface that is available to circuits to access
 // their execution context.
@@ -36,9 +48,13 @@ type EvaluationContext interface {
 	SubCircuit(pkg.CircuitID, Circuit) (EvaluationContext, error)
 
 	// Parameters returns the encryption parameters for the circuit.
-	Parameters() bfv.Parameters
+	Parameters() bgv.Parameters
 
-	bfv.Evaluator
+	NewEvaluator() Evaluator
+
+	EvalWithKey(evk rlwe.EvaluationKeySet) Evaluator
+
+	Evaluator
 }
 
 // Circuit is a type for representing circuits, which are go functions interacting with
@@ -58,12 +74,12 @@ type circuitParserContext struct {
 	cDesc       CircuitDescription
 	circID      pkg.CircuitID
 	SubCtx      map[pkg.CircuitID]*circuitParserContext
-	params      bfv.Parameters
+	params      bgv.Parameters
 	nodeMapping map[string]pkg.NodeID
 	l           sync.Mutex
 }
 
-func newCircuitParserCtx(cid pkg.CircuitID, params bfv.Parameters, nodeMapping map[string]pkg.NodeID) *circuitParserContext {
+func newCircuitParserCtx(cid pkg.CircuitID, params bgv.Parameters, nodeMapping map[string]pkg.NodeID) *circuitParserContext {
 	cpc := &circuitParserContext{
 		circID: cid,
 		cDesc: CircuitDescription{
@@ -204,151 +220,86 @@ func (e *circuitParserContext) PCKS(in pkg.Operand, params map[string]string) (o
 	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))}, nil
 }
 
-func (e *circuitParserContext) Parameters() bfv.Parameters {
+func (e *circuitParserContext) Parameters() bgv.Parameters {
 	e.l.Lock()
 	defer e.l.Unlock()
 	return e.params
 }
 
-func (e *circuitParserContext) Relinearize(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {
+func (e *circuitParserContext) MulRelin(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.cDesc.NeedRlk = true
+	e.ctx.cDesc.NeedRlk = true
+	return nil
 }
 
-func (e *circuitParserContext) RelinearizeNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphertext) {
+func (e *circuitParserContext) MulRelinNew(op0 *rlwe.Ciphertext, op1 interface{}) (opOut *rlwe.Ciphertext, err error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.cDesc.NeedRlk = true
+	e.ctx.cDesc.NeedRlk = true
+	return nil, nil
+}
+
+func (e *circuitParserContext) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
+	e.l.Lock()
+	defer e.l.Unlock()
+	e.ctx.cDesc.NeedRlk = true
+	return nil
+}
+
+func (e *circuitParserContext) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
+	e.l.Lock()
+	defer e.l.Unlock()
+	e.ctx.cDesc.GaloisKeys.AddAll(utils.NewSet(e.ctx.params.GaloisElementsForInnerSum(batchSize, n)))
 	return nil
 }
 
 type dummyEvaluator struct{ ctx *circuitParserContext }
 
-func (de dummyEvaluator) Add(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) AddNew(ctIn *rlwe.Ciphertext, op1 rlwe.Operand) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) Add(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) AddNoMod(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) AddNoModNew(ctIn *rlwe.Ciphertext, op1 rlwe.Operand) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) Sub(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) Sub(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) SubNew(ctIn *rlwe.Ciphertext, op1 rlwe.Operand) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) Mul(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) SubNoMod(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
+func (de *dummyEvaluator) MulNew(op0 *rlwe.Ciphertext, op1 interface{}) (opOut *rlwe.Ciphertext, err error) {
+	return nil, nil
+}
 
-func (de dummyEvaluator) SubNoModNew(ctIn *rlwe.Ciphertext, op1 rlwe.Operand) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) MulRelin(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) Neg(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {}
+func (de *dummyEvaluator) MulRelinNew(op0 *rlwe.Ciphertext, op1 interface{}) (opOut *rlwe.Ciphertext, err error) {
+	return nil, nil
+}
 
-func (de dummyEvaluator) NegNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) Reduce(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) ReduceNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) MulThenAdd(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) AddScalar(ctIn *rlwe.Ciphertext, scalar uint64, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) MulScalar(ctIn *rlwe.Ciphertext, scalar uint64, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) MulScalarAndAdd(ctIn *rlwe.Ciphertext, scalar uint64, ctOut *rlwe.Ciphertext) {
-}
-
-func (de dummyEvaluator) MulScalarNew(ctIn *rlwe.Ciphertext, scalar uint64) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) Rescale(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) Rescale(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) RescaleTo(level int, ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) Mul(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) MulNew(ctIn *rlwe.Ciphertext, op1 rlwe.Operand) (ctOut *rlwe.Ciphertext) {
+func (de *dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
 	return nil
 }
 
-func (de dummyEvaluator) MulAndAdd(ctIn *rlwe.Ciphertext, op1 rlwe.Operand, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) Relinearize(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {
-	if de.ctx != nil {
-		de.ctx.cDesc.NeedRlk = true
-	}
-
-}
-
-func (de dummyEvaluator) RelinearizeNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphertext) {
-	if de.ctx != nil {
-		de.ctx.cDesc.NeedRlk = true
-	}
-	return nil
-}
-
-func (de dummyEvaluator) SwitchKeys(ctIn *rlwe.Ciphertext, switchKey *rlwe.SwitchingKey, ctOut *rlwe.Ciphertext) {
-}
-
-func (de dummyEvaluator) EvaluatePoly(input interface{}, pol *bfv.Polynomial) (opOut *rlwe.Ciphertext, err error) {
-	return &rlwe.Ciphertext{}, nil
-}
-
-func (de dummyEvaluator) EvaluatePolyVector(input interface{}, pols []*bfv.Polynomial, encoder bfv.Encoder, slotsIndex map[int][]int) (opOut *rlwe.Ciphertext, err error) {
-	return &rlwe.Ciphertext{}, nil
-}
-
-func (de dummyEvaluator) SwitchKeysNew(ctIn *rlwe.Ciphertext, switchkey *rlwe.SwitchingKey) (ctOut *rlwe.Ciphertext) {
-	return nil
-}
-
-func (de dummyEvaluator) RotateColumnsNew(ctIn *rlwe.Ciphertext, k int) (ctOut *rlwe.Ciphertext) {
-	return nil
-}
-
-func (de dummyEvaluator) RotateColumns(ctIn *rlwe.Ciphertext, k int, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) RotateRows(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {}
-
-func (de dummyEvaluator) RotateRowsNew(ctIn *rlwe.Ciphertext) (ctOut *rlwe.Ciphertext) {
-	return nil
-}
-
-func (de dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, ctOut *rlwe.Ciphertext) {
-	if de.ctx != nil {
-		de.ctx.l.Lock()
-		defer de.ctx.l.Unlock()
-		de.ctx.cDesc.GaloisKeys.AddAll(utils.NewSet(de.ctx.params.GaloisElementsForRowInnerSum()))
-	}
-}
-
-func (de dummyEvaluator) ShallowCopy() bfv.Evaluator {
+func (de *dummyEvaluator) NewEvaluator() Evaluator {
 	return de
 }
 
-func (de dummyEvaluator) WithKey(_ rlwe.EvaluationKey) bfv.Evaluator {
+func (de *dummyEvaluator) EvalWithKey(_ rlwe.EvaluationKeySet) Evaluator {
 	return de
-}
-
-func (de dummyEvaluator) BuffQ() [][]*ring.Poly {
-	return nil
-}
-
-func (de dummyEvaluator) BuffQMul() [][]*ring.Poly {
-	return nil
-}
-
-func (de dummyEvaluator) BuffPt() *rlwe.Plaintext {
-	return nil
 }

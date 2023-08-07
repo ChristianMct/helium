@@ -582,7 +582,7 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					s.Logf("error on Relinearization Key store: %s", err)
 				}
-			case *rlwe.SwitchingKey:
+			case *rlwe.GaloisKey:
 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					s.Logf("error on Rotation Key Store: %s", err)
 				}

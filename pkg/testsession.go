@@ -5,7 +5,7 @@ import (
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
-	"github.com/tuneinsight/lattigo/v4/utils"
+	"github.com/tuneinsight/lattigo/v4/utils/sampling"
 )
 
 func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.SecretKey, tsk *drlwe.ShamirSecretShare, err error) {
@@ -14,12 +14,15 @@ func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.Se
 		return nil, nil, err
 	}
 
-	prng, err := utils.NewKeyedPRNG([]byte{})
+	prng, err := sampling.NewKeyedPRNG([]byte{})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	ts := ring.NewTernarySampler(prng, params.RingQ(), 0.5, false)
+	ts, err := ring.NewTernarySampler(prng, params.RingQ(), ring.Ternary{P: 0.5}, false) // ring.NewTernarySampler(prng, params.RingQ(), 0.5, false)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	sks := make([]*rlwe.SecretKey, len(sessParams.Nodes))
 	var index int
@@ -36,11 +39,11 @@ func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.Se
 		ts.Read(sk.Value.Q)
 
 		if levelP > -1 {
-			ringQP.ExtendBasisSmallNormAndCenter(sk.Value.Q, levelP, nil, sk.Value.P)
+			ringQP.ExtendBasisSmallNormAndCenter(sk.Value.Q, levelP, sk.Value.Q, sk.Value.P)
 		}
 
-		ringQP.NTTLvl(levelQ, levelP, sk.Value, sk.Value)
-		ringQP.MFormLvl(levelQ, levelP, sk.Value, sk.Value)
+		ringQP.AtLevel(levelQ, levelP).NTT(sk.Value, sk.Value)
+		ringQP.AtLevel(levelQ, levelP).MForm(sk.Value, sk.Value)
 		sks[i] = sk
 	}
 
@@ -48,29 +51,30 @@ func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.Se
 		return sks[index], nil, nil
 	}
 
-	shares := make(map[NodeID]map[NodeID]*drlwe.ShamirSecretShare, len(sessParams.Nodes))
+	shares := make(map[NodeID]map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 	thresholdizer := drlwe.NewThresholdizer(params)
 	usampler := ringqp.NewUniformSampler(prng, *params.RingQP())
 
 	for i, ni := range sessParams.Nodes {
 
-		shares[ni] = make(map[NodeID]*drlwe.ShamirSecretShare, len(sessParams.Nodes))
+		shares[ni] = make(map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 		sk := sks[i]
 		if err != nil {
 			panic(err)
 		}
 
 		//shamirPoly, _ := thresholdizer.GenShamirPolynomial(sessParams.T, sk)
-		shamirPoly := &drlwe.ShamirPolynomial{Coeffs: make([]ringqp.Poly, int(sessParams.T))}
-		shamirPoly.Coeffs[0] = sk.Value.CopyNew()
+		shamirPoly := drlwe.ShamirPolynomial{Value: make([]ringqp.Poly, int(sessParams.T))}
+		shamirPoly.Value[0] = *sk.Value.CopyNew()
 		for i := 1; i < sessParams.T; i++ {
-			shamirPoly.Coeffs[i] = params.RingQP().NewPoly()
-			usampler.Read(shamirPoly.Coeffs[i])
+			shamirPoly.Value[i] = params.RingQP().NewPoly()
+			usampler.Read(shamirPoly.Value[i])
 		}
 
 		for _, nj := range sessParams.Nodes {
-			shares[ni][nj] = thresholdizer.AllocateThresholdSecretShare()
-			thresholdizer.GenShamirSecretShare(sessParams.ShamirPks[nj], shamirPoly, shares[ni][nj])
+			share := thresholdizer.AllocateThresholdSecretShare()
+			thresholdizer.GenShamirSecretShare(sessParams.ShamirPks[nj], shamirPoly, &share)
+			shares[ni][nj] = share
 		}
 	}
 
@@ -78,9 +82,9 @@ func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.Se
 	for i, ni := range sessParams.Nodes {
 		tsk := thresholdizer.AllocateThresholdSecretShare()
 		for _, nj := range sessParams.Nodes {
-			thresholdizer.AggregateShares(shares[nj][ni], tsk, tsk)
+			thresholdizer.AggregateShares(shares[nj][ni], tsk, &tsk)
 		}
-		tsks[i] = tsk
+		tsks[i] = &tsk
 	}
 
 	return sks[index], tsks[index], nil

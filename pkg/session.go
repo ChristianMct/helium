@@ -209,10 +209,10 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 			sess.SetThresholdSecretKey(sess.tsk)
 		}
 
-		sess.rlkEphSk = kgen.GenSecretKey()
+		sess.rlkEphSk = kgen.GenSecretKeyNew()
 		sess.SetRLKEphemeralSecretKey(sess.rlkEphSk)
 	} else {
-		sess.sk, sess.pk = kgen.GenKeyPair()
+		sess.sk, sess.pk = kgen.GenKeyPairNew()
 		sess.SetSecretKey(sess.sk)
 		sess.SetPublicKey(sess.pk)
 	}
@@ -264,8 +264,8 @@ func (s *Session) SetRelinearizationKey(rlk *rlwe.RelinearizationKey) error {
 }
 
 // SetRotationKey loads the rotation key identified by the Galois element from the ObjectStore.
-func (s *Session) GetRotationKey(galEl uint64) (*rlwe.SwitchingKey, error) {
-	rtk := new(rlwe.SwitchingKey)
+func (s *Session) GetRotationKey(galEl uint64) (*rlwe.GaloisKey, error) {
+	rtk := new(rlwe.GaloisKey)
 	if err := s.ObjectStore.Load(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
 		return nil, fmt.Errorf("error while loading the rotation key with galEl %d: %w", galEl, err)
 	}
@@ -274,7 +274,7 @@ func (s *Session) GetRotationKey(galEl uint64) (*rlwe.SwitchingKey, error) {
 }
 
 // SetRotationKey stores the rotation key identified by the Galois element into the ObjectStore.
-func (s *Session) SetRotationKey(rtk *rlwe.SwitchingKey, galEl uint64) error {
+func (s *Session) SetRotationKey(rtk *rlwe.GaloisKey, galEl uint64) error {
 	if err := s.ObjectStore.Store(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
 		return fmt.Errorf("error while storing the rotation key with galEl %d: %w", galEl, err)
 	}
@@ -344,7 +344,7 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 		drlwe.NewCombiner(*sess.Params,
 			sess.GetShamirPublicPoints()[sess.NodeID],
 			sess.GetShamirPublicPointsList(),
-			sess.T).GenAdditiveShare(spks, sess.SPKS[sess.NodeID], tsk, sk)
+			sess.T).GenAdditiveShare(spks, sess.SPKS[sess.NodeID], *tsk, sk)
 		return sk, nil
 	default:
 		return nil, fmt.Errorf("not enough participants to reconstruct")

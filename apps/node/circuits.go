@@ -8,7 +8,8 @@ import (
 
 	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/services/compute"
-	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/bgv"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
 var pirN = func(N int, ec compute.EvaluationContext) error {
@@ -17,7 +18,7 @@ var pirN = func(N int, ec compute.EvaluationContext) error {
 	inops := make(chan struct {
 		i    int
 		op   pkg.Operand
-		mask *bfv.PlaintextMul
+		mask *rlwe.Plaintext
 	}, N)
 
 	reqOpChan := make(chan pkg.Operand, 1)
@@ -27,10 +28,11 @@ var pirN = func(N int, ec compute.EvaluationContext) error {
 	for i := 0; i < N; i++ {
 		// each input is provided by a goroutine
 		go func(i int) {
-			encoder := bfv.NewEncoder(params)
+			encoder := bgv.NewEncoder(params)
 			maskCoeffs := make([]uint64, params.N())
 			maskCoeffs[i] = 1
-			mask := encoder.EncodeMulNew(maskCoeffs, params.MaxLevel())
+			mask := bgv.NewPlaintext(params, params.MaxLevelQ())
+			encoder.Encode(maskCoeffs, mask)
 
 			opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
 
@@ -38,7 +40,7 @@ var pirN = func(N int, ec compute.EvaluationContext) error {
 				inops <- struct {
 					i    int
 					op   pkg.Operand
-					mask *bfv.PlaintextMul
+					mask *rlwe.Plaintext
 				}{i, opIn, mask}
 			} else {
 				reqOpChan <- opIn
@@ -63,17 +65,17 @@ var pirN = func(N int, ec compute.EvaluationContext) error {
 	maskWorkers.Add(NGoRoutine)
 	for i := 0; i < NGoRoutine; i++ {
 		go func() {
-			evaluator := ec.ShallowCopy() // creates a shallow evaluator copy for this goroutine
-			tmp := bfv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
+			evaluator := ec.NewEvaluator() // creates a shallow evaluator copy for this goroutine
+			tmp := bgv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
 			for op := range inops {
 				// 1) Multiplication of the query with the plaintext mask
 				evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
 
 				// 2) Inner sum (populate all the slots with the sum of all the slots)
-				evaluator.InnerSum(tmp, tmp)
+				evaluator.InnerSum(tmp, 1, params.PlaintextSlots(), tmp)
 
 				// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
-				maskedCt := evaluator.MulNew(tmp, op.op.Ciphertext)
+				maskedCt, _ := evaluator.MulNew(tmp, op.op.Ciphertext)
 				maskedOps <- pkg.Operand{Ciphertext: maskedCt}
 			}
 			maskWorkers.Done()
@@ -86,17 +88,18 @@ var pirN = func(N int, ec compute.EvaluationContext) error {
 		close(maskedOps)
 	}()
 
-	evaluator := ec.ShallowCopy()
-	tmpAdd := bfv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
+	evaluator := ec.NewEvaluator()
+	tmpAdd := bgv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
 	c := 0
 	for maskedOp := range maskedOps {
 		evaluator.Add(maskedOp.Ciphertext, tmpAdd, tmpAdd)
 		c++
 	}
 
-	res := evaluator.RelinearizeNew(tmpAdd)
+	ctRes := bgv.NewCiphertext(params, 1, tmpAdd.Level())
+	evaluator.Relinearize(ctRes, tmpAdd)
 	// output encrypted under CPK
-	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: ctRes}
 
 	opOut, err := ec.DEC(opRes, map[string]string{
 		"target":   "node-0",
@@ -140,10 +143,10 @@ var psiN = func(N int, ec compute.EvaluationContext) error {
 		chanForLevel[level] = make(chan pkg.Operand, numMulForLevel)
 		for i := 0; i < numMulForLevel; i++ {
 			go func() {
-				ev1 := ec.ShallowCopy()
+				ev1 := ec.NewEvaluator()
 				op1 := <-chanForLevel[level-1]
 				op2 := <-chanForLevel[level-1]
-				res := ev1.MulNew(op1.Ciphertext, op2.Ciphertext)
+				res, _ := ev1.MulNew(op1.Ciphertext, op2.Ciphertext)
 				ev1.Relinearize(res, res)
 				chanForLevel[level] <- pkg.Operand{Ciphertext: res}
 			}()
@@ -200,7 +203,7 @@ var testCircuits = map[string]compute.Circuit{
 		opIn1 := ec.Input("//node-0/in-0")
 		opIn2 := ec.Input("//node-1/in-0")
 
-		res := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+		res, _ := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
 		ec.Relinearize(res, res)
 		opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 

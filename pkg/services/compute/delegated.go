@@ -10,7 +10,7 @@ import (
 	"github.com/ldsec/helium/pkg/transport"
 
 	"github.com/ldsec/helium/pkg"
-	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 )
 
 // delegatedEvaluatorContext is an evaluation context for which circuit evaluation is
@@ -29,7 +29,7 @@ type delegatedEvaluatorContext struct {
 	sess       *pkg.Session
 	delegateID pkg.NodeID
 
-	params bfv.Parameters
+	params bgv.Parameters
 
 	ops map[pkg.OperandLabel]*FutureOperand
 
@@ -47,7 +47,7 @@ func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, sess *pkg.
 	de.sess = sess
 	de.f = cDef
 	de.id = cid
-	de.params, _ = bfv.NewParameters(*sess.Params, 65537)
+	de.params, _ = bgv.NewParameters(*sess.Params, 65537)
 
 	dummyCtx := newCircuitParserCtx(cid, de.params, nil)
 	if err := cDef(dummyCtx); err != nil {
@@ -178,7 +178,7 @@ func (de *delegatedEvaluatorContext) SubCircuit(pkg.CircuitID, Circuit) (Evaluat
 	panic("not implemented")
 }
 
-func (de *delegatedEvaluatorContext) Parameters() bfv.Parameters {
+func (de *delegatedEvaluatorContext) Parameters() bgv.Parameters {
 	return de.params
 }
 

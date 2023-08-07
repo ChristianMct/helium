@@ -7,6 +7,7 @@ import (
 
 	"github.com/ldsec/helium/pkg"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
+	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
@@ -35,14 +36,15 @@ type SKGProtocol struct {
 }
 
 func NewSKGProtocol(params rlwe.Parameters, arg map[string]interface{}) (*SKGProtocol, error) {
-	return &SKGProtocol{Thresholdizer: *drlwe.NewThresholdizer(params)}, nil
+	return &SKGProtocol{Thresholdizer: drlwe.NewThresholdizer(params)}, nil
 }
 
 func (skg *SKGProtocol) AllocateShare() Share {
-	return Share{MHEShare: skg.AllocateThresholdSecretShare()}
+	s := skg.AllocateThresholdSecretShare()
+	return Share{MHEShare: &s}
 }
 
-func (skg *SKGProtocol) GenShamirPolynomial(threshold int, secret *rlwe.SecretKey) (*drlwe.ShamirPolynomial, error) {
+func (skg *SKGProtocol) GenShamirPolynomial(threshold int, secret *rlwe.SecretKey) (drlwe.ShamirPolynomial, error) {
 	return skg.Thresholdizer.GenShamirPolynomial(threshold, secret)
 }
 
@@ -51,7 +53,7 @@ func (skg *SKGProtocol) GenShareForParty(skp drlwe.ShamirPolynomial, receiver dr
 	if !ok {
 		return fmt.Errorf("invalid share type for argument dst: %T instead of %T", share, dstSkgShare)
 	}
-	skg.Thresholdizer.GenShamirSecretShare(receiver, &skp, dstSkgShare)
+	skg.Thresholdizer.GenShamirSecretShare(receiver, skp, dstSkgShare)
 	return nil
 }
 
@@ -71,7 +73,7 @@ func (skg *SKGProtocol) AggregatedShares(dst Share, ss ...Share) error {
 	}
 
 	for i := range skgShares {
-		skg.Thresholdizer.AggregateShares(dstSkgShare, skgShares[i], dstSkgShare)
+		skg.Thresholdizer.AggregateShares(*dstSkgShare, *skgShares[i], dstSkgShare)
 	}
 	return nil
 }
@@ -81,45 +83,46 @@ func (skg *SKGProtocol) Finalize(sess *pkg.Session, aggShare Share) error {
 }
 
 type CKGProtocol struct {
-	drlwe.CKGProtocol
+	drlwe.PublicKeyGenProtocol
 	params *rlwe.Parameters
 }
 
 func NewCKGProtocol(params rlwe.Parameters, arg map[string]string) (*CKGProtocol, error) {
-	return &CKGProtocol{CKGProtocol: *drlwe.NewCKGProtocol(params), params: &params}, nil
+	return &CKGProtocol{PublicKeyGenProtocol: drlwe.NewPublicKeyGenProtocol(params), params: &params}, nil
 }
 
 func (ckg *CKGProtocol) AllocateShare() Share {
-	return Share{MHEShare: ckg.CKGProtocol.AllocateShare()}
+	s := ckg.PublicKeyGenProtocol.AllocateShare()
+	return Share{MHEShare: &s}
 }
 
 func (ckg *CKGProtocol) ReadCRP(crs drlwe.CRS) (CRP, error) {
-	return ckg.CKGProtocol.SampleCRP(crs), nil
+	return ckg.PublicKeyGenProtocol.SampleCRP(crs), nil
 }
 
 func (ckg *CKGProtocol) GenShare(sk *rlwe.SecretKey, crp CRP, share Share) error {
-	ckgcrp, ok := crp.(drlwe.CKGCRP)
+	ckgcrp, ok := crp.(drlwe.PublicKeyGenCRP)
 	if !ok {
 		return fmt.Errorf("bad input type: %T", crp)
 	}
-	ckgShare, ok := share.MHEShare.(*drlwe.CKGShare)
+	ckgShare, ok := share.MHEShare.(*drlwe.PublicKeyGenShare)
 	if !ok {
 		return fmt.Errorf("bad share type: %T", share)
 	}
-	ckg.CKGProtocol.GenShare(sk, ckgcrp, ckgShare)
+	ckg.PublicKeyGenProtocol.GenShare(sk, ckgcrp, ckgShare)
 	return nil
 }
 
 func (ckg *CKGProtocol) AggregatedShares(dst Share, ss ...Share) error {
 
-	dstCkgShare, ok := dst.MHEShare.(*drlwe.CKGShare)
+	dstCkgShare, ok := dst.MHEShare.(*drlwe.PublicKeyGenShare)
 	if !ok {
 		return fmt.Errorf("invalid share type for argument dst: %T instead of %T", dst, dstCkgShare)
 	}
 
-	ckgShares := make([]*drlwe.CKGShare, 0, len(ss))
+	ckgShares := make([]*drlwe.PublicKeyGenShare, 0, len(ss))
 	for i, share := range ss {
-		if ckgShare, isCKGShare := share.MHEShare.(*drlwe.CKGShare); isCKGShare {
+		if ckgShare, isCKGShare := share.MHEShare.(*drlwe.PublicKeyGenShare); isCKGShare {
 			ckgShares = append(ckgShares, ckgShare)
 		} else {
 			return fmt.Errorf("invalid share type for argument %d: %T instead of %T", i, share, ckgShare)
@@ -127,31 +130,31 @@ func (ckg *CKGProtocol) AggregatedShares(dst Share, ss ...Share) error {
 	}
 
 	for i := range ckgShares {
-		ckg.CKGProtocol.AggregateShares(dstCkgShare, ckgShares[i], dstCkgShare)
+		ckg.PublicKeyGenProtocol.AggregateShares(*dstCkgShare, *ckgShares[i], dstCkgShare)
 	}
 	return nil
 }
 
 func (ckg *CKGProtocol) Finalize(crp CRP, aggShare ...Share) (interface{}, error) {
-	ckgcrp, ok := crp.(drlwe.CKGCRP)
+	ckgcrp, ok := crp.(drlwe.PublicKeyGenCRP)
 	if !ok {
-		return nil, fmt.Errorf("bad input type: %T instead of %T", crp, drlwe.CKGCRP{})
+		return nil, fmt.Errorf("bad input type: %T instead of %T", crp, drlwe.PublicKeyGenCRP{})
 	}
 	if len(aggShare) != 1 {
 		return nil, fmt.Errorf("bad aggregated share count: %d instead of %d", len(aggShare), 1)
 	}
-	ckgShare, ok := aggShare[0].MHEShare.(*drlwe.CKGShare)
+	ckgShare, ok := aggShare[0].MHEShare.(*drlwe.PublicKeyGenShare)
 	if !ok {
 		return nil, fmt.Errorf("bad share type: %T instead of %T", aggShare[0].MHEShare, ckgShare)
 	}
 
 	pk := rlwe.NewPublicKey(*ckg.params)
-	ckg.CKGProtocol.GenPublicKey(ckgShare, ckgcrp, pk)
+	ckg.PublicKeyGenProtocol.GenPublicKey(*ckgShare, ckgcrp, pk)
 	return pk, nil
 }
 
 type RTGProtocol struct {
-	drlwe.RTGProtocol
+	drlwe.GaloisKeyGenProtocol
 	galEl  uint64 // TODO passed as argument ?
 	params *rlwe.Parameters
 }
@@ -166,71 +169,73 @@ func NewRTGProtocol(params rlwe.Parameters, args map[string]string) (*RTGProtoco
 		return nil, fmt.Errorf("invalid galois element type: %T instead of %T", args["GalEl"], galEl)
 	}
 
-	return &RTGProtocol{galEl: galEl, RTGProtocol: *drlwe.NewRTGProtocol(params), params: &params}, nil
+	return &RTGProtocol{galEl: galEl, GaloisKeyGenProtocol: drlwe.NewGaloisKeyGenProtocol(params), params: &params}, nil
 }
 
 func (rtg *RTGProtocol) AllocateShare() Share {
-	return Share{MHEShare: rtg.RTGProtocol.AllocateShare()}
+	s := rtg.GaloisKeyGenProtocol.AllocateShare()
+	return Share{MHEShare: &s}
 }
 
 func (rtg *RTGProtocol) ReadCRP(crs drlwe.CRS) (CRP, error) {
-	return rtg.RTGProtocol.SampleCRP(crs), nil
+	return rtg.GaloisKeyGenProtocol.SampleCRP(crs), nil
 }
 
 func (rtg *RTGProtocol) GenShare(sk *rlwe.SecretKey, crp CRP, share Share) error {
-	rtgcrp, ok := crp.(drlwe.RTGCRP)
+	rtgcrp, ok := crp.(drlwe.GaloisKeyGenCRP)
 	if !ok {
 		return fmt.Errorf("bad input type: %T", crp)
 	}
-	rtgShare, ok := share.MHEShare.(*drlwe.RTGShare)
+	rtgShare, ok := share.MHEShare.(*drlwe.GaloisKeyGenShare)
 	if !ok {
 		return fmt.Errorf("bad share type: %T", share)
 	}
-	rtg.RTGProtocol.GenShare(sk, rtg.galEl, rtgcrp, rtgShare)
+	rtg.GaloisKeyGenProtocol.GenShare(sk, rtg.galEl, rtgcrp, rtgShare)
 	return nil
 }
 
 func (rtg *RTGProtocol) AggregatedShares(dst Share, ss ...Share) error {
-	dstRtgShare, ok := dst.MHEShare.(*drlwe.RTGShare)
+	dstRtgShare, ok := dst.MHEShare.(*drlwe.GaloisKeyGenShare)
 	if !ok {
 		return fmt.Errorf("invalid share type for argument dst: %T instead of %T", dst, dstRtgShare)
 	}
 
-	rtgShares := make([]*drlwe.RTGShare, 0, len(ss))
+	rtgShares := make([]*drlwe.GaloisKeyGenShare, 0, len(ss))
 	for i, share := range ss {
-		if rtgShare, isRTGShare := share.MHEShare.(*drlwe.RTGShare); isRTGShare {
+		if rtgShare, isRTGShare := share.MHEShare.(*drlwe.GaloisKeyGenShare); isRTGShare {
 			rtgShares = append(rtgShares, rtgShare)
 		} else {
 			return fmt.Errorf("invalid share type for argument %d: %T instead of %T", i, share, rtgShare)
 		}
 	}
 
+	dstRtgShare.GaloisElement = rtg.galEl
 	for i := range rtgShares {
-		rtg.RTGProtocol.AggregateShares(dstRtgShare, rtgShares[i], dstRtgShare)
+		rtg.GaloisKeyGenProtocol.AggregateShares(*dstRtgShare, *rtgShares[i], dstRtgShare)
 	}
 	return nil
 }
 
 func (rtg *RTGProtocol) Finalize(crp CRP, aggShare ...Share) (swk interface{}, err error) {
-	rtgcrp, ok := crp.(drlwe.RTGCRP)
+	rtgcrp, ok := crp.(drlwe.GaloisKeyGenCRP)
 	if !ok {
-		return nil, fmt.Errorf("bad input type: %T instead of %T", crp, drlwe.RTGCRP{})
+		return nil, fmt.Errorf("bad input type: %T instead of %T", crp, drlwe.GaloisKeyGenCRP{})
 	}
 	if len(aggShare) != 1 {
 		return nil, fmt.Errorf("bad aggregated share count: %d instead of %d", len(aggShare), 1)
 	}
-	rtgShare, ok := aggShare[0].MHEShare.(*drlwe.RTGShare)
+	rtgShare, ok := aggShare[0].MHEShare.(*drlwe.GaloisKeyGenShare)
 	if !ok {
 		return nil, fmt.Errorf("bad share type: %T instead of %T", aggShare[0].MHEShare, rtgShare)
 	}
 
-	swk = rlwe.NewSwitchingKey(*rtg.params, rtg.params.QCount()-1, rtg.params.PCount()-1)
-	rtg.GenRotationKey(rtgShare, rtgcrp, swk.(*rlwe.SwitchingKey))
-	return swk, nil
+	swk = rlwe.NewGaloisKey(*rtg.params)
+	err = rtg.GaloisKeyGenProtocol.GenGaloisKey(*rtgShare, rtgcrp, swk.(*rlwe.GaloisKey))
+	return swk, err
 }
 
 type RKGProtocol struct {
-	drlwe.RKGProtocol
+	drlwe.RelinearizationKeyGenProtocol
 	params *rlwe.Parameters
 
 	round uint64
@@ -238,56 +243,56 @@ type RKGProtocol struct {
 }
 
 func NewRKGProtocol(params rlwe.Parameters, ephSk *rlwe.SecretKey, round uint64, _ map[string]string) (*RKGProtocol, error) {
-	return &RKGProtocol{RKGProtocol: *drlwe.NewRKGProtocol(params), params: &params, round: round, ephSk: ephSk}, nil
+	return &RKGProtocol{RelinearizationKeyGenProtocol: drlwe.NewRelinearizationKeyGenProtocol(params), params: &params, round: round, ephSk: ephSk}, nil
 }
 
 func (rkg *RKGProtocol) AllocateShare() (share Share) {
-	_, s1, _ := rkg.RKGProtocol.AllocateShare()
-	return Share{MHEShare: s1}
+	_, s1, _ := rkg.RelinearizationKeyGenProtocol.AllocateShare()
+	return Share{MHEShare: &s1}
 }
 
 func (rkg *RKGProtocol) AggregatedShares(dst Share, ss ...Share) error {
-	dstRkgShare, ok := dst.MHEShare.(*drlwe.RKGShare)
+	dstRkgShare, ok := dst.MHEShare.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
 		return fmt.Errorf("invalid share type for argument dst: %T instead of %T", dst, dstRkgShare)
 	}
 
-	rkgShares := make([]*drlwe.RKGShare, 0, len(ss))
+	rkgShares := make([]*drlwe.RelinearizationKeyGenShare, 0, len(ss))
 	for i, share := range ss {
-		if rkgShare, isRKGShare := share.MHEShare.(*drlwe.RKGShare); isRKGShare {
+		if rkgShare, isRKGShare := share.MHEShare.(*drlwe.RelinearizationKeyGenShare); isRKGShare {
 			rkgShares = append(rkgShares, rkgShare)
 		} else {
-			return fmt.Errorf("invalid share type for argument %d: %T instead of %T", i, share.MHEShare, &drlwe.RKGShare{})
+			return fmt.Errorf("invalid share type for argument %d: %T instead of %T", i, share.MHEShare, &drlwe.RelinearizationKeyGenShare{})
 		}
 	}
 
 	for i := range rkgShares {
-		rkg.RKGProtocol.AggregateShares(dstRkgShare, rkgShares[i], dstRkgShare)
+		rkg.RelinearizationKeyGenProtocol.AggregateShares(*dstRkgShare, *rkgShares[i], dstRkgShare)
 	}
 	return nil
 }
 
 func (rkg *RKGProtocol) ReadCRP(crs drlwe.CRS) (CRP, error) {
-	return rkg.RKGProtocol.SampleCRP(crs), nil
+	return rkg.RelinearizationKeyGenProtocol.SampleCRP(crs), nil
 }
 
 func (rkg *RKGProtocol) GenShare(sk *rlwe.SecretKey, crp CRP, share Share) error {
-	rkgShare, ok := share.MHEShare.(*drlwe.RKGShare)
+	rkgShare, ok := share.MHEShare.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
 		return fmt.Errorf("invalid share type: %T instead of %T", share, rkgShare)
 	}
 	if rkg.round == 1 {
-		rkgcrp, ok := crp.(drlwe.RKGCRP)
+		rkgcrp, ok := crp.(drlwe.RelinearizationKeyGenCRP)
 		if !ok {
 			return fmt.Errorf("bad input type: %T instead of %T", crp, rkgcrp)
 		}
-		rkg.RKGProtocol.GenShareRoundOne(sk, rkgcrp, rkg.ephSk, rkgShare)
+		rkg.RelinearizationKeyGenProtocol.GenShareRoundOne(sk, rkgcrp, rkg.ephSk, rkgShare)
 	} else {
-		rkgShareRoundOne, ok := crp.(*drlwe.RKGShare)
+		rkgShareRoundOne, ok := crp.(*drlwe.RelinearizationKeyGenShare)
 		if !ok {
 			return fmt.Errorf("bad input type: %T instead of %T", crp, rkgShareRoundOne)
 		}
-		rkg.RKGProtocol.GenShareRoundTwo(rkg.ephSk, sk, rkgShareRoundOne, rkgShare)
+		rkg.RelinearizationKeyGenProtocol.GenShareRoundTwo(rkg.ephSk, sk, *rkgShareRoundOne, rkgShare)
 	}
 
 	return nil
@@ -297,23 +302,23 @@ func (rkg *RKGProtocol) Finalize(_ CRP, aggShares ...Share) (rlk interface{}, er
 	if len(aggShares) != 2 {
 		return nil, fmt.Errorf("should have two aggregated shares, got %d", len(aggShares))
 	}
-	rkgAggShareRound1, ok := aggShares[0].MHEShare.(*drlwe.RKGShare)
+	rkgAggShareRound1, ok := aggShares[0].MHEShare.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
 		return nil, fmt.Errorf("invalid round 1 share type: %T instead of %T", aggShares[0].MHEShare, rkgAggShareRound1)
 	}
-	rkgAggShareRound2, ok := aggShares[1].MHEShare.(*drlwe.RKGShare)
+	rkgAggShareRound2, ok := aggShares[1].MHEShare.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
 		return nil, fmt.Errorf("invalid round 2 share type: %T instead of %T", aggShares[1].MHEShare, rkgAggShareRound2)
 	}
 	const maxRelinDegree = 2
-	rlk = rlwe.NewRelinearizationKey(*rkg.params, maxRelinDegree)
-	rkg.GenRelinearizationKey(rkgAggShareRound1, rkgAggShareRound2, rlk.(*rlwe.RelinearizationKey))
+	rlk = rlwe.NewRelinearizationKey(*rkg.params)
+	rkg.RelinearizationKeyGenProtocol.GenRelinearizationKey(*rkgAggShareRound1, *rkgAggShareRound2, rlk.(*rlwe.RelinearizationKey))
 	return rlk, nil
 }
 
 type CKSProtocol struct {
 	maxLevel int
-	drlwe.CKSProtocol
+	drlwe.KeySwitchProtocol
 }
 
 func NewCKSProtocol(params rlwe.Parameters, args map[string]string) (*CKSProtocol, error) {
@@ -325,22 +330,27 @@ func NewCKSProtocol(params rlwe.Parameters, args map[string]string) (*CKSProtoco
 	if err != nil {
 		return nil, fmt.Errorf("sigma smudging: %s cannot be parsed to %T", args["smudging"], sigmaSmudging)
 	}
-	return &CKSProtocol{maxLevel: params.MaxLevel(), CKSProtocol: *drlwe.NewCKSProtocol(params, sigmaSmudging)}, nil
+	p, err := drlwe.NewKeySwitchProtocol(params, ring.DiscreteGaussian{Sigma: sigmaSmudging, Bound: 6 * sigmaSmudging})
+	if err != nil {
+		return nil, err
+	}
+	return &CKSProtocol{maxLevel: params.MaxLevel(), KeySwitchProtocol: p}, nil
 }
 
 func (cks *CKSProtocol) AllocateShare() Share {
-	return Share{MHEShare: cks.CKSProtocol.AllocateShare(cks.maxLevel)}
+	s := cks.KeySwitchProtocol.AllocateShare(cks.maxLevel)
+	return Share{MHEShare: &s}
 }
 
 func (cks *CKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
-	dstCksShare, ok := dst.MHEShare.(*drlwe.CKSShare)
+	dstCksShare, ok := dst.MHEShare.(*drlwe.KeySwitchShare)
 	if !ok {
 		return fmt.Errorf("invalid share type for argument dst: %T instead of %T", dst, dstCksShare)
 	}
 
-	cksShares := make([]*drlwe.CKSShare, 0, len(ss))
+	cksShares := make([]*drlwe.KeySwitchShare, 0, len(ss))
 	for i, share := range ss {
-		if cksShare, isCKSShare := share.MHEShare.(*drlwe.CKSShare); isCKSShare {
+		if cksShare, isCKSShare := share.MHEShare.(*drlwe.KeySwitchShare); isCKSShare {
 			cksShares = append(cksShares, cksShare)
 		} else {
 			return fmt.Errorf("invalid share type for argument %d: %T instead of %T", i, share.MHEShare, cksShare)
@@ -348,7 +358,7 @@ func (cks *CKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
 	}
 
 	for i := range cksShares {
-		cks.CKSProtocol.AggregateShares(dstCksShare, cksShares[i], dstCksShare)
+		cks.KeySwitchProtocol.AggregateShares(*dstCksShare, *cksShares[i], dstCksShare)
 	}
 	return nil
 }
@@ -359,28 +369,28 @@ func (cks *CKSProtocol) GenShare(sk *rlwe.SecretKey, outKey OutputKey, in *rlwe.
 		return fmt.Errorf("bad output key type: %T instead of %T", outKey, skOut)
 	}
 
-	cksShare, ok := share.MHEShare.(*drlwe.CKSShare)
+	cksShare, ok := share.MHEShare.(*drlwe.KeySwitchShare)
 	if !ok {
 		return fmt.Errorf("bad share type: %T instead of %T", share.MHEShare, cksShare)
 	}
 
-	cks.CKSProtocol.GenShare(sk, skOut, in, cksShare)
+	cks.KeySwitchProtocol.GenShare(sk, skOut, in, cksShare)
 
 	return nil
 }
 
 func (cks *CKSProtocol) Finalize(in, out *rlwe.Ciphertext, aggShare Share) error {
-	cksAggShare, ok := aggShare.MHEShare.(*drlwe.CKSShare)
+	cksAggShare, ok := aggShare.MHEShare.(*drlwe.KeySwitchShare)
 	if !ok {
 		return fmt.Errorf("bad share type: %T instead of %T", aggShare.MHEShare, cksAggShare)
 	}
-	cks.KeySwitch(in, cksAggShare, out)
+	cks.KeySwitchProtocol.KeySwitch(in, *cksAggShare, out)
 	return nil
 }
 
 type PCKSProtocol struct {
 	maxLevel int
-	drlwe.PCKSProtocol
+	drlwe.PublicKeySwitchProtocol
 }
 
 func NewPCKSProtocol(params rlwe.Parameters, args map[string]string) (*PCKSProtocol, error) {
@@ -391,22 +401,27 @@ func NewPCKSProtocol(params rlwe.Parameters, args map[string]string) (*PCKSProto
 	if err != nil {
 		return nil, fmt.Errorf("sigma smudging: %s cannot be parsed to %T", args["smudging"], sigmaSmudging)
 	}
-	return &PCKSProtocol{maxLevel: params.MaxLevel(), PCKSProtocol: *drlwe.NewPCKSProtocol(params, sigmaSmudging)}, nil
+	p, err := drlwe.NewPublicKeySwitchProtocol(params, ring.DiscreteGaussian{Sigma: sigmaSmudging, Bound: 6 * sigmaSmudging})
+	if err != nil {
+		return nil, err
+	}
+	return &PCKSProtocol{maxLevel: params.MaxLevel(), PublicKeySwitchProtocol: p}, nil
 }
 
 func (cks *PCKSProtocol) AllocateShare() Share {
-	return Share{MHEShare: cks.PCKSProtocol.AllocateShare(cks.maxLevel)}
+	s := cks.PublicKeySwitchProtocol.AllocateShare(cks.maxLevel)
+	return Share{MHEShare: &s}
 }
 
 func (cks *PCKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
-	dstPcksShare, ok := dst.MHEShare.(*drlwe.PCKSShare)
+	dstPcksShare, ok := dst.MHEShare.(*drlwe.PublicKeySwitchShare)
 	if !ok {
 		return fmt.Errorf("invalid share type for argument dst: %T instead of %T", dst, dstPcksShare)
 	}
 
-	pcksShares := make([]*drlwe.PCKSShare, 0, len(ss))
+	pcksShares := make([]*drlwe.PublicKeySwitchShare, 0, len(ss))
 	for i, share := range ss {
-		if pcksShare, isPCKSShare := share.MHEShare.(*drlwe.PCKSShare); isPCKSShare {
+		if pcksShare, isPCKSShare := share.MHEShare.(*drlwe.PublicKeySwitchShare); isPCKSShare {
 			pcksShares = append(pcksShares, pcksShare)
 		} else {
 			return fmt.Errorf("invalid share type for argument %d: %T instead of %T", i, share.MHEShare, pcksShare)
@@ -414,7 +429,7 @@ func (cks *PCKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
 	}
 
 	for i := range pcksShares {
-		cks.PCKSProtocol.AggregateShares(dstPcksShare, pcksShares[i], dstPcksShare)
+		cks.PublicKeySwitchProtocol.AggregateShares(*dstPcksShare, *pcksShares[i], dstPcksShare)
 	}
 	return nil
 }
@@ -425,21 +440,21 @@ func (cks *PCKSProtocol) GenShare(sk *rlwe.SecretKey, outKey OutputKey, in *rlwe
 		return fmt.Errorf("bad output key type: %T instead of %T", outKey, pkOut)
 	}
 
-	pcksShare, ok := share.MHEShare.(*drlwe.PCKSShare)
+	pcksShare, ok := share.MHEShare.(*drlwe.PublicKeySwitchShare)
 	if !ok {
 		return fmt.Errorf("bad share type: %T instead of %T", share.MHEShare, pcksShare)
 	}
 
-	cks.PCKSProtocol.GenShare(sk, pkOut, in, pcksShare)
+	cks.PublicKeySwitchProtocol.GenShare(sk, pkOut, in, pcksShare)
 
 	return nil
 }
 
 func (cks *PCKSProtocol) Finalize(in, out *rlwe.Ciphertext, aggShare Share) error {
-	pcksAggShare, ok := aggShare.MHEShare.(*drlwe.PCKSShare)
+	pcksAggShare, ok := aggShare.MHEShare.(*drlwe.PublicKeySwitchShare)
 	if !ok {
 		return fmt.Errorf("bad share type: %T instead of %T", aggShare.MHEShare, pcksAggShare)
 	}
-	cks.PCKSProtocol.KeySwitch(in, pcksAggShare, out)
+	cks.PublicKeySwitchProtocol.KeySwitch(in, *pcksAggShare, out)
 	return nil
 }

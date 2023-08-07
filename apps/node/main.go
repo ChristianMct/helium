@@ -246,21 +246,29 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 		outputSk = sessSk
 	}
 
-	decryptor := bfv.NewDecryptor(bfvParams, outputSk)
-	outPt := encoder.DecodeUintNew(decryptor.DecryptNew(outCt.Ciphertext))[:8]
+	decryptor, err := bfv.NewDecryptor(bfvParams, outputSk)
+	if err != nil {
+		panic(err)
+	}
+	outPt := decryptor.DecryptNew(outCt.Ciphertext)
+	out := make([]uint64, 8)
+	encoder.Decode(outPt, out)
 
-	log.Printf("[Compute] Retrieved output: %v\n", outPt)
+	log.Printf("[Compute] Retrieved output: %v\n", out)
 }
 
 // getClientOperandsPSI returns the operands that this client node will input into the PSI computation.
-func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder *bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
 	cpk, err := a.sess.GetCollectivePublicKey()
 	if err != nil {
 		panic(err)
 	}
 
-	encryptor := bfv.NewEncryptor(bfvParams, cpk)
+	encryptor, err := bfv.NewEncryptor(bfvParams, cpk)
+	if err != nil {
+		panic(err)
+	}
 
 	// craft input
 	inData := [8]uint64{1, 1, 1, 1, 1, 1, 1, 1}
@@ -269,8 +277,12 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 		panic(err)
 	}
 	inData[val] = uint64(val)
-	inPt := encoder.EncodeNew(inData[:], bfvParams.MaxLevel())
-	inCt := encryptor.EncryptNew(inPt)
+	inPt := bfv.NewPlaintext(bfvParams, bfvParams.MaxLevelQ())
+	encoder.Encode(inData[:], inPt)
+	inCt, err := encryptor.EncryptNew(inPt)
+	if err != nil {
+		panic(err)
+	}
 
 	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
 	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
@@ -279,14 +291,17 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder bfv.Encoder
 }
 
 // getClientOperandsPIR returns the operands that this client node will input into the PIR computation.
-func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder *bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
 	cpk, err := a.sess.GetCollectivePublicKey()
 	if err != nil {
 		panic(err)
 	}
 
-	encryptor := bfv.NewEncryptor(bfvParams, cpk)
+	encryptor, err := bfv.NewEncryptor(bfvParams, cpk)
+	if err != nil {
+		panic(err)
+	}
 
 	// craft input
 	inData := make([]uint64, bfvParams.N())
@@ -304,8 +319,13 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder bfv.Encoder
 			inData[i] = uint64(val)
 		}
 	}
-	inPt := encoder.EncodeNew(inData, bfvParams.MaxLevel())
-	inCt := encryptor.EncryptNew(inPt)
+	inPt := bfv.NewPlaintext(bfvParams, bfvParams.MaxLevelQ())
+	encoder.Encode(inData[:], inPt)
+
+	inCt, err := encryptor.EncryptNew(inPt)
+	if err != nil {
+		panic(err)
+	}
 
 	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
 	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})

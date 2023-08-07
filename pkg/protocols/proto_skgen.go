@@ -44,7 +44,7 @@ func (p *skgProtocol) aggregate(ctx context.Context, env Transport) AggregationO
 		go func() {
 
 			share := p.proto.AllocateShare()
-			errGen := p.proto.GenShareForParty(*shamirPoly, p.spks[nodeID], share)
+			errGen := p.proto.GenShareForParty(shamirPoly, p.spks[nodeID], share)
 			if errGen != nil {
 				panic(errGen)
 			}

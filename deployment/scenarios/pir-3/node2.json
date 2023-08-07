@@ -9,7 +9,8 @@
         "Nodes": ["node-0", "node-1", "node-2"],
 		"PublicSeed": "bGF0dGlnMA==",
         "ObjectStoreConfig": {
-            "BackendName": "mem"       
+            "BackendName": "hybrid",
+            "DBPath": "./data/db"            
         }
     }],
     "SignatureParameters": {"Type": 1}

@@ -32,28 +32,16 @@ func main() {
 	// }
 
 	params := bootstrapping.N15QP768H192H32
-	params.BootstrappingParams.SlotsToCoeffsParameters.BSGSRatio = 8
-	params.BootstrappingParams.CoeffsToSlotsParameters.BSGSRatio = 8
-	ckksParamsLit := params.SchemeParams
+	ckksParamsLit, btpParams, err := bootstrapping.NewParametersFromLiteral(params.SchemeParams, params.BootstrappingParams)
+	if err != nil {
+		panic(err)
+	}
 	ckksParams, err := ckks.NewParametersFromLiteral(ckksParamsLit)
 	if err != nil {
 		panic(err)
 	}
-	btpParams := params.BootstrappingParams
 
-	rots := btpParams.RotationsForBootstrapping(ckksParams)
-	_ = rots
-
-	galEls := []uint64{}
-	galElsM := map[uint64]struct{}{}
-	rotsM := map[int]struct{}{}
-	// for _, rot := range rots {
-	for rot := 0; rot < 130; rot++ {
-		galEl := ckksParams.GaloisElementForColumnRotationBy(rot)
-		galEls = append(galEls, galEl)
-		galElsM[galEl] = struct{}{}
-		rotsM[rot] = struct{}{}
-	}
+	galEls := btpParams.GaloisElements(ckksParams)
 
 	// setupJson, err := json.Marshal(setup.Description{
 	// 	GaloisEls: galEls,
@@ -64,7 +52,7 @@ func main() {
 
 	// fmt.Println(string(setupJson))
 
-	share := drlwe.NewRTGProtocol(ckksParams.Parameters).AllocateShare()
+	share := drlwe.NewGaloisKeyGenProtocol(ckksParams.Parameters).AllocateShare()
 
 	shareb, err := share.MarshalBinary()
 	if err != nil {

@@ -3,7 +3,6 @@ package setup_test
 import (
 	"fmt"
 	"math"
-	"math/bits"
 	"strconv"
 	"testing"
 	"time"
@@ -16,11 +15,18 @@ import (
 	"github.com/ldsec/helium/pkg/services/setup"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
 
-var rangeParam = []rlwe.ParametersLiteral{rlwe.TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
+var TestPN12QP109 = rlwe.ParametersLiteral{
+	LogN: 12,
+	Q:    []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
+	P:    []uint64{0xa001},                         // 15 bits
+}
+
+var rangeParam = []rlwe.ParametersLiteral{TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
 
 type testSetting struct {
 	N int // N - total parties
@@ -732,8 +738,6 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 	sk := lt.SkIdeal
 	nParties := len(lt.SessionNodes())
 
-	log2BoundPk := bits.Len64(uint64(nParties) * params.NoiseBound() * uint64(params.N()))
-
 	// check CPK
 	if utils.NewSet(setup.Cpk).Contains(sess.NodeID) {
 		cpk, err := sess.GetCollectivePublicKey()
@@ -741,7 +745,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
 
-		require.True(t, rlwe.PublicKeyIsCorrect(cpk, sk, params, log2BoundPk))
+		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
 	}
 
 	// check shared PK
@@ -754,7 +758,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			if externalSk == nil || len(externalSk) == 0 {
 				t.Fatalf("%s | cannot check correctness of public key of %s", sess.NodeID, key.Sender)
 			}
-			require.True(t, rlwe.PublicKeyIsCorrect(pk, externalSk[0], params, log2BoundPk))
+			require.Less(t, rlwe.NoisePublicKey(pk, externalSk[0], params), params.NoiseFreshSK())
 		}
 	}
 
@@ -765,11 +769,10 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			if err != nil {
 				t.Fatalf("%s | %s", sess.NodeID, err)
 			}
-			log2BoundRtk := bits.Len64(uint64(
-				params.N() * len(rtk.Value) * len(rtk.Value[0]) *
-					(params.N()*3*int(math.Floor(rlwe.DefaultSigma*6)) +
-						2*3*int(math.Floor(rlwe.DefaultSigma*6)) + params.N()*3)))
-			require.True(t, rlwe.RotationKeyIsCorrect(rtk, key.GaloisEl, sk, params, log2BoundRtk), "rtk for galEl %d should be correct", key.GaloisEl)
+
+			decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+			noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+			require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params), noiseBound, "rtk for galEl %d should be correct", key.GaloisEl)
 		}
 	}
 
@@ -780,11 +783,9 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
 
-		levelQ, levelP := params.QCount()-1, params.PCount()-1
-		decompSize := params.DecompPw2(levelQ, levelP) * params.DecompRNS(levelQ, levelP)
-		log2BoundRlk := bits.Len64(uint64(
-			params.N() * decompSize * (params.N()*3*int(params.NoiseBound()) +
-				2*3*int(params.NoiseBound()) + params.N()*3)))
-		require.True(t, rlwe.RelinearizationKeyIsCorrect(rlk.Keys[0], sk, params, log2BoundRlk))
+		BaseRNSDecompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	}
 }
