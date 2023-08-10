@@ -8,8 +8,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
 	"google.golang.org/grpc"
@@ -168,26 +168,22 @@ func getProtocolDescFromAPI(apiPD *api.ProtocolDescriptor) *protocols.Descriptor
 	return desc
 }
 
-func (t *setupTransport) GetAggregationFrom(ctx context.Context, nid pkg.NodeID, pid pkg.ProtocolID) (*protocols.AggregationOutput, error) {
+func (t *setupTransport) GetAggregationFrom(ctx context.Context, nid pkg.NodeID, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
 	peer, exists := t.peers[nid]
 	if !exists {
 		return nil, fmt.Errorf("peer with id `%s` does not exist", nid)
 	}
 
-	apiOut, err := peer.cli.GetAggregationOutput(ctx, &api.ProtocolID{ProtocolID: string(pid)})
+	apiOut, err := peer.cli.GetAggregationOutput(ctx, getAPIProtocolDesc(&pd))
 	if err != nil {
 		return nil, err
 	}
 
-	out := make([]protocols.Share, len(apiOut.AggregatedShares))
-	for i, s := range apiOut.AggregatedShares {
-		out[i], err = getShareFromAPI(s)
-		if err != nil {
-			return nil, err
-		}
+	s, err := getShareFromAPI(apiOut.AggregatedShare)
+	if err != nil {
+		return nil, err
 	}
-
-	return &protocols.AggregationOutput{Round: out}, nil
+	return &protocols.AggregationOutput{Share: s}, nil
 }
 
 func (t *setupTransport) OutgoingProtocolUpdates() chan<- protocols.StatusUpdate {
@@ -228,27 +224,21 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 	return t.srvHandler.Unregister(transport.Peer{PeerID: peerID})
 }
 
-func (t *setupTransport) GetAggregationOutput(ctx context.Context, pid *api.ProtocolID) (*api.Aggregation, error) {
-	out, err := t.srvHandler.GetProtocolOutput(pkg.ProtocolID(pid.ProtocolID))
+func (t *setupTransport) GetAggregationOutput(ctx context.Context, apipd *api.ProtocolDescriptor) (*api.AggregationOutput, error) {
+	pd := getProtocolDescFromAPI(apipd)
+	out, err := t.srvHandler.GetProtocolOutput(*pd)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s", pid.ProtocolID)
+		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s", pd.HID())
 	}
 
-	res := out.Round
-
-	apiOut := &api.Aggregation{
-		AggregatedShares: make([]*api.Share, len(res)),
+	s, err := getAPIShare(&out.Share)
+	if err != nil {
+		return nil, err
 	}
-	for i, s := range res {
-		si := s
-		apiOut.AggregatedShares[i], err = getAPIShare(&si)
-		if err != nil {
-			return nil, fmt.Errorf("bad share at index %d in output: %w", i, err)
-		}
-	}
+	apiOut := &api.AggregationOutput{AggregatedShare: s}
 
 	peerID := pkg.SenderIDFromIncomingContext(ctx)
-	log.Printf("%s | aggregation output %s query from %s", t.id, pid.ProtocolID, peerID)
+	log.Printf("%s | aggregation output %s query from %s", t.id, pd.HID(), peerID)
 
 	return apiOut, nil
 }

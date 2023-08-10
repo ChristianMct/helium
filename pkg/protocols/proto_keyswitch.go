@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
@@ -123,7 +123,7 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 			return AggregationOutput{Error: errAggr}
 		}
 		share.AggregateFor = p.shareProviders.Copy()
-		return AggregationOutput{Round: []Share{share}}
+		return AggregationOutput{Share: share}
 	}
 
 	if providesShare {
@@ -144,7 +144,7 @@ func (p *keySwitchProtocol) Output(agg AggregationOutput) chan Output {
 		return out
 	}
 	res := p.input.CopyNew()
-	err := p.proto.Finalize(p.input, res, agg.Round[0])
+	err := p.proto.Finalize(p.input, res, agg.Share)
 	if err != nil {
 		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
 		return out

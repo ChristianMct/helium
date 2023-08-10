@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/objectstore"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
@@ -38,13 +39,15 @@ type Service struct {
 	completedProtoMu sync.RWMutex
 	completedProtos  []protocols.Descriptor
 
-	outLock    sync.RWMutex
-	aggOutputs map[pkg.ProtocolID]*protocols.AggregationOutput
+	//outLock    sync.RWMutex
+	//aggOutputs map[pkg.ProtocolID]*protocols.AggregationOutput
+
+	ResultBackend
 
 	*drlwe.Combiner
 }
 
-func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transport.SetupServiceTransport) (s *Service, err error) {
+func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transport.SetupServiceTransport, objStore objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = id
@@ -60,9 +63,11 @@ func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transpor
 
 	s.completedProtos = make([]protocols.Descriptor, 0)
 
-	s.aggOutputs = make(map[pkg.ProtocolID]*protocols.AggregationOutput)
+	//s.aggOutputs = make(map[pkg.ProtocolID]*protocols.AggregationOutput)
 
 	s.transport = trans
+
+	s.ResultBackend = newObjStoreResultBackend(objStore)
 
 	return s, nil
 }
@@ -84,7 +89,9 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 	sigList, sigToReceiverSet := DescriptionToSignatureList(sd)
 
 	// keep track of protocols whose results are already available
-	sigListNoResult, _ := s.filterSignatureList(sigList, sess)
+	sigListNoResult, sigListHasResult := s.filterSignatureList(sigList)
+	s.Logf("protocol results can be loaded from the object store: %s", sigListHasResult)
+	s.Logf("protocol will be executed: %s", sigListNoResult)
 
 	// set of full nodes (that might be aggregators/helpers)
 	aggregators := make(utils.Set[pkg.NodeID])
@@ -174,10 +181,10 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 }
 
 // filterSignatureList splits a SignatureList into two lists based on the presence of the protocol's output in the ObjectStore.
-func (s *Service) filterSignatureList(sl SignatureList, sess *pkg.Session) (noResult, hasResult SignatureList) {
+func (s *Service) filterSignatureList(sl SignatureList) (noResult, hasResult SignatureList) {
 	noResult, hasResult = make(SignatureList, 0), make(SignatureList, 0)
 	for _, sig := range sl {
-		has, err := sess.ObjectStore.IsPresent(sig.String())
+		has, err := s.ResultBackend.Has(sig)
 		if err != nil {
 			panic(err)
 		}
@@ -286,13 +293,13 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 				}
 
 				if pd.Signature.Type == protocols.RKG_2 {
-					aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants}.ID())
+					aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants})
 					if err != nil {
 						s.Logf("[participate] [%s] got error on output query: %s", pid, err)
 						panic(err)
 					}
 					go func() {
-						inc <- aggregatedOutput.Round[0]
+						inc <- aggregatedOutput.Share
 					}()
 				}
 
@@ -438,7 +445,10 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				}
 				s.Logf("[Aggregate] Finished aggregating for pd: %v", pd)
 
-				s.saveAggOut(aggOut, pd, proto, outputs)
+				err = s.ResultBackend.Put(pd, aggOut.Share)
+				if err != nil {
+					panic(err)
+				}
 
 				s.runningProtosMu.Lock()
 				delete(s.runningProtos, pid)
@@ -451,27 +461,23 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)}
 
 				if pd.Signature.Type == protocols.RKG_1 {
-					currRlkShare = aggOut.Round[0]
+					currRlkShare = aggOut.Share
 					pdAggs <- protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_2}, Participants: pd.Participants, Aggregator: s.self}
 				}
 
-				if pd.Signature.Type == protocols.RKG_2 {
-					aggOut.Round = []protocols.Share{currRlkShare, aggOut.Round[0]}
-				}
+				// // block until it gets a value from the channel
+				// out := <-proto.Output(aggOut)
+				// if out.Error != nil {
+				// 	s.Logf("Error in protocol %s output: %v", pid, out.Error)
+				// }
 
-				// block until it gets a value from the channel
-				out := <-proto.Output(aggOut)
-				if out.Error != nil {
-					s.Logf("Error in protocol %s output: %v", pid, out.Error)
-				}
-
-				outputs <- struct {
-					protocols.Descriptor
-					protocols.Output
-				}{
-					pd,
-					out,
-				}
+				// outputs <- struct {
+				// 	protocols.Descriptor
+				// 	protocols.Output
+				// }{
+				// 	pd,
+				// 	out,
+				// }
 
 				wgSig.Done()
 			}
@@ -487,22 +493,6 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 	}()
 
 	return allAggsDone
-}
-
-func (s *Service) saveAggOut(aggOut protocols.AggregationOutput,
-	pd protocols.Descriptor,
-	proto protocols.Instance,
-	outputs chan struct {
-		protocols.Descriptor
-		protocols.Output
-	}) {
-	pid := pd.ID()
-	s.outLock.Lock()
-	if _, outputExists := s.aggOutputs[pid]; outputExists {
-		panic("already has input for protocol")
-	}
-	s.aggOutputs[pid] = &aggOut
-	s.outLock.Unlock()
 }
 
 // queryForOutput makes participants of a protocol query the cloud for that protocol's output.
@@ -533,7 +523,7 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 			}
 
 			// requests output to aggregator.
-			aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, pid)
+			aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, pd)
 			if err != nil {
 				s.Logf("[QueryForOutput] [%s] got error on output query: %s", pid, err)
 				panic(err)
@@ -541,22 +531,24 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 
 			s.Logf("[QueryForOutput] queried node %s for the protocol %s output", pd.Aggregator, pid)
 
-			var proto protocols.Instance
-			proto, err = protocols.NewProtocol(pd, sess) // TODO this resamples the CRP (could be done while waiting for agg)
-			if err != nil {
-				panic(err)
-			}
-			out := <-proto.Output(*aggregatedOutput)
+			s.ResultBackend.Put(pd, aggregatedOutput.Share)
 
-			if out.Error != nil {
-				s.Logf("[QueryForOutput] Error in protocol %s output: %v", pid, out.Error)
-				continue
-			}
+			// var proto protocols.Instance
+			// proto, err = protocols.NewProtocol(pd, sess) // TODO this resamples the CRP (could be done while waiting for agg)
+			// if err != nil {
+			// 	panic(err)
+			// }
+			// out := <-proto.Output(*aggregatedOutput)
 
-			outputs <- struct {
-				protocols.Descriptor
-				protocols.Output
-			}{pd, out}
+			// if out.Error != nil {
+			// 	s.Logf("[QueryForOutput] Error in protocol %s output: %v", pid, out.Error)
+			// 	continue
+			// }
+
+			// outputs <- struct {
+			// 	protocols.Descriptor
+			// 	protocols.Output
+			// }{pd, out}
 		}
 		outQueriesDone <- true
 	}()
@@ -585,6 +577,10 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 			case *rlwe.GaloisKey:
 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
 					s.Logf("error on Rotation Key Store: %s", err)
+				}
+			case *drlwe.RelinearizationKeyGenShare:
+				if err := sess.ObjectStore.Store(output.Signature.Type.String(), res); err != nil {
+					s.Logf("error on Relinearization Key Share store: %s", err)
 				}
 			default:
 				s.Logf("got output for protocol %s: %v", output.ID(), output)
@@ -634,14 +630,13 @@ func (s *Service) GetProtocolStatus() []protocols.StatusUpdate {
 	return comp
 }
 
-func (s *Service) GetProtocolOutput(pid pkg.ProtocolID) (*protocols.AggregationOutput, error) {
-	s.outLock.RLock()
-	defer s.outLock.RUnlock()
-	out, exists := s.aggOutputs[pid]
-	if !exists {
-		return nil, fmt.Errorf("no input for protocol with id %s", pid)
+func (s *Service) GetProtocolOutput(pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	share := pd.Signature.Type.Share()
+	err := s.ResultBackend.GetShare(pd, share)
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	return &protocols.AggregationOutput{Share: protocols.Share{ShareDescriptor: protocols.ShareDescriptor{Type: pd.Signature.Type}, MHEShare: share}}, nil
 }
 
 func (s *Service) waitForRegisteredIDSet(ctx context.Context, size int) (utils.Set[pkg.NodeID], error) {

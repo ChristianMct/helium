@@ -15,7 +15,7 @@ services:
   node-0:
     image: heliummpc/helium:latest
     container_name: node-0
-    #command: -docompute=false
+    command: -docompute=false
     volumes:
       - ../node0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json

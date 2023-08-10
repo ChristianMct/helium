@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/objectstore"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport"
@@ -98,7 +98,7 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 		}
 	}
 
-	node.setup, err = setup.NewSetupService(node.id, node, node.transport.GetSetupTransport())
+	node.setup, err = setup.NewSetupService(node.id, node, node.transport.GetSetupTransport(), os)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}

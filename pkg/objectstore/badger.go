@@ -21,10 +21,12 @@ func NewBadgerObjectStore(conf Config) (ks *badgerObjectStore, err error) {
 	// Maximum size of memtable table = 5MB
 	// Value Threshold for an entry to be stored in the log file = 0.5MB
 	opt := badger.DefaultOptions(conf.DBPath).WithValueLogFileSize(10 * (1 << 20)).WithMemTableSize(5 * (1 << 20)).WithValueThreshold(1 << 19)
+	opt.Logger = nil
 	db, err := badger.Open(opt)
 	if err != nil {
 		return nil, fmt.Errorf("could not instantiate BadgerDB: %s", err)
 	}
+
 	return &badgerObjectStore{db: db, bytesStored: 0}, nil
 }
 

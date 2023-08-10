@@ -6,8 +6,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/pkg"
 	. "github.com/ldsec/helium/pkg/protocols"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
@@ -78,7 +78,7 @@ type testEnvironment struct {
 	*node.LocalTest
 	allOutgoingShares chan Share
 	incShareForParty  map[pkg.NodeID]chan Share
-	aggShareRkg1      Share
+	aggShareRkg1      AggregationOutput
 }
 
 func newTestEnvironment(ts testSetting, params rlwe.ParametersLiteral) *testEnvironment {
@@ -138,7 +138,7 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 		nodeEnv := te.envForNode(sess.NodeID)
 		if pd.Signature.Type == RKG_2 {
 			go func() {
-				nodeEnv.incomingShares <- te.aggShareRkg1
+				nodeEnv.incomingShares <- te.aggShareRkg1.Share
 			}()
 		}
 		aggOutputs[node.ID()] = instances[node.ID()].Aggregate(context.Background(), nodeEnv)
@@ -152,16 +152,12 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 		isAggregator := pd.Signature.Type == SKG || pd.Aggregator == node.ID()
 
 		if !isAggregator {
-			require.Nil(t, aggOut.Round)
+			require.Nil(t, aggOut.Share.MHEShare)
 		} else {
 
 			if pd.Signature.Type == RKG_1 {
-				require.NotNil(t, aggOut.Round[0])
-				te.aggShareRkg1 = aggOut.Round[0]
-			}
-
-			if pd.Signature.Type == RKG_2 {
-				aggOut.Round = []Share{te.aggShareRkg1, aggOut.Round[0]}
+				require.NotNil(t, aggOut.Share)
+				te.aggShareRkg1 = aggOut
 			}
 
 			if pd.Signature.Type != RKG_1 {

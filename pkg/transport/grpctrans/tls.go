@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 )
 

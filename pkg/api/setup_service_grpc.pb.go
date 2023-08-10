@@ -19,7 +19,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SetupServiceClient interface {
 	RegisterForSetup(ctx context.Context, in *Void, opts ...grpc.CallOption) (SetupService_RegisterForSetupClient, error)
-	GetAggregationOutput(ctx context.Context, in *ProtocolID, opts ...grpc.CallOption) (*Aggregation, error)
+	GetAggregationOutput(ctx context.Context, in *ProtocolDescriptor, opts ...grpc.CallOption) (*AggregationOutput, error)
 	// PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
 	//field to the callee.
 	PutShare(ctx context.Context, in *Share, opts ...grpc.CallOption) (*Void, error)
@@ -67,8 +67,8 @@ func (x *setupServiceRegisterForSetupClient) Recv() (*ProtocolUpdate, error) {
 	return m, nil
 }
 
-func (c *setupServiceClient) GetAggregationOutput(ctx context.Context, in *ProtocolID, opts ...grpc.CallOption) (*Aggregation, error) {
-	out := new(Aggregation)
+func (c *setupServiceClient) GetAggregationOutput(ctx context.Context, in *ProtocolDescriptor, opts ...grpc.CallOption) (*AggregationOutput, error) {
+	out := new(AggregationOutput)
 	err := c.cc.Invoke(ctx, "/helium_proto.SetupService/GetAggregationOutput", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func (x *setupServiceStreamSharesClient) Recv() (*Share, error) {
 // for forward compatibility
 type SetupServiceServer interface {
 	RegisterForSetup(*Void, SetupService_RegisterForSetupServer) error
-	GetAggregationOutput(context.Context, *ProtocolID) (*Aggregation, error)
+	GetAggregationOutput(context.Context, *ProtocolDescriptor) (*AggregationOutput, error)
 	// PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
 	//field to the callee.
 	PutShare(context.Context, *Share) (*Void, error)
@@ -137,7 +137,7 @@ type UnimplementedSetupServiceServer struct {
 func (UnimplementedSetupServiceServer) RegisterForSetup(*Void, SetupService_RegisterForSetupServer) error {
 	return status.Errorf(codes.Unimplemented, "method RegisterForSetup not implemented")
 }
-func (UnimplementedSetupServiceServer) GetAggregationOutput(context.Context, *ProtocolID) (*Aggregation, error) {
+func (UnimplementedSetupServiceServer) GetAggregationOutput(context.Context, *ProtocolDescriptor) (*AggregationOutput, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAggregationOutput not implemented")
 }
 func (UnimplementedSetupServiceServer) PutShare(context.Context, *Share) (*Void, error) {
@@ -181,7 +181,7 @@ func (x *setupServiceRegisterForSetupServer) Send(m *ProtocolUpdate) error {
 }
 
 func _SetupService_GetAggregationOutput_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ProtocolID)
+	in := new(ProtocolDescriptor)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func _SetupService_GetAggregationOutput_Handler(srv interface{}, ctx context.Con
 		FullMethod: "/helium_proto.SetupService/GetAggregationOutput",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SetupServiceServer).GetAggregationOutput(ctx, req.(*ProtocolID))
+		return srv.(SetupServiceServer).GetAggregationOutput(ctx, req.(*ProtocolDescriptor))
 	}
 	return interceptor(ctx, in, info, handler)
 }

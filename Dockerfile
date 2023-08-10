@@ -14,7 +14,7 @@ RUN go mod download
 COPY pkg ./pkg
 COPY apps ./apps
 
-RUN CGO_ENABLED=0 go build -v ./apps/node
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -v ./apps/node
 
 #########################################
 #  Image                                #

@@ -28,9 +28,10 @@ online = nodes.copy()
 offline = list()
 
 MEAN_FAILURES_PER_MIN = 10
+MEAN_FAILURE_DURATION_MIN = 10/60
 
 def time_offline():
-    return 5.0
+    return random.expovariate(MEAN_FAILURE_DURATION_MIN)
 
 def next_failure():
     time.sleep(random.expovariate(MEAN_FAILURES_PER_MIN/60))

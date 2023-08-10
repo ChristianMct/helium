@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )

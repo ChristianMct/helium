@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/pkg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -190,7 +190,7 @@ func (t *Transport) serverSigChecker(ctx context.Context, req interface{}, _ *gr
 	case *api.CiphertextID: // todo - Should be signed?
 		break
 
-	case *api.Void, *api.HelloRequest, *api.HelloResponse, *api.Aggregation:
+	case *api.Void, *api.HelloRequest, *api.HelloResponse, *api.AggregationOutput:
 		break
 	default:
 		return nil, fmt.Errorf("unhandled type %T", h)

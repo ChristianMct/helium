@@ -206,7 +206,9 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 				panic(err)
 			}
 			sess.SetSecretKey(sess.sk)
-			sess.SetThresholdSecretKey(sess.tsk)
+			if sess.tsk != nil {
+				sess.SetThresholdSecretKey(sess.tsk)
+			}
 		}
 
 		sess.rlkEphSk = kgen.GenSecretKeyNew()

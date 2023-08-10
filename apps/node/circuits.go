@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

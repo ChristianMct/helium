@@ -3,10 +3,8 @@ package objectstore
 import (
 	"encoding"
 	"fmt"
+	"reflect"
 	"sync"
-
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
 // ObjectStore is a type implementing the objectstore.ObjectStore interface with a main memory backend.
@@ -31,53 +29,18 @@ func (objstore *memObjectStore) Load(objectID string, object encoding.BinaryUnma
 	objstore.mtx.RLock()
 	defer objstore.mtx.RUnlock()
 
-	untypedValue, ok := objstore.objstore[objectID]
-	if !ok {
+	untypedValue, isPresent := objstore.objstore[objectID]
+	if !isPresent {
 		return fmt.Errorf("no value found for key string %s in in-memory ObjectStore", objectID)
 	}
 
-	switch value := object.(type) {
-	case *rlwe.SecretKey:
-		typedValue, ok := untypedValue.(*rlwe.SecretKey)
-		if !ok {
-			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
-		}
-		*value = *typedValue
-	case *drlwe.ShamirSecretShare:
-		typedValue, ok := untypedValue.(*drlwe.ShamirSecretShare)
-		if !ok {
-			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
-		}
-		*value = *typedValue
-	case *rlwe.PublicKey:
-		typedValue, ok := untypedValue.(*rlwe.PublicKey)
-		if !ok {
-			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
-		}
-		*value = *typedValue
-	case *rlwe.RelinearizationKey:
-		typedValue, ok := untypedValue.(*rlwe.RelinearizationKey)
-		if !ok {
-			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
-		}
-		*value = *typedValue
-
-	case *rlwe.GaloisKey:
-		typedValue, ok := untypedValue.(*rlwe.GaloisKey)
-		if !ok {
-			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
-		}
-		*value = *typedValue
-
-	case *rlwe.Ciphertext:
-		typedValue, ok := untypedValue.(*rlwe.Ciphertext)
-		if !ok {
-			return fmt.Errorf("type mismatch between requested type %T and actual stored type", value)
-		}
-		*value = *typedValue
-	default:
-		return fmt.Errorf("unexpected request type %T", value)
+	if reflect.TypeOf(object) != reflect.TypeOf(untypedValue) {
+		return fmt.Errorf("type mismatch between requested type %T and actual stored type %T", object, untypedValue)
 	}
+
+	v1 := reflect.ValueOf(untypedValue).Elem()
+	v2 := reflect.ValueOf(object).Elem()
+	v2.Set(v1)
 	return nil
 }
 

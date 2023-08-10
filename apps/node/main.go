@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 
 	"github.com/ldsec/helium/pkg/node"
@@ -29,11 +29,11 @@ var (
 	addr             = flag.String("address", DefaultAddress, "the address on which the node will listen")
 	configFile       = flag.String("config", "/helium/config/node.json", "the node config file for this node")
 	nodeList         = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
-	setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
 	insecureChannels = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
 	tlsdir           = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
 	outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
 	docompute        = flag.Bool("docompute", true, "executes the compute phase")
+	setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
 	computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
 	keepRunning      = flag.Bool("keepRunning", false, "keeps the node running until system SIGINT or SIGTERM")
 )
@@ -80,6 +80,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	fmt.Printf("%+v\n", app.nc)
+
 	app.node, err = node.NewNode(app.nc, app.nl)
 	if err != nil {
 		log.Println(err)
@@ -102,6 +104,12 @@ func main() {
 	app.sess, exists = app.node.GetSessionFromID(sessionID)
 	if !exists {
 		panic(fmt.Errorf("No session found for ID: %s", sessionID))
+	}
+
+	// parse setup description
+	if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
+		log.Printf("could not read setup description file: %s\n", err)
+		os.Exit(1)
 	}
 
 	var cloudID pkg.NodeID
@@ -133,18 +141,13 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		panic("NO")
+
 		// infer setup description
-		app.sd, err = setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cLabel))
+		compSd, err := setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cLabel))
 		if err != nil {
 			panic(err)
 		}
-	} else {
-		// parse setup description
-		if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
-			log.Printf("could not read setup description file: %s\n", err)
-			os.Exit(1)
-		}
+		app.sd = setup.MergeSetupDescriptions(app.sd, compSd)
 	}
 
 	log.Printf("%s | connecting...\n", app.nc.ID)
@@ -183,12 +186,12 @@ func (a *App) setupPhase() {
 
 // computePhase executes the computational phase of Helium.
 func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.CircuitID, cSign compute.Signature) {
-	bfvParams, err := bfv.NewParameters(*a.sess.Params, 65537)
+	bgvParams, err := bgv.NewParameters(*a.sess.Params, 65537)
 	if err != nil {
 		panic(err)
 	}
 
-	encoder := bfv.NewEncoder(bfvParams)
+	encoder := bgv.NewEncoder(bgvParams)
 
 	ops := []pkg.Operand{}
 
@@ -196,9 +199,9 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	if utils.NewSet(a.sess.Nodes).Contains(a.node.ID()) {
 		switch cSign.CircuitName {
 		case "psi-2", "psi-4", "psi-8", "psi-2-PCKS":
-			ops = a.getClientOperandsPSI(bfvParams, encoder, cLabel)
+			ops = a.getClientOperandsPSI(bgvParams, encoder, cLabel)
 		case "pir-3", "pir-5", "pir-9":
-			ops = a.getClientOperandsPIR(bfvParams, encoder, cLabel)
+			ops = a.getClientOperandsPIR(bgvParams, encoder, cLabel)
 		default:
 			panic(fmt.Errorf("unknown circuit name: %s", cSign.CircuitName))
 		}
@@ -246,26 +249,26 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 		outputSk = sessSk
 	}
 
-	decryptor, err := bfv.NewDecryptor(bfvParams, outputSk)
+	decryptor, err := bgv.NewDecryptor(bgvParams, outputSk)
 	if err != nil {
 		panic(err)
 	}
 	outPt := decryptor.DecryptNew(outCt.Ciphertext)
-	out := make([]uint64, 8)
+	out := make([]uint64, bgvParams.PlaintextSlots())
 	encoder.Decode(outPt, out)
 
-	log.Printf("[Compute] Retrieved output: %v\n", out)
+	log.Printf("[Compute] Retrieved output: %v\n", out[:8])
 }
 
 // getClientOperandsPSI returns the operands that this client node will input into the PSI computation.
-func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder *bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+func (a *App) getClientOperandsPSI(bgvParams bgv.Parameters, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
 	cpk, err := a.sess.GetCollectivePublicKey()
 	if err != nil {
 		panic(err)
 	}
 
-	encryptor, err := bfv.NewEncryptor(bfvParams, cpk)
+	encryptor, err := bgv.NewEncryptor(bgvParams, cpk)
 	if err != nil {
 		panic(err)
 	}
@@ -277,7 +280,7 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder *bfv.Encode
 		panic(err)
 	}
 	inData[val] = uint64(val)
-	inPt := bfv.NewPlaintext(bfvParams, bfvParams.MaxLevelQ())
+	inPt := bgv.NewPlaintext(bgvParams, bgvParams.MaxLevelQ())
 	encoder.Encode(inData[:], inPt)
 	inCt, err := encryptor.EncryptNew(inPt)
 	if err != nil {
@@ -291,22 +294,22 @@ func (a *App) getClientOperandsPSI(bfvParams bfv.Parameters, encoder *bfv.Encode
 }
 
 // getClientOperandsPIR returns the operands that this client node will input into the PIR computation.
-func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder *bfv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+func (a *App) getClientOperandsPIR(bgvParams bgv.Parameters, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
 	cpk, err := a.sess.GetCollectivePublicKey()
 	if err != nil {
 		panic(err)
 	}
 
-	encryptor, err := bfv.NewEncryptor(bfvParams, cpk)
+	encryptor, err := bgv.NewEncryptor(bgvParams, cpk)
 	if err != nil {
 		panic(err)
 	}
 
 	// craft input
-	inData := make([]uint64, bfvParams.N())
+	inData := make([]uint64, bgvParams.N())
 
-	reqFromNode := 2
+	reqFromNode := 1
 
 	if a.node.ID() == "node-0" {
 		inData[reqFromNode] = 1
@@ -319,8 +322,11 @@ func (a *App) getClientOperandsPIR(bfvParams bfv.Parameters, encoder *bfv.Encode
 			inData[i] = uint64(val)
 		}
 	}
-	inPt := bfv.NewPlaintext(bfvParams, bfvParams.MaxLevelQ())
-	encoder.Encode(inData[:], inPt)
+	inPt := bgv.NewPlaintext(bgvParams, bgvParams.MaxLevelQ())
+	err = encoder.Encode(inData[:], inPt)
+	if err != nil {
+		panic(err)
+	}
 
 	inCt, err := encryptor.EncryptNew(inPt)
 	if err != nil {

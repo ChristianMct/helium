@@ -19,7 +19,7 @@ import (
 	"github.com/ldsec/helium/pkg/transport"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

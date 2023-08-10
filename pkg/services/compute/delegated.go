@@ -9,7 +9,7 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 )
 
@@ -47,7 +47,12 @@ func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, sess *pkg.
 	de.sess = sess
 	de.f = cDef
 	de.id = cid
-	de.params, _ = bgv.NewParameters(*sess.Params, 65537)
+
+	var err error
+	de.params, err = bgv.NewParameters(*sess.Params, 65537)
+	if err != nil {
+		panic(err)
+	}
 
 	dummyCtx := newCircuitParserCtx(cid, de.params, nil)
 	if err := cDef(dummyCtx); err != nil {

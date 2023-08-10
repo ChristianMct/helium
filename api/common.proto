@@ -88,7 +88,6 @@ message Share {
     Signature signature = 4;
 }
 
-message Aggregation {
-    repeated Share AggregatedShares = 1;
-    string message = 2;
+message AggregationOutput {
+    Share AggregatedShare = 2;
 }

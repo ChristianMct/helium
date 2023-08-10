@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -40,7 +40,7 @@ type OutputKey interface{}
 type CRP interface{}
 
 type AggregationOutput struct {
-	Round []Share
+	Share Share
 	Error error
 }
 
@@ -49,7 +49,7 @@ type Instance interface {
 	Desc() Descriptor
 
 	Aggregate(ctx context.Context, env Transport) chan AggregationOutput
-	Output(AggregationOutput) chan Output
+	Output(agg AggregationOutput) chan Output
 }
 
 type KeySwitchInstance interface {
@@ -317,7 +317,7 @@ func (p *cpkProtocol) run(ctx context.Context, env Transport) AggregationOutput 
 		}
 		share.AggregateFor = p.shareProviders.Copy()
 		p.Logf("completed aggregating")
-		return AggregationOutput{Round: []Share{share}}
+		return AggregationOutput{Share: share}
 	}
 	if p.shareProviders.Contains(p.self) {
 		env.OutgoingShares() <- share
@@ -348,7 +348,7 @@ func (p *cpkProtocol) Output(agg AggregationOutput) chan Output {
 			panic(err)
 		}
 	}
-	res, err := p.proto.Finalize(p.crp, agg.Round...)
+	res, err := p.proto.Finalize(p.crp, agg.Share)
 	if err != nil {
 		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
 		return out

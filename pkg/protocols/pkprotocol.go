@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 )
 
@@ -54,7 +54,7 @@ func (p *pkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
 		case incShare := <-env.IncomingShares():
 			p.Logf("new share from %s", incShare.From)
 			p.Logf("completed aggregating")
-			return AggregationOutput{Round: []Share{incShare}}
+			return AggregationOutput{Share: incShare}
 			// share.
 		case <-ctx.Done():
 			return AggregationOutput{Error: fmt.Errorf("%s | timeout while aggregating shares for protocol %s, missing: %v", p.self, p.ID(), p.Participants)}
@@ -88,7 +88,7 @@ func (p *pkProtocol) Output(agg AggregationOutput) chan Output {
 			panic(err)
 		}
 	}
-	res, err := p.proto.Finalize(p.crp, agg.Round...)
+	res, err := p.proto.Finalize(p.crp, agg.Share)
 	if err != nil {
 		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
 		return out

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 )
@@ -50,7 +50,7 @@ type SetupServiceTransport interface {
 
 	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
 	// aggregated share of the designated protocol.
-	GetAggregationFrom(context.Context, pkg.NodeID, pkg.ProtocolID) (*protocols.AggregationOutput, error)
+	GetAggregationFrom(context.Context, pkg.NodeID, protocols.Descriptor) (*protocols.AggregationOutput, error)
 
 	ShareTransport
 }
@@ -91,7 +91,7 @@ type SetupServiceHandler interface {
 
 	// GetProtocolOutput returns the aggregation output for the designated protocol
 	// or an error if such output does not exist.
-	GetProtocolOutput(pkg.ProtocolID) (*protocols.AggregationOutput, error)
+	GetProtocolOutput(protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
 // ComputeServiceHandler handles queries from the transport to the compute service.

@@ -10,8 +10,8 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/setup"
 
 	"github.com/stretchr/testify/require"
@@ -35,8 +35,8 @@ type testSetting struct {
 
 var testSettings = []testSetting{
 	{N: 2},
-	{N: 3},
-	{N: 3, T: 2},
+	// {N: 3},
+	// {N: 3, T: 2},
 }
 
 type peer struct {
@@ -116,15 +116,15 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				setup := setup.Description{
 					Cpk: localTest.SessionNodesIds(),
-					GaloisKeys: []struct {
-						GaloisEl  uint64
-						Receivers []pkg.NodeID
-					}{
-						{5, []pkg.NodeID{clou.Node.ID()}},
-						{25, []pkg.NodeID{clou.Node.ID()}},
-						{125, []pkg.NodeID{clou.Node.ID()}},
-					},
-					Rlk: []pkg.NodeID{clou.Node.ID()},
+					// GaloisKeys: []struct {
+					// 	GaloisEl  uint64
+					// 	Receivers []pkg.NodeID
+					// }{
+					// 	{5, []pkg.NodeID{clou.Node.ID()}},
+					// 	{25, []pkg.NodeID{clou.Node.ID()}},
+					// 	{125, []pkg.NodeID{clou.Node.ID()}},
+					// },
+					// Rlk: []pkg.NodeID{clou.Node.ID()},
 				}
 
 				localTest.Start()

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 )
@@ -73,7 +73,7 @@ func (p *skgProtocol) aggregate(ctx context.Context, env Transport) AggregationO
 	p.Logf("completed aggregation")
 
 	p.Logf("finalized protocol")
-	return AggregationOutput{Round: []Share{agg.GetAggregatedShare()}}
+	return AggregationOutput{Share: agg.GetAggregatedShare()}
 }
 
 func (p skgProtocol) Output(agg AggregationOutput) chan Output { // TODO Copy-past from pkProtocol
@@ -83,6 +83,6 @@ func (p skgProtocol) Output(agg AggregationOutput) chan Output { // TODO Copy-pa
 		return out
 	}
 	p.Logf("finalized protocol")
-	out <- Output{Result: agg.Round[0].MHEShare.(*drlwe.ShamirSecretShare)}
+	out <- Output{Result: agg.Share.MHEShare.(*drlwe.ShamirSecretShare)}
 	return out
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -298,15 +298,15 @@ func (rkg *RKGProtocol) GenShare(sk *rlwe.SecretKey, crp CRP, share Share) error
 	return nil
 }
 
-func (rkg *RKGProtocol) Finalize(_ CRP, aggShares ...Share) (rlk interface{}, err error) {
-	if len(aggShares) != 2 {
+func (rkg *RKGProtocol) Finalize(round1 CRP, aggShares ...Share) (rlk interface{}, err error) {
+	if len(aggShares) != 1 {
 		return nil, fmt.Errorf("should have two aggregated shares, got %d", len(aggShares))
 	}
-	rkgAggShareRound1, ok := aggShares[0].MHEShare.(*drlwe.RelinearizationKeyGenShare)
+	rkgAggShareRound1, ok := round1.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
 		return nil, fmt.Errorf("invalid round 1 share type: %T instead of %T", aggShares[0].MHEShare, rkgAggShareRound1)
 	}
-	rkgAggShareRound2, ok := aggShares[1].MHEShare.(*drlwe.RelinearizationKeyGenShare)
+	rkgAggShareRound2, ok := aggShares[0].MHEShare.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
 		return nil, fmt.Errorf("invalid round 2 share type: %T instead of %T", aggShares[1].MHEShare, rkgAggShareRound2)
 	}

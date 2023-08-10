@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
@@ -73,7 +73,11 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 	se.id = id
 	se.sess = sess
 
-	se.params, _ = bgv.NewParameters(*sess.Params, 65537)
+	var err error
+	se.params, err = bgv.NewParameters(*sess.Params, 65537)
+	if err != nil {
+		panic(err)
+	}
 
 	se.isLight = make(map[pkg.NodeID]bool)
 

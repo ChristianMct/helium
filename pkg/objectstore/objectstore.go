@@ -3,6 +3,7 @@ package objectstore
 
 import (
 	"encoding"
+	"fmt"
 )
 
 // Config represents the ObjectStore configuration.
@@ -43,7 +44,8 @@ func NewObjectStoreFromConfig(config Config) (objs ObjectStore, err error) {
 		}
 	// use in-memory backend as default case.
 	default:
-		objs = NewMemObjectStore()
+		//objs = NewMemObjectStore()
+		return nil, fmt.Errorf("config must specify an object store config")
 	}
 	return
 }

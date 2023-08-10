@@ -1,9 +1,10 @@
 package protocols
 
 import (
+	"encoding/json"
 	"fmt"
 
-	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/pkg"
 )
 
 type ShareQuery struct {
@@ -49,4 +50,12 @@ func (d Descriptor) HID() pkg.ProtocolID {
 func (pd Descriptor) String() string {
 	return fmt.Sprintf("{ID: %v, Type: %v, Args: %v, Aggregator: %v, Participants: %v}",
 		pd.HID(), pd.Signature.Type, pd.Signature.Args, pd.Aggregator, pd.Participants)
+}
+
+func (pd Descriptor) MarshalBinary() (b []byte, err error) {
+	return json.Marshal(pd)
+}
+
+func (pd *Descriptor) UnmarshalBinary(b []byte) (err error) {
+	return json.Unmarshal(b, &pd)
 }

@@ -10,7 +10,7 @@ service SetupService {
 
     rpc RegisterForSetup(Void) returns (stream ProtocolUpdate) {}
 
-    rpc GetAggregationOutput(ProtocolID) returns (Aggregation) {}
+    rpc GetAggregationOutput(ProtocolDescriptor) returns (AggregationOutput) {}
     
     /* PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
     field to the callee. */

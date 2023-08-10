@@ -70,7 +70,7 @@ func (objstore *hybridObjectStore) IsPresent(objectID string) (bool, error) {
 		return true, nil
 	}
 
-	log.Printf("warning: object %s was not present in in-memory ObjectStore\n", objectID)
+	//log.Printf("warning: object %s was not present in in-memory ObjectStore\n", objectID)
 	present, err := objstore.badgerObjectStore.IsPresent(objectID)
 
 	return present, err

@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/node"
+	"github.com/ldsec/helium/pkg/pkg"
 	. "github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tuneinsight/lattigo/v4/bfv"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
@@ -21,7 +21,7 @@ var testPN13QP218 = rlwe.ParametersLiteral{
 	LogN:    13,
 	Q:       []uint64{0x3fffffffef8001, 0x4000000011c001, 0x40000000120001}, // 54 + 54 + 54 bits
 	P:       []uint64{0x7ffffffffb4001},                                     // 55 bits
-	NTTFlag: true,                                                           // TODO should not have to specify this in bfv.NewParameters
+	NTTFlag: true,                                                           // TODO should not have to specify this in bgv.NewParameters
 }
 
 var rangeParam = []rlwe.ParametersLiteral{ /*rlwe.TestPN12QP109 , */ testPN13QP218 /* rlwe.TestPN14QP438, rlwe.TestPN15QP880 */}
@@ -242,7 +242,7 @@ type lightNode struct {
 
 type client struct {
 	lightNode
-	*bfv.Encoder
+	*bgv.Encoder
 	*rlwe.Encryptor
 }
 
@@ -293,7 +293,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 				}
 
 				params := localtest.Params
-				bfvParams, err := bfv.NewParameters(params, 65537)
+				bgvParams, err := bgv.NewParameters(params, 65537)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -318,7 +318,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 				localtest.Start()
 
-				decoder := bfv.NewEncoder(bfvParams)
+				decoder := bgv.NewEncoder(bgvParams)
 
 				for i := range clients {
 					clients[i].Encoder = decoder.ShallowCopy()
@@ -326,7 +326,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					clients[i].Encryptor, err = bfv.NewEncryptor(bfvParams, cpk)
+					clients[i].Encryptor, err = bgv.NewEncryptor(bgvParams, cpk)
 				}
 
 				var cSign = Signature{
@@ -360,7 +360,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 					g.Go(func() error {
 						data := []uint64{1, 1, 1, 1, 1, 1}
 						data[i] = uint64(i + 1)
-						pt := bfv.NewPlaintext(params, params.MaxLevelQ())
+						pt := bgv.NewPlaintext(params, params.MaxLevelQ())
 						err := client.Encoder.Encode(data, pt)
 						if err != nil {
 							t.Fatal(err)
@@ -386,12 +386,12 @@ func TestCloudEvalCircuit(t *testing.T) {
 							if err != nil {
 								return err
 							}
-							decryptor, err := bfv.NewDecryptor(bfvParams, sk)
+							decryptor, err := bgv.NewDecryptor(bgvParams, sk)
 							if err != nil {
 								t.Fatal(err)
 							}
 							ptdec := decryptor.DecryptNew(out[0].Ciphertext)
-							res := make([]uint64, bfvParams.PlaintextSlots())
+							res := make([]uint64, bgvParams.PlaintextSlots())
 							err = decoder.Decode(ptdec, res)
 							if err != nil {
 								t.Fatal(err)
@@ -464,7 +464,7 @@ func TestCloudPCKS(t *testing.T) {
 				}
 
 				params := localtest.Params
-				bfvParams, _ := bfv.NewParameters(params, 65537)
+				bgvParams, _ := bgv.NewParameters(params, 65537)
 				// initialise key generation
 				kg := rlwe.NewKeyGenerator(params)
 				sk := localtest.SkIdeal
@@ -485,7 +485,7 @@ func TestCloudPCKS(t *testing.T) {
 				}
 				localtest.Start()
 
-				decoder := bfv.NewEncoder(bfvParams)
+				decoder := bgv.NewEncoder(bgvParams)
 
 				recPk, err := external_0Sess.GetPublicKey()
 				if err != nil {
@@ -505,7 +505,7 @@ func TestCloudPCKS(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					clients[i].Encryptor, err = bfv.NewEncryptor(bfvParams, cpk)
+					clients[i].Encryptor, err = bgv.NewEncryptor(bgvParams, cpk)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -549,7 +549,7 @@ func TestCloudPCKS(t *testing.T) {
 						data := make([]uint64, 6)
 						data[i] = 1
 						data[i+1] = 1
-						pt := bfv.NewPlaintext(params, params.MaxLevelQ())
+						pt := bgv.NewPlaintext(params, params.MaxLevelQ())
 						client.Encoder.Encode(data, pt)
 						ct, err := client.Encryptor.EncryptNew(pt)
 						if err != nil {
@@ -578,12 +578,12 @@ func TestCloudPCKS(t *testing.T) {
 							return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
 
 						}
-						decryptor, err := bfv.NewDecryptor(bfvParams, outputSk)
+						decryptor, err := bgv.NewDecryptor(bgvParams, outputSk)
 						if err != nil {
 							t.Fatal(err)
 						}
 						ptdec := decryptor.DecryptNew(out[0].Ciphertext)
-						res := make([]uint64, bfvParams.PlaintextSlots())
+						res := make([]uint64, bgvParams.PlaintextSlots())
 						decoder.Decode(ptdec, res)
 						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, res[:6])
 					}
@@ -635,7 +635,7 @@ func TestCloudPCKS(t *testing.T) {
 // 				localtest := node.NewLocalTest(testConfig)
 
 // 				params := localtest.Params
-// 				bfvParams, _ := bfv.NewParameters(params, 65537)
+// 				bgvParams, _ := bgv.NewParameters(params, 65537)
 // 				// initialise key generation
 // 				kg := rlwe.NewKeyGenerator(params)
 // 				sk := localtest.SkIdeal
@@ -658,14 +658,14 @@ func TestCloudPCKS(t *testing.T) {
 // 					}
 // 				}
 
-// 				encryptor := bfv.NewEncryptor(bfvParams, cpk)
-// 				decoder := bfv.NewEncoder(bfvParams)
+// 				encryptor := bgv.NewEncryptor(bgvParams, cpk)
+// 				decoder := bgv.NewEncoder(bgvParams)
 
 // 				inputs := make(map[pkg.NodeID]pkg.Operand)
 // 				for i, node := range nodes {
 // 					data := []uint64{1, 1, 1, 1, 1, 1}
 // 					data[i] = uint64(i + 1)
-// 					pt := decoder.EncodeNew(data, bfvParams.MaxLevel())
+// 					pt := decoder.EncodeNew(data, bgvParams.MaxLevel())
 // 					ct := encryptor.EncryptNew(pt)
 // 					inputs[node.Node.ID()] = pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", node.Node.ID(), cLabel)), Ciphertext: ct}
 // 				}
@@ -698,7 +698,7 @@ func TestCloudPCKS(t *testing.T) {
 // 							}
 // 							// _ = recSk
 // 							_ = nodeSK
-// 							ptdec := bfv.NewDecryptor(bfvParams, nodeSK).DecryptNew(out[0].Ciphertext)
+// 							ptdec := bgv.NewDecryptor(bgvParams, nodeSK).DecryptNew(out[0].Ciphertext)
 // 							// fmt.Println(nodeDecoder.DecodeUintNew(ptdec)[:6])
 // 							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, nodeDecoder.DecodeUintNew(ptdec)[:6])
 // 						}
