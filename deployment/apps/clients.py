@@ -51,10 +51,10 @@ def set_online(node):
     offline.remove(node)
     online.append(node)
     docker.compose.start(services=[node])
-    subprocess.call(["bash", "./shape_ingress_traffic.sh %s %s %s" % (node, NET_BANDWIDTH_LIMIT, NET_DELAY)])
-    docker.execute(container=node, command="iperf3 -c iccluster042 -p %d -R" % nodeToPort[node])
+    subprocess.call(["bash", "./shape_ingress_traffic.sh", node, NET_BANDWIDTH_LIMIT, NET_DELAY])
+    docker.execute(container=node, command=["iperf3", "-c", "iccluster042", "-p" , "%d" % nodeToPort[node], "-R"], detach=True)
     print("%s is now online" % node)
-    
+
 
 def set_offline(node):
     online.remove(node)
@@ -81,7 +81,7 @@ t = threading.Thread(target=failure_process)
 print("Starting up containers...")
 for node in nodes:
     set_online(node)
-#t.start()
+t.start()
 signal.pause()
-#t.join()
+t.join()
 docker.compose.down()
