@@ -3,7 +3,7 @@ services:
   cloud:
     image: heliummpc/helium:latest
     container_name: cloud
-    command: -docompute -outputMetrics
+    command: 
     volumes:
       - ../cloud.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
@@ -18,7 +18,7 @@ services:
   node-0:
     image: heliummpc/helium:latest
     container_name: node-0
-    command: -docompute -outputMetrics
+    command: 
     volumes:
       - ../node0.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
@@ -46,7 +46,7 @@ services:
   node-2:
     image: heliummpc/helium:latest
     container_name: node-2
-    command: -docompute
+    command: 
     volumes:
       - ../node2.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json

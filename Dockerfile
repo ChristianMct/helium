@@ -38,4 +38,4 @@ COPY --from=builder /helium/node /helium/node
 
 EXPOSE 40000
 
-ENTRYPOINT [ "/helium/shape_egress_traffic.sh" ]
+ENTRYPOINT [ "/helium/node" ]

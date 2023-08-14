@@ -2,10 +2,6 @@
 
 BASE_LABEL="com.docker-tc"
 
-log() {
-    echo "[$(date -Is)] [$CONTAINER_ID] $*"
-}
-
 QDISC_ID=
 QDISC_HANDLE=
 tc_init() {
@@ -116,33 +112,28 @@ shape_traffic() {
     fi
 
     if [ -z "$CONTAINER_NAME" ]; then
-        log "Error: Invalid payload"
+        echo "Error: Invalid payload"
     else
-        # docker events
-        #CONTAINER_ID=$(docker_container_get_short_id "$CONTAINER_ID")
-        #CONTAINER_ID="$(docker ps -aqf "name=${CONTAINER_NAME}")"
-	CONTAINER_ID=$(docker ps -aqf "name=$CONTAINER_NAME")
-	log "Container name: ${CONTAINER_NAME}  id: ${CONTAINER_ID}"
+        CONTAINER_ID=$(docker ps -aqf "name=$CONTAINER_NAME")
     fi
 
     NETWORK_NAMES=$(docker_container_get_networks "$CONTAINER_ID")
     if [[ "$NETWORK_NAMES" == *"\n"* ]]; then
-        log "Warning: Container is connected to multiple networks"
+        echo "Warning: Container is connected to multiple networks"
     fi
     while read NETWORK_NAME; do
         NETWORK_INTERFACE_NAMES=$(docker_container_interfaces_in_network "$CONTAINER_ID" "$NETWORK_NAME")
         if [ -z "$NETWORK_INTERFACE_NAMES" ]; then
-            log "Warning: Network has no corresponding virtual network interface"
+            echo "Warning: Network has no corresponding virtual network interface"
             continue
         fi
         while IFS= read -r NETWORK_INTERFACE_NAME; do
 
             if [ ! -z "$LIMIT" ] || [ ! -z "$DELAY" ] ; then
-                log "Set $LIMIT $DELAY on $NETWORK_INTERFACE_NAME"
+                echo "set $LIMIT $DELAY on $NETWORK_INTERFACE_NAME"
 
                 tc qdisc add dev $NETWORK_INTERFACE_NAME root netem $LIMIT $DELAY
             fi
-            log "Controlling traffic of the container $(docker_container_get_name "$CONTAINER_ID") on $NETWORK_INTERFACE_NAME"
         done < <(echo -e "$NETWORK_INTERFACE_NAMES")
     done < <(echo -e "$NETWORK_NAMES")
 }

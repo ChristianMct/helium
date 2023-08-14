@@ -29,17 +29,14 @@ nodes = [n for n in conf.services if n != "cloud"]
 online = list()
 offline = nodes.copy()
 
+for node in nodes:
+    conf.services[node].entrypoint = ["./shape_egress_traffic.sh"]
+
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
 
 NET_BANDWIDTH_LIMIT = "50mbit"
 NET_DELAY = "30ms"
-
-nodeToPort = {
-    "node-0": 40000,
-    "node-1": 40001,
-    "node-2": 40002,
-}
 
 def time_offline():
     return random.expovariate(MEAN_FAILURE_DURATION_MIN)
@@ -52,9 +49,8 @@ def set_online(node):
     online.append(node)
     docker.compose.start(services=[node])
     subprocess.call(["bash", "./shape_ingress_traffic.sh", node, NET_BANDWIDTH_LIMIT, NET_DELAY])
-    docker.execute(container=node, command=["iperf3", "-c", "iccluster042", "-p" , "%d" % nodeToPort[node], "-R"], detach=True)
+    docker.execute(container=node, command=conf.services[node].command, detach=True)
     print("%s is now online" % node)
-
 
 def set_offline(node):
     online.remove(node)
