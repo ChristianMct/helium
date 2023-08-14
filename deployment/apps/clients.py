@@ -35,6 +35,12 @@ MEAN_FAILURE_DURATION_MIN = 10/60
 NET_BANDWIDTH_LIMIT = "50mbit"
 NET_DELAY = "30ms"
 
+nodeToPort = {
+    "node-0": 40000,
+    "node-1": 40001,
+    "node-2": 40002,
+}
+
 def time_offline():
     return random.expovariate(MEAN_FAILURE_DURATION_MIN)
 
@@ -46,7 +52,7 @@ def set_online(node):
     online.append(node)
     docker.compose.start(services=[node])
     subprocess.call("./shape_ingress_traffic.sh %s %s %s" % (node, NET_BANDWIDTH_LIMIT, NET_DELAY))
-    docker.execute(container=node, command="/helium/node -outputMetrics")
+    docker.execute(container=node, command="iperf3 -c iccluster042 -p %d -R" % nodeToPort[node])
     print("%s is now online" % node)
     
 
