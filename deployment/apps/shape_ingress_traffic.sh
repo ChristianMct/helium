@@ -120,7 +120,9 @@ shape_traffic() {
     else
         # docker events
         #CONTAINER_ID=$(docker_container_get_short_id "$CONTAINER_ID")
-        CONTAINER_ID=$(docker ps -aqf "name=$CONTAINER_NAME")
+        #CONTAINER_ID="$(docker ps -aqf "name=${CONTAINER_NAME}")"
+	CONTAINER_ID=$(docker ps -aqf "name=$CONTAINER_NAME")
+	log "Container name: ${CONTAINER_NAME}  id: ${CONTAINER_ID}"
     fi
 
     NETWORK_NAMES=$(docker_container_get_networks "$CONTAINER_ID")
