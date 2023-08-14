@@ -131,30 +131,31 @@ shape_traffic() {
         fi
         while IFS= read -r NETWORK_INTERFACE_NAME; do
 
-            tc_init
-            qdisc_del "$NETWORK_INTERFACE_NAME" &>/dev/null || true
+            # tc_init
+            # qdisc_del "$NETWORK_INTERFACE_NAME" &>/dev/null || true
 
-            OPTIONS_LOG=
-            NETM_OPTIONS=
-            netm_add_rule() {
-                if [ ! -z "$2" ]; then
-                    OPTIONS_LOG+="$3=$2, "
-                    NETM_OPTIONS+="$1 $2 "
-                fi
-            }
+            # OPTIONS_LOG=
+            # NETM_OPTIONS=
+            # netm_add_rule() {
+            #     if [ ! -z "$2" ]; then
+            #         OPTIONS_LOG+="$3=$2, "
+            #         NETM_OPTIONS+="$1 $2 "
+            #     fi
+            # }
 
-            netm_add_rule "delay" "$DELAY" "delay"
-            #netm_add_rule "loss random" "$LOSS" "loss"
-            #netm_add_rule "corrupt" "$CORRUPT" "corrupt"
-            #netm_add_rule "duplicate" "$DUPLICATION" "duplicate"
-            #netm_add_rule "reorder" "$REORDERING" "reorder"
+            # netm_add_rule "delay" "$DELAY" "delay"
+            # #netm_add_rule "loss random" "$LOSS" "loss"
+            # #netm_add_rule "corrupt" "$CORRUPT" "corrupt"
+            # #netm_add_rule "duplicate" "$DUPLICATION" "duplicate"
+            # #netm_add_rule "reorder" "$REORDERING" "reorder"
 
-            #OPTIONS_LOG=$(echo "$OPTIONS_LOG" | sed 's/[, ]*$//')
-            #log "Set ${OPTIONS_LOG} on $NETWORK_INTERFACE_NAME"
-            qdisc_netm "$NETWORK_INTERFACE_NAME" $NETM_OPTIONS
+            # #OPTIONS_LOG=$(echo "$OPTIONS_LOG" | sed 's/[, ]*$//')
+            # #log "Set ${OPTIONS_LOG} on $NETWORK_INTERFACE_NAME"
+            # qdisc_netm "$NETWORK_INTERFACE_NAME" $NETM_OPTIONS
             if [ ! -z "$LIMIT" ]; then
                 log "Set bandwidth-limit=$LIMIT on $NETWORK_INTERFACE_NAME"
-                qdisc_tbf "$NETWORK_INTERFACE_NAME" rate "$LIMIT"
+                #qdisc_tbf "$NETWORK_INTERFACE_NAME" rate "$LIMIT"
+                 tc qdisc add dev $NETWORK_INTERFACE_NAME root netem $LIMIT # $rate
             fi
             log "Controlling traffic of the container $(docker_container_get_name "$CONTAINER_ID") on $NETWORK_INTERFACE_NAME"
         done < <(echo -e "$NETWORK_INTERFACE_NAMES")
