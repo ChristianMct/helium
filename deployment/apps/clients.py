@@ -29,8 +29,9 @@ nodes = [n for n in conf.services if n != "cloud"]
 online = list()
 offline = nodes.copy()
 
+# changes the command command with the egress traffic shaper.
 for node in nodes:
-    conf.services[node].entrypoint = ["./shape_egress_traffic.sh"]
+    conf.services[node].command = ["./shape_egress_traffic.sh"]
 
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
@@ -48,7 +49,11 @@ def set_online(node):
     offline.remove(node)
     online.append(node)
     docker.compose.start(services=[node])
+
+    # runs the ingress traffic shaper
     subprocess.call(["bash", "./shape_ingress_traffic.sh", node, NET_BANDWIDTH_LIMIT, NET_DELAY])
+
+    print("exec", conf.services[node].command)
     docker.execute(container=node, command=conf.services[node].command, detach=True)
     print("%s is now online" % node)
 
