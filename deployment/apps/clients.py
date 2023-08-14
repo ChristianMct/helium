@@ -51,7 +51,7 @@ def set_online(node):
     offline.remove(node)
     online.append(node)
     docker.compose.start(services=[node])
-    subprocess.call("./shape_ingress_traffic.sh %s %s %s" % (node, NET_BANDWIDTH_LIMIT, NET_DELAY))
+    subprocess.call(["bash", "./shape_ingress_traffic.sh %s %s %s" % (node, NET_BANDWIDTH_LIMIT, NET_DELAY)])
     docker.execute(container=node, command="iperf3 -c iccluster042 -p %d -R" % nodeToPort[node])
     print("%s is now online" % node)
     
