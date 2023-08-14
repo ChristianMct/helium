@@ -104,19 +104,23 @@ docker_container_interfaces_in_network() {
 
 
 shape_traffic() {
-    CONTAINER_ID="$1"
+    CONTAINER_NAME="$1"
     LIMIT="$2"
     DELAY="$3"
-    #LOSS="$4"
-    #CORRUPT="$5"
-    #DUPLICATION="$6"
-    #REORDERING="$7"
 
-    if [ -z "$CONTAINER_ID" ]; then
+    if [[ ! -z "$2" ]]; then
+        LIMIT="rate $2"
+    fi
+    if [[ ! -z "$3" ]]; then
+        DELAY="delay $3"
+    fi
+
+    if [ -z "$CONTAINER_NAME" ]; then
         log "Error: Invalid payload"
     else
         # docker events
-        CONTAINER_ID=$(docker_container_get_short_id "$CONTAINER_ID")
+        #CONTAINER_ID=$(docker_container_get_short_id "$CONTAINER_ID")
+        CONTAINER_ID=$(docker ps -aqf "name=$CONTAINER_NAME")
     fi
 
     NETWORK_NAMES=$(docker_container_get_networks "$CONTAINER_ID")
@@ -131,37 +135,15 @@ shape_traffic() {
         fi
         while IFS= read -r NETWORK_INTERFACE_NAME; do
 
-            # tc_init
-            # qdisc_del "$NETWORK_INTERFACE_NAME" &>/dev/null || true
+            if [ ! -z "$LIMIT" ] || [ ! -z "$DELAY" ] ; then
+                log "Set $LIMIT $DELAY on $NETWORK_INTERFACE_NAME"
 
-            # OPTIONS_LOG=
-            # NETM_OPTIONS=
-            # netm_add_rule() {
-            #     if [ ! -z "$2" ]; then
-            #         OPTIONS_LOG+="$3=$2, "
-            #         NETM_OPTIONS+="$1 $2 "
-            #     fi
-            # }
-
-            # netm_add_rule "delay" "$DELAY" "delay"
-            # #netm_add_rule "loss random" "$LOSS" "loss"
-            # #netm_add_rule "corrupt" "$CORRUPT" "corrupt"
-            # #netm_add_rule "duplicate" "$DUPLICATION" "duplicate"
-            # #netm_add_rule "reorder" "$REORDERING" "reorder"
-
-            # #OPTIONS_LOG=$(echo "$OPTIONS_LOG" | sed 's/[, ]*$//')
-            # #log "Set ${OPTIONS_LOG} on $NETWORK_INTERFACE_NAME"
-            # qdisc_netm "$NETWORK_INTERFACE_NAME" $NETM_OPTIONS
-            if [ ! -z "$LIMIT" ]; then
-                log "Set bandwidth-limit=$LIMIT on $NETWORK_INTERFACE_NAME"
-                #qdisc_tbf "$NETWORK_INTERFACE_NAME" rate "$LIMIT"
-                 tc qdisc add dev $NETWORK_INTERFACE_NAME root netem $LIMIT # $rate
+                tc qdisc add dev $NETWORK_INTERFACE_NAME root netem $LIMIT $DELAY
             fi
             log "Controlling traffic of the container $(docker_container_get_name "$CONTAINER_ID") on $NETWORK_INTERFACE_NAME"
         done < <(echo -e "$NETWORK_INTERFACE_NAMES")
     done < <(echo -e "$NETWORK_NAMES")
 }
 
-
-shape_traffic "$1" "$2" "$3" "$4" "$5" "$6" "$7"
+shape_traffic "$1" "$2" "$3"
 
