@@ -26,8 +26,8 @@ docker = DockerClient(compose_files=[sys.argv[1]], compose_profiles=["all"])
 conf = docker.compose.config()
 
 nodes = [n for n in conf.services if n != "cloud"]
-online = nodes.copy()
-offline = list()
+online = list()
+offline = nodes.copy()
 
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
@@ -79,7 +79,8 @@ docker.compose.up(services=nodes, start=False)
 stop_event = threading.Event()
 t = threading.Thread(target=failure_process)
 print("Starting up containers...")
-docker.compose.start(services=nodes)
+for node in nodes:
+    set_online(node)
 #t.start()
 signal.pause()
 #t.join()
