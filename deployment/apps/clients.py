@@ -4,6 +4,8 @@ import threading
 import random
 import time
 from python_on_whales import DockerClient
+import subprocess
+
 
 def signal_handler(sig, frame):
     print('Exiting')
@@ -30,6 +32,9 @@ offline = list()
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
 
+NET_BANDWIDTH_LIMIT = "50mbit"
+NET_DELAY = "30ms"
+
 def time_offline():
     return random.expovariate(MEAN_FAILURE_DURATION_MIN)
 
@@ -40,6 +45,8 @@ def set_online(node):
     offline.remove(node)
     online.append(node)
     docker.compose.start(services=[node])
+    subprocess.call("./shape_ingress_traffic.sh %s %s %s" % (node, NET_BANDWIDTH_LIMIT, NET_DELAY))
+    docker.execute(container=node, command="/helium/node -outputMetrics")
     print("%s is now online" % node)
     
 
