@@ -19,4 +19,6 @@ if [[ -n "${RATE_LIMIT}" ]] || [[ -n "${DELAY}" ]]; then
     tc qdisc add dev $interface root netem $delay $rate
 fi
 
- /helium/node $@
+ #/helium/node $@
+ echo "Node ready to start"
+ sleep infinity

@@ -632,7 +632,7 @@ func (s *Service) GetProtocolStatus() []protocols.StatusUpdate {
 
 func (s *Service) GetProtocolOutput(pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
 	share := pd.Signature.Type.Share()
-	err := s.ResultBackend.GetShare(pd, share)
+	err := s.ResultBackend.GetShare(pd.Signature, share)
 	if err != nil {
 		return nil, err
 	}
