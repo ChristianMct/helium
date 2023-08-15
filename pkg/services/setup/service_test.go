@@ -3,14 +3,13 @@ package setup_test
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"testing"
 	"time"
 
+	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 
-	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/setup"
 
@@ -39,18 +38,7 @@ var testSettings = []testSetting{
 	// {N: 3, T: 2},
 }
 
-type peer struct {
-	*node.Node
-	*setup.Service
-}
-
-type cloud struct {
-	*node.Node
-	*setup.Service
-	*pkg.Session
-}
-
-type lightNode struct {
+type testnode struct {
 	*node.Node
 	*setup.Service
 	*pkg.Session
@@ -87,7 +75,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				var err error
 				var ok bool
-				clou := &cloud{Node: localTest.HelperNodes[0]}
+				clou := &testnode{Node: localTest.HelperNodes[0]}
 				clou.Service = clou.GetSetupService()
 				if err != nil {
 					t.Error(err)
@@ -99,7 +87,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				// initialise clients
 				allNodes := []*setup.Service{clou.Service}
-				clients := make([]lightNode, ts.N)
+				clients := make([]testnode, ts.N)
 				sessionNodes := localTest.SessionNodes()
 				for i := range clients {
 					clients[i].Node = sessionNodes[i]
@@ -115,16 +103,16 @@ func TestCloudAssistedSetup(t *testing.T) {
 				}
 
 				setup := setup.Description{
-					Cpk: localTest.SessionNodesIds(),
-					// GaloisKeys: []struct {
-					// 	GaloisEl  uint64
-					// 	Receivers []pkg.NodeID
-					// }{
-					// 	{5, []pkg.NodeID{clou.Node.ID()}},
-					// 	{25, []pkg.NodeID{clou.Node.ID()}},
-					// 	{125, []pkg.NodeID{clou.Node.ID()}},
-					// },
-					// Rlk: []pkg.NodeID{clou.Node.ID()},
+					Cpk: localTest.NodeIds(),
+					GaloisKeys: []struct {
+						GaloisEl  uint64
+						Receivers []pkg.NodeID
+					}{
+						{5, []pkg.NodeID{clou.Node.ID()}},
+						{25, []pkg.NodeID{clou.Node.ID()}},
+						{125, []pkg.NodeID{clou.Node.ID()}},
+					},
+					Rlk: []pkg.NodeID{clou.Node.ID()},
 				}
 
 				localTest.Start()
@@ -172,9 +160,9 @@ func TestCloudAssistedSetup(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
-						checkKeyGenProt(t, localTest, setup, clou.Session)
+						checkKeyGenProt(t, localTest, setup, clou)
 						for c := range online {
-							checkKeyGenProt(t, localTest, setup, c.Session)
+							checkKeyGenProt(t, localTest, setup, &c)
 						}
 					} else {
 						<-time.After(time.Second >> 4)
@@ -196,419 +184,14 @@ func TestCloudAssistedSetup(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					checkKeyGenProt(t, localTest, setup, clou.Session)
+					checkKeyGenProt(t, localTest, setup, clou)
 					for _, node := range clients {
-						checkKeyGenProt(t, localTest, setup, node.Session)
+						checkKeyGenProt(t, localTest, setup, &node)
 					}
 				})
 			})
 		}
 	}
-}
-
-// TestCloudAssistedSetupSkinny tests the setup service in cloud-assisted mode with one helper and N light nodes.
-// This test is a simplified version of the TestCloudAssistedSetup test.
-func TestSkinnyCloudAssistedSetup(t *testing.T) {
-	for _, literalParams := range rangeParam {
-		for _, ts := range testSettings {
-			if ts.T == 0 {
-				ts.T = ts.N // N-out-of-N scenario
-			}
-
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-
-				var sessParams = &pkg.SessionParameters{
-					RLWEParams: literalParams,
-					T:          ts.T,
-				}
-				var testConfig = node.LocalTestConfig{
-					HelperNodes: 1, // the cloud
-					LightNodes:  ts.N,
-					Session:     sessParams,
-					//DoThresholdSetup: false, // no t-out-of-N TSK gen in the cloud-based model yet
-				}
-				localTest := node.NewLocalTest(testConfig)
-				defer func() {
-					err := localTest.Close()
-					if err != nil {
-						panic(err)
-					}
-				}()
-
-				var err error
-				cloud := localTest.HelperNodes[0]
-				clients := localTest.SessionNodes()
-
-				setup := setup.Description{
-					Cpk: localTest.SessionNodesIds(),
-					GaloisKeys: []struct {
-						GaloisEl  uint64
-						Receivers []pkg.NodeID
-					}{
-						{5, []pkg.NodeID{cloud.ID()}},
-						{25, []pkg.NodeID{cloud.ID()}},
-						{125, []pkg.NodeID{cloud.ID()}},
-					},
-					Rlk: []pkg.NodeID{cloud.ID()},
-				}
-
-				localTest.Start()
-
-				// Start public key generation
-				t.Run("FullSetup", func(t *testing.T) {
-
-					g := new(errgroup.Group)
-
-					// runs the cloud
-					g.Go(func() error {
-						errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
-						if errExec != nil {
-							errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
-						}
-						return errExec
-					})
-
-					// runs the online clients
-					for _, client := range clients {
-						client := client
-						g.Go(func() error {
-							errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
-							if errExec != nil {
-								errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
-							}
-							return errExec
-						})
-					}
-
-					// if T < N, the online parties should be able to complete the setup
-					// by themselves, so we wait for them to finish and check their
-					// sessions. Otherwise, we wait for a bit before running the others.
-					// if len(online) >= ts.T {
-					err = g.Wait()
-					if err != nil {
-						t.Fatal(err)
-					}
-					cloudss, ok := cloud.GetSessionFromID("test-session")
-					if !ok {
-						t.Fatal("session should exist")
-					}
-					checkKeyGenProt(t, localTest, setup, cloudss)
-
-					for _, client := range clients {
-						clientss, ok := client.GetSessionFromID("test-session")
-						if !ok {
-							t.Fatal("session should exist")
-						}
-						checkKeyGenProt(t, localTest, setup, clientss)
-					}
-				})
-			})
-		}
-	}
-}
-
-// TestSimpleSetup executes the setup protocol with one client and the cloud. In this test, only the CPK is generated.
-func TestSimpleSetup(t *testing.T) {
-	literalParams := rangeParam[0]
-	ts := testSetting{
-		N: 1,
-		T: 1,
-	}
-
-	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-
-		var sessParams = &pkg.SessionParameters{
-			RLWEParams: literalParams,
-			T:          ts.T,
-		}
-		var testConfig = node.LocalTestConfig{
-			HelperNodes: 1, // the cloud
-			LightNodes:  ts.N,
-			Session:     sessParams,
-			//DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
-		}
-		localTest := node.NewLocalTest(testConfig)
-		defer func() {
-			err := localTest.Close()
-			if err != nil {
-				panic(err)
-			}
-		}()
-
-		var err error
-		cloud := localTest.HelperNodes[0]
-		client := localTest.SessionNodes()[0]
-
-		setup := setup.Description{
-			Cpk: localTest.SessionNodesIds(),
-		}
-
-		localTest.Start()
-
-		// Start public key generation
-		t.Run("FullSetup", func(t *testing.T) {
-
-			g := new(errgroup.Group)
-
-			// run the cloud
-			g.Go(func() error {
-				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
-				if errExec != nil {
-					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
-				}
-				return errExec
-			})
-
-			// run the client
-			g.Go(func() error {
-				errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
-				if errExec != nil {
-					errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
-				}
-				return errExec
-			})
-
-			// wait for cloud and client to finish running the setup
-			err = g.Wait()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			// check if setup material was correctly generated
-			cloudss, ok := cloud.GetSessionFromID("test-session")
-			if !ok {
-				t.Fatal("session should exist")
-			}
-			checkKeyGenProt(t, localTest, setup, cloudss)
-
-			clientss, ok := client.GetSessionFromID("test-session")
-			if !ok {
-				t.Fatal("session should exist")
-			}
-			checkKeyGenProt(t, localTest, setup, clientss)
-		})
-	})
-}
-
-// TestSetupPublicKeyExchange executes the setup protocol with an external receiver that sends its public key to all nodes.
-func TestSetupPublicKeyExchange(t *testing.T) {
-	literalParams := rangeParam[0]
-
-	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", testSettings[1].N, testSettings[1].N, literalParams.LogN), func(t *testing.T) {
-
-		var sessParams = &pkg.SessionParameters{
-			RLWEParams: literalParams,
-			T:          testSettings[1].N,
-		}
-		var testConfig = node.LocalTestConfig{
-			HelperNodes:   1,                 // the cloud
-			LightNodes:    testSettings[1].N, // node_0, node_1, node_2
-			ExternalNodes: 1,                 // node_R
-			Session:       sessParams,
-			//DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
-		}
-		localTest := node.NewLocalTest(testConfig)
-		defer func() {
-			err := localTest.Close()
-			if err != nil {
-				panic(err)
-			}
-		}()
-
-		var err error
-		cloud := localTest.HelperNodes[0]
-		cloudss, ok := cloud.GetSessionFromID("test-session")
-		if !ok {
-			t.Fatal("session should exist")
-		}
-		// log.Printf(cloudss.String())
-
-		// receiver for PCKS
-		node_R := localTest.ExternalNodes[0]
-		node_Rsess, ok := node_R.GetSessionFromID("test-session")
-		if !ok {
-			t.Fatal("session should exist")
-		}
-
-		// session nodes + external receiver
-		sessionNodes := localTest.SessionNodes()
-		clients := make([]*node.Node, len(sessionNodes))
-		for i := range clients {
-			clients[i] = sessionNodes[i]
-		}
-		clients = append(clients, node_R)
-
-		setup := setup.Description{
-			Cpk: localTest.SessionNodesIds(),
-			Pk: []struct {
-				Sender    pkg.NodeID
-				Receivers []pkg.NodeID
-			}{
-				{node_R.ID(), localTest.SessionNodesIds()},
-			},
-		}
-
-		localTest.Start()
-
-		// Start public key generation
-		t.Run("FullSetup", func(t *testing.T) {
-
-			g := new(errgroup.Group)
-
-			// run the cloud
-			g.Go(func() error {
-				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
-				if errExec != nil {
-					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
-				}
-				return errExec
-			})
-
-			// run clients
-			for _, client := range clients {
-				client := client
-				g.Go(func() error {
-					errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
-					if errExec != nil {
-						errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
-					}
-					return errExec
-				})
-			}
-
-			// wait for cloud and client to finish running the setup
-			err = g.Wait()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			// check if setup material was correctly generated
-			outputSk, err := node_Rsess.GetSecretKey()
-			if err != nil {
-				t.Fatal(err)
-			}
-			checkKeyGenProt(t, localTest, setup, cloudss, outputSk)
-
-			for _, client := range clients {
-				clientss, ok := client.GetSessionFromID("test-session")
-				if !ok {
-					t.Fatal("session should exist")
-				}
-				checkKeyGenProt(t, localTest, setup, clientss, outputSk)
-			}
-		})
-	})
-}
-
-// TestQuery executes the setup protocol with one client and the cloud. Then checks that each party queries ONLY the keys specified in
-// the setup descriptor.
-func TestQuery(t *testing.T) {
-	literalParams := rangeParam[0]
-	ts := testSetting{
-		N: 2,
-		T: 2,
-	}
-
-	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-		var sessParams = &pkg.SessionParameters{
-			RLWEParams: literalParams,
-			T:          ts.T,
-		}
-		var testConfig = node.LocalTestConfig{
-			HelperNodes: 1,
-			LightNodes:  ts.N,
-			Session:     sessParams,
-			//DoThresholdSetup: true,
-		}
-		localTest := node.NewLocalTest(testConfig)
-		defer func() {
-			err := localTest.Close()
-			if err != nil {
-				panic(err)
-			}
-		}()
-
-		var err error
-		cloud := localTest.HelperNodes[0]
-		clients := localTest.SessionNodes()
-
-		setup := setup.Description{
-			Cpk: localTest.SessionNodesIds(),
-			Rlk: []pkg.NodeID{cloud.ID()},
-			GaloisKeys: []struct {
-				GaloisEl  uint64
-				Receivers []pkg.NodeID
-			}{
-				{5, []pkg.NodeID{clients[1].ID()}},
-				{25, []pkg.NodeID{cloud.ID()}},
-				{125, localTest.SessionNodesIds()},
-			},
-		}
-
-		localTest.Start()
-
-		// Start public key generation
-		t.Run("FullSetup", func(t *testing.T) {
-
-			g := new(errgroup.Group)
-
-			// run the cloud
-			g.Go(func() error {
-				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
-				if errExec != nil {
-					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
-				}
-				return errExec
-			})
-
-			// run the client
-			for _, client := range clients {
-				client := client
-				g.Go(func() error {
-					errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
-					if errExec != nil {
-						errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
-					}
-					return errExec
-				})
-			}
-
-			// wait for cloud and client to finish running the setup
-			err = g.Wait()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			light0Sess, ok := clients[0].GetSessionFromID("test-session")
-			if !ok {
-				t.Fatal("session should exist")
-			}
-			light1Sess, ok := clients[1].GetSessionFromID("test-session")
-			if !ok {
-				t.Fatal("session should exist")
-			}
-
-			// cpk: {light-0}
-			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.CKG}, true)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.CKG}, true)
-
-			// rlk: {light-0, light-1}
-			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RKG_2}, false)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RKG_2}, false)
-
-			// rtk[5]: {light-1}
-			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, false)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, true)
-
-			// rtk[25]: {}
-			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(25, 10)}}, false)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(25, 10)}}, false)
-
-			// rtk[125]: {light-0, light-1}
-			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(125, 10)}}, true)
-			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(125, 10)}}, true)
-		})
-	})
 }
 
 func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signature, expectedPresence bool) {
@@ -619,6 +202,227 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 
 	require.Equal(t, expectedPresence, present)
 }
+
+// // TestSetupPublicKeyExchange executes the setup protocol with an external receiver that sends its public key to all nodes.
+// func TestSetupPublicKeyExchange(t *testing.T) {
+// 	literalParams := rangeParam[0]
+
+// 	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", testSettings[1].N, testSettings[1].N, literalParams.LogN), func(t *testing.T) {
+
+// 		var sessParams = &pkg.SessionParameters{
+// 			RLWEParams: literalParams,
+// 			T:          testSettings[1].N,
+// 		}
+// 		var testConfig = node.LocalTestConfig{
+// 			HelperNodes:   1,                 // the cloud
+// 			LightNodes:    testSettings[1].N, // node_0, node_1, node_2
+// 			ExternalNodes: 1,                 // node_R
+// 			Session:       sessParams,
+// 			//DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+// 		}
+// 		localTest := node.NewLocalTest(testConfig)
+// 		defer func() {
+// 			err := localTest.Close()
+// 			if err != nil {
+// 				panic(err)
+// 			}
+// 		}()
+
+// 		var err error
+// 		cloud := localTest.HelperNodes[0]
+// 		cloudss, ok := cloud.GetSessionFromID("test-session")
+// 		if !ok {
+// 			t.Fatal("session should exist")
+// 		}
+// 		// log.Printf(cloudss.String())
+
+// 		// receiver for PCKS
+// 		node_R := localTest.ExternalNodes[0]
+// 		node_Rsess, ok := node_R.GetSessionFromID("test-session")
+// 		if !ok {
+// 			t.Fatal("session should exist")
+// 		}
+
+// 		// session nodes + external receiver
+// 		sessionNodes := localTest.SessionNodes()
+// 		clients := make([]*node.Node, len(sessionNodes))
+// 		for i := range clients {
+// 			clients[i] = sessionNodes[i]
+// 		}
+// 		clients = append(clients, node_R)
+
+// 		setup := setup.Description{
+// 			Cpk: localTest.SessionNodesIds(),
+// 			Pk: []struct {
+// 				Sender    pkg.NodeID
+// 				Receivers []pkg.NodeID
+// 			}{
+// 				{node_R.ID(), localTest.SessionNodesIds()},
+// 			},
+// 		}
+
+// 		localTest.Start()
+
+// 		// Start public key generation
+// 		t.Run("FullSetup", func(t *testing.T) {
+
+// 			g := new(errgroup.Group)
+
+// 			// run the cloud
+// 			g.Go(func() error {
+// 				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
+// 				if errExec != nil {
+// 					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
+// 				}
+// 				return errExec
+// 			})
+
+// 			// run clients
+// 			for _, client := range clients {
+// 				client := client
+// 				g.Go(func() error {
+// 					errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
+// 					if errExec != nil {
+// 						errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
+// 					}
+// 					return errExec
+// 				})
+// 			}
+
+// 			// wait for cloud and client to finish running the setup
+// 			err = g.Wait()
+// 			if err != nil {
+// 				t.Fatal(err)
+// 			}
+
+// 			// check if setup material was correctly generated
+// 			outputSk, err := node_Rsess.GetSecretKey()
+// 			if err != nil {
+// 				t.Fatal(err)
+// 			}
+// 			checkKeyGenProt(t, localTest, setup, cloudss, outputSk)
+
+// 			for _, client := range clients {
+// 				clientss, ok := client.GetSessionFromID("test-session")
+// 				if !ok {
+// 					t.Fatal("session should exist")
+// 				}
+// 				checkKeyGenProt(t, localTest, setup, clientss, outputSk)
+// 			}
+// 		})
+// 	})
+// }
+
+// TestQuery executes the setup protocol with one client and the cloud. Then checks that each party queries ONLY the keys specified in
+// the setup descriptor.
+// func TestQuery(t *testing.T) {
+// 	literalParams := rangeParam[0]
+// 	ts := testSetting{
+// 		N: 2,
+// 		T: 2,
+// 	}
+
+// 	t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+// 		var sessParams = &pkg.SessionParameters{
+// 			RLWEParams: literalParams,
+// 			T:          ts.T,
+// 		}
+// 		var testConfig = node.LocalTestConfig{
+// 			HelperNodes: 1,
+// 			LightNodes:  ts.N,
+// 			Session:     sessParams,
+// 			//DoThresholdSetup: true,
+// 		}
+// 		localTest := node.NewLocalTest(testConfig)
+// 		defer func() {
+// 			err := localTest.Close()
+// 			if err != nil {
+// 				panic(err)
+// 			}
+// 		}()
+
+// 		var err error
+// 		cloud := localTest.HelperNodes[0]
+// 		clients := localTest.SessionNodes()
+
+// 		setup := setup.Description{
+// 			Cpk: localTest.SessionNodesIds(),
+// 			Rlk: []pkg.NodeID{cloud.ID()},
+// 			GaloisKeys: []struct {
+// 				GaloisEl  uint64
+// 				Receivers []pkg.NodeID
+// 			}{
+// 				{5, []pkg.NodeID{clients[1].ID()}},
+// 				{25, []pkg.NodeID{cloud.ID()}},
+// 				{125, localTest.SessionNodesIds()},
+// 			},
+// 		}
+
+// 		localTest.Start()
+
+// 		// Start public key generation
+// 		t.Run("FullSetup", func(t *testing.T) {
+
+// 			g := new(errgroup.Group)
+
+// 			// run the cloud
+// 			g.Go(func() error {
+// 				errExec := cloud.GetSetupService().Execute(setup, localTest.NodesList)
+// 				if errExec != nil {
+// 					errExec = fmt.Errorf("cloud (%s) error: %w", cloud.ID(), errExec)
+// 				}
+// 				return errExec
+// 			})
+
+// 			// run the client
+// 			for _, client := range clients {
+// 				client := client
+// 				g.Go(func() error {
+// 					errExec := client.GetSetupService().Execute(setup, localTest.NodesList)
+// 					if errExec != nil {
+// 						errExec = fmt.Errorf("client (%s) error: %w", client.ID(), errExec)
+// 					}
+// 					return errExec
+// 				})
+// 			}
+
+// 			// wait for cloud and client to finish running the setup
+// 			err = g.Wait()
+// 			if err != nil {
+// 				t.Fatal(err)
+// 			}
+
+// 			light0Sess, ok := clients[0].GetSessionFromID("test-session")
+// 			if !ok {
+// 				t.Fatal("session should exist")
+// 			}
+// 			light1Sess, ok := clients[1].GetSessionFromID("test-session")
+// 			if !ok {
+// 				t.Fatal("session should exist")
+// 			}
+
+// 			// cpk: {light-0}
+// 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.CKG}, true)
+// 			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.CKG}, true)
+
+// 			// rlk: {light-0, light-1}
+// 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RKG_2}, false)
+// 			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RKG_2}, false)
+
+// 			// rtk[5]: {light-1}
+// 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, false)
+// 			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(5, 10)}}, true)
+
+// 			// rtk[25]: {}
+// 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(25, 10)}}, false)
+// 			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(25, 10)}}, false)
+
+// 			// rtk[125]: {light-0, light-1}
+// 			checkResultInSession(t, light0Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(125, 10)}}, true)
+// 			checkResultInSession(t, light1Sess, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(125, 10)}}, true)
+// 		})
+// 	})
+// }
 
 // // TestPeerToPeerSetup tests the peer to peer setup with N full nodes.
 // func TestPeerToPeerSetup(t *testing.T) {
@@ -732,20 +536,48 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 // }
 
 // Based on the session information, check if the protocol was performed correctly.
-func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, sess *pkg.Session, externalSk ...*rlwe.SecretKey) {
+func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, n *testnode, externalSk ...*rlwe.SecretKey) {
 
 	params := lt.Params
 	sk := lt.SkIdeal
 	nParties := len(lt.SessionNodes())
+	sess := n.Session
 
 	// check CPK
-	if utils.NewSet(setup.Cpk).Contains(sess.NodeID) {
-		cpk, err := sess.GetCollectivePublicKey()
+	if utils.NewSet(setup.Cpk).Contains(n.NodeID) {
+		cpk, err := n.Service.GetCollectivePublicKey()
 		if err != nil {
 			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
 
 		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
+	}
+
+	// check RTG
+	for _, key := range setup.GaloisKeys {
+		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
+			rtk, err := n.Service.GetGaloisKey(key.GaloisEl)
+			if err != nil {
+				t.Fatalf("%s | %s", sess.NodeID, err)
+			}
+
+			decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+			noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+			require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params), noiseBound, "rtk for galEl %d should be correct", key.GaloisEl)
+		}
+	}
+
+	// check RLK
+	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
+		rlk, err := n.Service.GetRelinearizationKey()
+		if err != nil {
+			t.Fatalf("%s | %s", sess.NodeID, err)
+		}
+
+		BaseRNSDecompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	}
 
 	// check shared PK
@@ -760,32 +592,5 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			}
 			require.Less(t, rlwe.NoisePublicKey(pk, externalSk[0], params), params.NoiseFreshSK())
 		}
-	}
-
-	// check RTG
-	for _, key := range setup.GaloisKeys {
-		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
-			rtk, err := sess.GetRotationKey(key.GaloisEl)
-			if err != nil {
-				t.Fatalf("%s | %s", sess.NodeID, err)
-			}
-
-			decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
-			noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
-			require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params), noiseBound, "rtk for galEl %d should be correct", key.GaloisEl)
-		}
-	}
-
-	// check RLK
-	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
-		rlk, err := sess.GetRelinearizationKey()
-		if err != nil {
-			t.Fatalf("%s | %s", sess.NodeID, err)
-		}
-
-		BaseRNSDecompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
-		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
-
-		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	}
 }

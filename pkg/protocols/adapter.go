@@ -304,11 +304,11 @@ func (rkg *RKGProtocol) Finalize(round1 CRP, aggShares ...Share) (rlk interface{
 	}
 	rkgAggShareRound1, ok := round1.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
-		return nil, fmt.Errorf("invalid round 1 share type: %T instead of %T", aggShares[0].MHEShare, rkgAggShareRound1)
+		return nil, fmt.Errorf("invalid round 1 share type: %T instead of %T", round1, rkgAggShareRound1)
 	}
 	rkgAggShareRound2, ok := aggShares[0].MHEShare.(*drlwe.RelinearizationKeyGenShare)
 	if !ok {
-		return nil, fmt.Errorf("invalid round 2 share type: %T instead of %T", aggShares[1].MHEShare, rkgAggShareRound2)
+		return nil, fmt.Errorf("invalid round 2 share type: %T instead of %T", aggShares[0].MHEShare, rkgAggShareRound2)
 	}
 	const maxRelinDegree = 2
 	rlk = rlwe.NewRelinearizationKey(*rkg.params)
