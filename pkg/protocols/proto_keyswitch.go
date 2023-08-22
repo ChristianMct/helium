@@ -69,6 +69,14 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session) (KeySwitchInstance, 
 	return ks, nil
 }
 
+func (p *keySwitchProtocol) Init(_ CRP) error {
+	return nil
+}
+
+func (p *keySwitchProtocol) ReadCRP() (CRP, error) {
+	panic("trying to read CRP from a keyswitch protocol")
+}
+
 func (p *keySwitchProtocol) Aggregate(ctx context.Context, env Transport) chan AggregationOutput {
 	agg := make(chan AggregationOutput, 1)
 	go func() {

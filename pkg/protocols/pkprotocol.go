@@ -17,6 +17,15 @@ type pkProtocol struct {
 	crp   CRP
 }
 
+func (p *pkProtocol) Init(crp CRP) error {
+	p.crp = crp
+	return nil
+}
+
+func (p *pkProtocol) ReadCRP() (CRP, error) {
+	return p.proto.ReadCRP(p.crs)
+}
+
 // run runs the pkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
 func (p *pkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
 	p.Logf("started running with %v", p.Descriptor)
@@ -27,10 +36,9 @@ func (p *pkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
 	}
 
 	if p.shareProviders.Contains(p.self) {
-		var err error
-		p.crp, err = p.proto.ReadCRP(p.crs)
-		if err != nil {
-			panic(err)
+
+		if p.crp == nil {
+			panic("Aggregate run before Init")
 		}
 
 		share := p.proto.AllocateShare()

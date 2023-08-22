@@ -48,6 +48,8 @@ type Instance interface {
 	ID() pkg.ProtocolID
 	Desc() Descriptor
 
+	ReadCRP() (CRP, error)
+	Init(CRP) error
 	Aggregate(ctx context.Context, env Transport) chan AggregationOutput
 	Output(agg AggregationOutput) chan Output
 }
@@ -267,26 +269,39 @@ func HashOfPartList(partList []pkg.NodeID) [32]byte {
 	return blake2b.Sum256([]byte(s))
 }
 
+func (p *cpkProtocol) Init(crp CRP) (err error) {
+	p.crp = crp
+	return nil
+}
+
+func (p *cpkProtocol) ReadCRP() (CRP, error) {
+	return p.proto.ReadCRP(p.crs)
+}
+
 // run runs the cpkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
 func (p *cpkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
 	p.Logf("started running with %v", p.Descriptor)
 
-	if p.Signature.Type == RKG_2 {
-		select {
-		case s := <-env.IncomingShares():
-			p.crp = s.MHEShare // for the second round of RKG, the CRP is the round 1 agg. share.
-		case <-ctx.Done():
-			err := fmt.Errorf("%s | timeout while waiting for round 1 aggregated share for protocol %s", p.self, p.ID())
-			return AggregationOutput{Error: err}
-		}
-		log.Printf("%s | got round 1 aggregated share\n", p.self)
-	} else {
-		var err error
-		p.crp, err = p.proto.ReadCRP(p.crs)
-		if err != nil {
-			panic(err)
-		}
+	if p.crp == nil {
+		panic(fmt.Errorf("Aggregate method called before Init at node %s", p.self))
 	}
+
+	// if p.Signature.Type == RKG_2 {
+	// 	select {
+	// 	case s := <-env.IncomingShares():
+	// 		p.crp = s.MHEShare // for the second round of RKG, the CRP is the round 1 agg. share.
+	// 	case <-ctx.Done():
+	// 		err := fmt.Errorf("%s | timeout while waiting for round 1 aggregated share for protocol %s", p.self, p.ID())
+	// 		return AggregationOutput{Error: err}
+	// 	}
+	// 	log.Printf("%s | got round 1 aggregated share\n", p.self)
+	// } else {
+	// 	var err error
+	// 	p.crp, err = p.proto.ReadCRP(p.crs)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// }
 
 	var share Share
 	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
@@ -342,11 +357,12 @@ func (p *cpkProtocol) Output(agg AggregationOutput) chan Output {
 		return out
 	}
 	if p.crp == nil {
-		var err error
-		p.crp, err = p.proto.ReadCRP(p.crs)
-		if err != nil {
-			panic(err)
-		}
+		// var err error
+		// p.crp, err = p.proto.ReadCRP(p.crs)
+		// if err != nil {
+		// 	panic(err)
+		// }
+		panic("Output method called before Init")
 	}
 	res, err := p.proto.Finalize(p.crp, agg.Share)
 	if err != nil {

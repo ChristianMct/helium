@@ -298,9 +298,13 @@ func (s *Service) participate(ctx context.Context, sigList SignatureList, protoT
 						s.Logf("[participate] [%s] got error on output query: %s", pid, err)
 						panic(err)
 					}
-					go func() {
-						inc <- aggregatedOutput.Share
-					}()
+					proto.Init(aggregatedOutput.Share.MHEShare)
+				} else {
+					crp, err := proto.ReadCRP()
+					if err != nil {
+						panic(err)
+					}
+					proto.Init(crp)
 				}
 
 				aggOut := <-proto.Aggregate(ctxdl, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()})
@@ -427,9 +431,13 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				}
 
 				if pd.Signature.Type == protocols.RKG_2 {
-					go func() {
-						inc <- currRlkShare
-					}()
+					proto.Init(currRlkShare.MHEShare)
+				} else {
+					crp, err := proto.ReadCRP()
+					if err != nil {
+						panic(err)
+					}
+					proto.Init(crp)
 				}
 
 				// s.Logf("[Aggregate] Service is %v", s)
@@ -464,20 +472,6 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					currRlkShare = aggOut.Share
 					pdAggs <- protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_2}, Participants: pd.Participants, Aggregator: s.self}
 				}
-
-				// // block until it gets a value from the channel
-				// out := <-proto.Output(aggOut)
-				// if out.Error != nil {
-				// 	s.Logf("Error in protocol %s output: %v", pid, out.Error)
-				// }
-
-				// outputs <- struct {
-				// 	protocols.Descriptor
-				// 	protocols.Output
-				// }{
-				// 	pd,
-				// 	out,
-				// }
 
 				wgSig.Done()
 			}

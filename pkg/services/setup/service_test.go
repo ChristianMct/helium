@@ -34,8 +34,8 @@ type testSetting struct {
 
 var testSettings = []testSetting{
 	{N: 2},
-	// {N: 3},
-	// {N: 3, T: 2},
+	{N: 3},
+	{N: 3, T: 2},
 }
 
 type testnode struct {

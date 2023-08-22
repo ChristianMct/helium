@@ -30,6 +30,21 @@ func (s *Service) getKeyFromProto(sig protocols.Signature) (key interface{}, err
 		panic(err)
 	}
 
+	if pd.Signature.Type == protocols.RKG_2 {
+		aggShareR1 := sig.Type.Share()
+		err = s.ResultBackend.GetShare(protocols.Signature{Type: protocols.RKG_1}, aggShareR1)
+		if err != nil {
+			return nil, err
+		}
+		proto.Init(aggShareR1)
+	} else {
+		crp, err := proto.ReadCRP()
+		if err != nil {
+			panic(err)
+		}
+		proto.Init(crp)
+	}
+
 	out := <-proto.Output(protocols.AggregationOutput{Share: protocols.Share{MHEShare: aggShare}})
 	if out.Error != nil {
 		return nil, out.Error
