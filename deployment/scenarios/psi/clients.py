@@ -34,7 +34,7 @@ online = list()
 offline = nodes.copy()
 
 CLOUD_ID = "cloud"
-CLOUD_ADDRESS = "cloud:40000"
+CLOUD_ADDRESS = "localhost:40000"
 
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
@@ -126,8 +126,8 @@ def create_setup():
 
 def create_containers():
     docker.remove(nodes, force=True)
-    docker.network.remove("exp-net")
-    netw = docker.network.create("exp-net")
+    # docker.network.remove("exp-net")
+    # netw = docker.network.create("exp-net")
     for node in nodes:
         entrypoint = "/helium/node"
         command = ["-docompute=false", "-keepRunning=true"]
@@ -150,7 +150,7 @@ def create_containers():
                 (pathlib.Path("./computedesc.json").absolute(), "/helium/config/compute.json"),
             ],
             cap_add=caps,
-            networks=[netw],
+            networks=["host"],
         )
 
 def stop_clients():

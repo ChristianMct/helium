@@ -13,6 +13,6 @@
  },
  {
   "NodeID": "cloud",
-  "NodeAddress": "cloud:40000"
+  "NodeAddress": "localhost:40000"
  }
 ]

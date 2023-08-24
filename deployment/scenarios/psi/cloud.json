@@ -33,5 +33,5 @@
   "Type": 1
  },
  "ID": "cloud",
- "Address": "cloud:40000"
+ "Address": "localhost:40000"
 }
