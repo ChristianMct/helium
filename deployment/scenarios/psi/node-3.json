@@ -1,0 +1,41 @@
+{
+ "TLSConfig": {
+  "InsecureChannels": true
+ },
+ "SessionParameters": [
+  {
+   "ID": "test-session",
+   "RLWEParams": {
+    "LogN": 13,
+    "Q": [
+     18014398508400641,
+     18014398510645249,
+     18014398510661633
+    ],
+    "P": [
+     36028797018652673
+    ],
+    "NTTFlag": true
+   },
+   "PublicSeed": "bGF0dGlnMA==",
+   "Nodes": [
+    "node-0",
+    "node-1",
+    "node-2",
+    "node-3",
+    "node-4",
+    "node-5",
+    "node-6",
+    "node-7"
+   ]
+  }
+ ],
+ "ObjectStoreConfig": {
+  "BackendName": "hybrid",
+  "DBPath": "./data/db"
+ },
+ "SignatureParameters": {
+  "Type": 1
+ },
+ "ID": "node-3"
+}

@@ -16,9 +16,7 @@ if [[ -n "${RATE_LIMIT}" ]] || [[ -n "${DELAY}" ]]; then
     echo "Applying network condition $rate $delay"
 
     # apply egress traffic rate limit
-    tc qdisc add dev $interface root netem $delay $rate
+    tc qdisc add dev $interface root netem $delay $rate || exit 1
 fi
 
- #/helium/node $@
- echo "Node ready to start"
- sleep infinity
+/helium/node $@

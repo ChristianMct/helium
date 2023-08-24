@@ -31,7 +31,8 @@ WORKDIR /helium
 RUN apt update
 RUN apt install -y iperf3 git iproute2
 
-COPY deployment/apps/shape_egress_traffic.sh /helium/shape_egress_traffic.sh
+COPY deployment/apps/shape_egress_and_start.sh /helium/shape_egress_and_start.sh
+COPY deployment/apps/shape_ingress_traffic.sh /helium/shape_ingress_traffic.sh
 COPY --from=builder /helium/node /helium/node
 
 #RUN mkdir /lib64 && ln -s /lib/libc.musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2

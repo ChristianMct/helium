@@ -286,23 +286,6 @@ func (p *cpkProtocol) run(ctx context.Context, env Transport) AggregationOutput 
 		panic(fmt.Errorf("Aggregate method called before Init at node %s", p.self))
 	}
 
-	// if p.Signature.Type == RKG_2 {
-	// 	select {
-	// 	case s := <-env.IncomingShares():
-	// 		p.crp = s.MHEShare // for the second round of RKG, the CRP is the round 1 agg. share.
-	// 	case <-ctx.Done():
-	// 		err := fmt.Errorf("%s | timeout while waiting for round 1 aggregated share for protocol %s", p.self, p.ID())
-	// 		return AggregationOutput{Error: err}
-	// 	}
-	// 	log.Printf("%s | got round 1 aggregated share\n", p.self)
-	// } else {
-	// 	var err error
-	// 	p.crp, err = p.proto.ReadCRP(p.crs)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// }
-
 	var share Share
 	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
 		share = p.proto.AllocateShare()

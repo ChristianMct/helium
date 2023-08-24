@@ -137,13 +137,11 @@ type Session struct {
 	NodeID NodeID
 	Nodes  []NodeID
 
-	T        int
-	SPKS     map[NodeID]drlwe.ShamirPublicPoint
-	sk       *rlwe.SecretKey
-	tsk      *drlwe.ShamirSecretShare
+	T    int
+	SPKS map[NodeID]drlwe.ShamirPublicPoint
+	//sk       *rlwe.SecretKey
+	//tsk      *drlwe.ShamirSecretShare
 	rlkEphSk *rlwe.SecretKey
-
-	pk *rlwe.PublicKey
 
 	PublicSeed []byte
 	Params     *rlwe.Parameters
@@ -192,31 +190,28 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 
 	// node generates its secret-key for the session
 	if utils.NewSet(sessParams.Nodes).Contains(nodeID) {
-		// kg := rlwe.NewKeyGenerator(fheParams)
-		// sk = kg.GenSecretKey()
 
-		var errSk, errTsk error
-		sess.sk, errSk = sess.GetSecretKey()
-		sess.tsk, errTsk = sess.GetThresholdSecretKey()
+		sk, errSk := sess.GetSecretKey()
+		tsk, errTsk := sess.GetThresholdSecretKey()
 
 		if errSk != nil || errTsk != nil {
 			log.Printf("%s | no sk and tsk found, node will generate them\n", sess.NodeID)
-			sess.sk, sess.tsk, err = GetTestSecretKeys(sessParams, nodeID) // TODO: local generation for testing
+			sk, tsk, err = GetTestSecretKeys(sessParams, nodeID) // TODO: local generation for testing
 			if err != nil {
 				panic(err)
 			}
-			sess.SetSecretKey(sess.sk)
-			if sess.tsk != nil {
-				sess.SetThresholdSecretKey(sess.tsk)
+			sess.SetSecretKey(sk)
+			if tsk != nil {
+				sess.SetThresholdSecretKey(tsk)
 			}
 		}
 
 		sess.rlkEphSk = kgen.GenSecretKeyNew()
 		sess.SetRLKEphemeralSecretKey(sess.rlkEphSk)
 	} else {
-		sess.sk, sess.pk = kgen.GenKeyPairNew()
-		sess.SetSecretKey(sess.sk)
-		sess.SetPublicKey(sess.pk)
+		sk, pk := kgen.GenKeyPairNew()
+		sess.SetSecretKey(sk)
+		sess.SetPublicKey(pk)
 	}
 
 	//sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
