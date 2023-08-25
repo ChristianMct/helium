@@ -23,7 +23,7 @@ MEAN_FAILURE_DURATION_SEC = 5
 
 SHAPE_NETWORK = True
 SHAPE_INGRESS = True
-NET_BANDWIDTH_LIMIT = "50mbit"
+NET_BANDWIDTH_LIMIT = "10mbit"
 NET_DELAY = "30ms"
 
 SESS_PARAMS = {
@@ -146,8 +146,8 @@ def create_containers(containers):
             networks=[net],
         )
 
-def stop_all():
-     docker.stop(list(nodes))
+def stop_all(containers):
+     docker.stop(list(containers))
 
 def cancel_online_timers():
      for t in timers.values():
@@ -273,5 +273,5 @@ if __name__ == '__main__':
     print("waiting on fp to terminate")
     fp.join()
     
-    stop_all()
+    stop_all(containers)
     #cleanup()
