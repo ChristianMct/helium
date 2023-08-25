@@ -26,7 +26,7 @@ docker_container_get_name() {
 }
 
 docker_container_get_interfaces() {
-    IFLINKS=$(cat /sys/class/net/*/iflink)
+    IFLINKS=$(docker exec $1 sh -c 'cat /sys/class/net/*/iflink')
     if [ -z "$IFLINKS" ]; then
         return 1
     fi

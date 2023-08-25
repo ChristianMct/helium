@@ -3,7 +3,7 @@
   become: true
   vars_prompt:
     - name: dockerhub_user
-      prompt: Enter the dockerhub user...
+      prompt: Enter the dockerhub user (leave empty for skipping)...
     - name: dockerhub_password
       prompt: Enter the dockerhub password...
 
@@ -60,3 +60,4 @@
       docker_login:
         username: "{{ dockerhub_user }}"
         password: "{{ dockerhub_password }}"
+      when: dockerhub_user | length > 0
