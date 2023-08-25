@@ -1,7 +1,7 @@
 import sys
 import signal
 import threading
-from multiprocessing import Process
+from multiprocessing import Process, Manager
 import random
 import time
 from python_on_whales import DockerClient
@@ -9,37 +9,20 @@ import subprocess
 import json
 import copy 
 import pathlib
+import argparse
 
 
-def signal_handler(sig, frame):
-    print('Exiting')
-    stop_event.set()
-    cleanup()
-    print("done")
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-
-if len(sys.argv) != 2:
-    print("Usage: ./%s n_parties" % sys.argv[0])
-    sys.exit(1)
-
-n_parties = int(sys.argv[1])
-
-docker = DockerClient()
-
-clients = ["node-%d" % n for n in range(n_parties)]
-nodes = ["cloud"] + clients.copy()
-online = list()
-offline = nodes.copy()
+HELIUM_PORT = 40000
 
 CLOUD_ID = "cloud"
-CLOUD_ADDRESS = "cloud:40000"
+CLOUD_ADDRESS = "iccluster045.iccluster.epfl.ch:%s" % HELIUM_PORT
 
+SKIP_FAILURES = False
 MEAN_FAILURES_PER_MIN = 10
-MEAN_FAILURE_DURATION_MIN = 10/60
+MEAN_FAILURE_DURATION_SEC = 5
 
 SHAPE_NETWORK = True
+SHAPE_INGRESS = True
 NET_BANDWIDTH_LIMIT = "50mbit"
 NET_DELAY = "30ms"
 
@@ -93,7 +76,7 @@ COMPUTE_DESC = {
 
 
 def time_offline():
-    return random.expovariate(MEAN_FAILURE_DURATION_MIN)
+    return random.expovariate(1/MEAN_FAILURE_DURATION_SEC)
 
 def next_failure():
     time.sleep(random.expovariate(MEAN_FAILURES_PER_MIN/60))
@@ -106,11 +89,13 @@ def create_setup():
     
     setupdesc = copy.deepcopy(SETUP_DESC)
     setupdesc["Cpk"] = nodes
+    # for gk in setupdesc["GaloisKeys"]:
+    #      gk["Receivers"] = nodes
     with open('setupdesc.json', 'w') as outfile:
             json.dump(setupdesc, outfile, indent=1)
 
     computedesc = copy.deepcopy(COMPUTE_DESC)
-    computedesc["CircuitName"] = "%s-%d" % (CIRCUIT_NAME, n_parties)
+    computedesc["CircuitName"] = "%s-%d" % (CIRCUIT_NAME, args.n_parties)
     with open('computedesc.json', 'w') as outfile:
             json.dump(computedesc, outfile, indent=1)
     
@@ -124,19 +109,26 @@ def create_setup():
             json.dump(conf, outfile, indent=1)
 
 
-def create_containers():
-    docker.remove(nodes, force=True)
-    # docker.network.remove("exp-net")
-    # netw = docker.network.create("exp-net")
-    for node in nodes:
+def create_containers(containers):
+    docker.remove(containers, force=True)
+    try:
+        docker.network.remove("helium")
+    except:
+         pass
+    client_net = docker.network.create("helium")
+    for node in containers:
         entrypoint = "/helium/node"
         command = ["-docompute=false", "-keepRunning=true"]
         env = dict()
         caps = []
+        net = "host" if node == "cloud" else client_net
+        ports = [(HELIUM_PORT, HELIUM_PORT)] if node == "cloud" else  []
+
         if node != CLOUD_ID and SHAPE_NETWORK:
             entrypoint = "/helium/shape_egress_and_start.sh"
             env = {"RATE_LIMIT" : NET_BANDWIDTH_LIMIT, "DELAY" : NET_DELAY}
             caps = ["NET_ADMIN"]
+             
         docker.create(
             image="heliummpc/helium:latest",
             name=node,
@@ -149,44 +141,54 @@ def create_containers():
                 (pathlib.Path("./setupdesc.json").absolute(), "/helium/config/setup.json"),
                 (pathlib.Path("./computedesc.json").absolute(), "/helium/config/compute.json"),
             ],
+            publish=ports,
             cap_add=caps,
-            networks=["host"],
+            networks=[net],
         )
 
-def stop_clients():
-     docker.stop(nodes)
+def stop_all():
+     docker.stop(list(nodes))
+
+def cancel_online_timers():
+     for t in timers.values():
+         t.cancel()
 
 def cleanup():
-    for t in timers.values():
-         t.cancel()
+    cancel_online_timers()
     docker.remove(nodes, force=True)
 
 
-def set_online_client(node):
-    timers.pop(node, None)
-    offline.remove(node)
-    docker.start(node)
-    online.append(node)
-    # runs the ingress traffic shaper
-    # subprocess.call(["bash", "./shape_ingress_traffic.sh", node, NET_BANDWIDTH_LIMIT, NET_DELAY])
-    print("%s is now online" % node)
+def set_online_client(client):
+    timers.pop(client, None)
+    offline_clients.remove(client)
+    docker.start(client)
+    online_clients.append(client)
 
-def set_online_cloud():
-    docker.start(CLOUD_ID, attach=True)
+    #runs the ingress traffic shaper
+    if SHAPE_INGRESS and subprocess.call(
+         ["bash", "../../apps/shape_ingress_traffic.sh", client, NET_BANDWIDTH_LIMIT, NET_DELAY],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT) != 0:
+         print("failed to shape ingress traffic for node %s", client)
+         sys.exit(1)
+
+    print("[on=%d, off=%d] %s is now online" % (len(online_clients),len(offline_clients),client))
+
+def set_online_cloud(attach):
     print("%s is now online" % CLOUD_ID)
+    docker.start(CLOUD_ID, attach=attach)
 
-timers = dict()
-
-def set_offline(node):
-    online.remove(node)
+def set_offline(client):
+    online_clients.remove(client)
     try:
-        docker.kill(node)
+        docker.kill(client)
     except:
-         print("could not kill %s" % node)
-    offline.append(node)
-    print("%s is now offline" % node)
-    t = threading.Timer(time_offline(), set_online_client, [node])
-    timers[node] = t
+         print("could not kill %s" % client)
+    offline_clients.append(client)
+    toff = time_offline()
+    print("[on=%d, off=%d] %s is now offline for %fs" % (len(online_clients),len(offline_clients),client, toff))
+    t = threading.Timer(toff, set_online_client, [client])
+    timers[client] = t
     t.start()
     
 
@@ -195,29 +197,81 @@ def failure_process():
         next_failure()
         if stop_event.is_set():
             break
-        if len(online) == 0:
+        if SKIP_FAILURES:
+            print("skipped failure (SKIP_FAILURES == True)")
+            continue # all nodes are already in offline state 
+        if len(online_clients) == 0:
+            print("skipped failure (no node online)")
             continue # all nodes are already in offline state
-        crashed = random.choice(online)
+        crashed = random.choice(online_clients)
         set_offline(crashed)
 
 
 if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='Starts the Helium nodes for experiments')
+    parser.add_argument('n_parties', type=int,
+                        help='the number or parties')
+    parser.add_argument('--clients',  action='store_true', help='starts the clients')
+    parser.add_argument('--server',  action='store_true', help='starts the cloud')
+
+    args = parser.parse_args()
+    print("start with %s clients clients=%s server=%s" % (args.n_parties, args.clients, args.server))
+
+    def signal_handler(sig, frame):
+        
+        if __name__ == '__main__':
+            print('Exiting')
+            stop_event.set()
+            try:
+                fp.kill()
+            except:
+                 pass
+            print("done")
+
+    signal.signal(signal.SIGINT, signal_handler)
+
+    docker = DockerClient()
+    manager = Manager()
+
+    clients = ["node-%d" % n for n in range(args.n_parties)]
+    nodes = ["cloud"] + clients.copy()
+    
+    
+    online_clients = manager.list()
+    offline_clients = manager.list(clients)
+    timers = dict()
+
     create_setup()
 
-    print("Creating the containers: %s" % nodes)
-    create_containers()
+    containers = [] + clients if args.clients else [] + ["cloud"] if args.server else []
+
+    if len(containers) == 0:
+         print("no container to handle, stopping...")
+         sys.exit(0)
+
+    print("Creating the containers: %s" % containers)
+    create_containers(containers)
+
     stop_event = threading.Event()
-    t = Process(target=failure_process)
-    print("Starting up containers...")
-    c = Process(target=set_online_cloud)
-    c.start()
-    for node in clients:
-        #set_online_client(node)
-        p = Process(target=set_online_client, args=[node])
-        p.start()
-    #t.start()
+    fp = Process(target=failure_process)
+
+    if args.server:
+        print("Starting up the server...")
+        c = Process(target=set_online_cloud, args=[False])
+        c.start()
+    
+    if args.clients:
+        print("Starting up the clients...")
+        for node in clients:
+            #set_online_client(node)
+            p = Process(target=set_online_client, args=[node])
+            p.start()
+
+    fp.start()
     signal.pause()
-    #t.join()
-    c.join()
-    stop_clients()
+    print("waiting on fp to terminate")
+    fp.join()
+    
+    stop_all()
     #cleanup()

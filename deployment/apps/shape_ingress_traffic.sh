@@ -106,5 +106,5 @@ shape_traffic() {
     done < <(echo -e "$NETWORK_NAMES")
 }
 
-#shape_traffic "$1" "$2" "$3"
+shape_traffic "$1" "$2" "$3"
 
