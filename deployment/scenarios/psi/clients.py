@@ -50,6 +50,9 @@ SETUP_DESC = {
 		# "node-1",
 		# "node-2"
 	],
+    "Rlk": [
+		"cloud"
+	],
 	"GaloisKeys": [
 		{ "GaloisEl": 5,"Receivers": ["cloud"]},
 		{ "GaloisEl": 25,"Receivers": ["cloud"]},
