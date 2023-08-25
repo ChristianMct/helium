@@ -54,7 +54,9 @@
 
     - name: Install Docker Module for Python
       pip:
-        name: docker
+        name: 
+          - docker
+          - python_on_whales
 
     - name: Log into DockerHub
       docker_login:

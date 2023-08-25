@@ -34,7 +34,7 @@ online = list()
 offline = nodes.copy()
 
 CLOUD_ID = "cloud"
-CLOUD_ADDRESS = "localhost:40000"
+CLOUD_ADDRESS = "cloud:40000"
 
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
