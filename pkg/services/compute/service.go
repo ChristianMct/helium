@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
@@ -15,32 +16,30 @@ import (
 
 var CircuitDefs = map[string]Circuit{}
 
-type Signature struct {
-	CircuitName   string
-	CircuitParams map[string]interface{}
-	Delegate      pkg.NodeID
-}
-
 type Service struct {
 	id pkg.NodeID
+
+	evaluatorID pkg.NodeID // TODO per circuit ?
 
 	*api.UnimplementedComputeServiceServer
 
 	sessions  pkg.SessionProvider
 	transport transport.ComputeServiceTransport
 
-	evalEnvs map[pkg.CircuitID]ServiceEvaluationEnvironment
+	circuits map[pkg.CircuitID]CircuitInstance
 }
 
-func NewComputeService(id pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport) (s *Service, err error) {
+func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport) (s *Service, err error) {
 	s = new(Service)
 
 	s.id = id
 
+	s.evaluatorID = evaluatorID
+
 	s.sessions = sessions
 	s.transport = trans
 
-	s.evalEnvs = make(map[pkg.CircuitID]ServiceEvaluationEnvironment)
+	s.circuits = make(map[pkg.CircuitID]CircuitInstance)
 
 	return s, nil
 }
@@ -55,79 +54,112 @@ func RegisterCircuit(name string, cd Circuit) error {
 
 // LoadCircuit loads the circuit creating the necessary evaluation environments.
 // This method should be called before the cloud goes online.
-func (s *Service) LoadCircuit(ctx context.Context, cd Signature, label pkg.CircuitID) error {
+func (s *Service) LoadCircuit(ctx context.Context, sig circuits.Signature) (CircuitInstance, error) {
 
-	if _, exist := s.evalEnvs[label]; exist {
-		return fmt.Errorf("circuit with label %s already exists", label)
+	cid := sig.CircuitID
+
+	if _, exist := s.circuits[cid]; exist {
+		return nil, fmt.Errorf("circuit with label %s already exists", cid)
 	}
 
 	sess, exist := s.sessions.GetSessionFromContext(ctx)
 	if !exist {
-		return fmt.Errorf("session does not exist")
+		return nil, fmt.Errorf("session does not exist")
 	}
 
-	cDef, exist := CircuitDefs[cd.CircuitName]
+	cDef, exist := CircuitDefs[sig.CircuitName]
 	if !exist {
-		return fmt.Errorf("circuit definition with name \"%s\" does not exist", cd.CircuitName)
+		return nil, fmt.Errorf("circuit definition with name \"%s\" does not exist", sig.CircuitName)
 	}
 
-	if cd.Delegate == "" || cd.Delegate == s.ID() {
-		s.evalEnvs[label] = s.newFullEvaluationContext(sess, label, cDef, nil)
+	var ci CircuitInstance
+	if s.IsEvaluator() {
+		ci = s.newFullEvaluationContext(sess, cid, cDef, nil)
 	} else {
-		s.evalEnvs[label] = s.newDelegatedEvaluatorContext(cd.Delegate, sess, label, cDef)
+		ci = s.newDelegatedEvaluatorContext(s.evaluatorID, sess, cid, cDef)
 	}
 
-	return nil
+	s.circuits[cid] = ci
+
+	return ci, nil
 }
 
+type CircuitOutput struct {
+	circuits.Signature
+	Ops   []pkg.Operand
+	Error error
+}
+
+func (s *Service) IsEvaluator() bool {
+	return s.id == s.evaluatorID
+}
+
+type InputProvider func(context.Context, circuits.Signature) ([]pkg.Operand, error)
+
+var NoInput InputProvider = func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) { return nil, nil }
+
 // TODO: async execute that returns ops as they are computed
-func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
+// func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
+func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, out chan CircuitOutput) error {
 
-	log.Printf("%s | started execute with args %v \n", s.ID(), localOps)
+	log.Printf("%s | started execute\n", s.ID())
 
-	c, exists := s.evalEnvs[label]
-	if !exists {
-		return nil, fmt.Errorf("circuit does not exist")
-	}
-
-	ctx = pkg.AppendCircuitID(ctx, label)
-
-	err := c.LocalInputs(localOps)
-	if err != nil {
-		return nil, err
-	}
-
-	// starts the evaluation routine
-	go func() {
-		if errExec := c.Execute(ctx); errExec != nil {
-			panic(errExec)
+	if !s.IsEvaluator() {
+		if sigs != nil {
+			panic("client submission of Signatures not supported yet")
 		}
-	}()
 
-	outset := c.CircuitDescription().OutputsFor[s.id]
-	out := make([]pkg.Operand, 0, len(outset))
-	for opLabel := range outset {
-		out = append(out, pkg.Operand{OperandLabel: opLabel})
-	}
-
-	// gather the results
-	for op := range c.LocalOutputs() {
-		for i := range out {
-			if op.OperandLabel == out[i].OperandLabel {
-				out[i].Ciphertext = op.Ciphertext
+		outCtx := pkg.GetOutgoingContext(ctx, s.id)
+		cus, err := s.transport.RegisterForComputeAt(outCtx, s.evaluatorID)
+		if err != nil {
+			return err
+		}
+		go func() {
+			for cu := range cus {
+				sigs <- cu.Signature
 			}
-		}
+		}()
 	}
 
-	// checks if all expected outputs have been received
-	for _, opOut := range out {
-		if opOut.Ciphertext == nil {
-			err = fmt.Errorf("circuit closed its output channel but did not output %s", opOut.OperandLabel)
+	for sig := range sigs {
+
+		sig := sig
+		cid := sig.CircuitID
+		ctx = pkg.AppendCircuitID(ctx, cid)
+
+		c, err := s.LoadCircuit(ctx, sig)
+		if err != nil {
+			return fmt.Errorf("could not load circuit: %w", err)
+		}
+
+		if s.IsEvaluator() {
+			s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Running})
+		}
+
+		localOps, err := ip(ctx, sig)
+		if err != nil {
+			return fmt.Errorf("input provider returned an error: %w", err)
+		}
+
+		err = c.LocalInputs(localOps)
+		if err != nil {
+			return fmt.Errorf("bad input to circuit: %w", err)
+		}
+
+		// starts the evaluation routine
+		go func() {
+			if errExec := c.Execute(ctx); errExec != nil {
+				panic(errExec)
+			}
+		}()
+
+		for op := range c.LocalOutputs() {
+			out <- CircuitOutput{Signature: sig, Ops: []pkg.Operand{op}, Error: nil}
 		}
 	}
 
 	log.Printf("%s | execute returned\n", s.ID())
-	return out, err
+	return nil
 }
 
 func (s *Service) SendCiphertext(ctx context.Context, to pkg.NodeID, ct pkg.Ciphertext) error {
@@ -153,7 +185,7 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 	var ct *pkg.Ciphertext
 
 	if ctURL.CircuitID() != "" { // ctid belongs to a circuit
-		evalCtx, envExists := s.evalEnvs[ctURL.CircuitID()]
+		evalCtx, envExists := s.circuits[ctURL.CircuitID()]
 		if !envExists {
 			return nil, fmt.Errorf("ciphertext with id %s not found for circuit %s", ctID, ctURL.CircuitID())
 		}
@@ -191,7 +223,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 	cid := ctURL.CircuitID()
 	if cid != "" {
 
-		c, envExists := s.evalEnvs[cid]
+		c, envExists := s.circuits[cid]
 		if !envExists {
 			return fmt.Errorf("for unknown circuit %s", cid)
 		}
@@ -257,7 +289,7 @@ func (s *Service) ID() pkg.NodeID {
 }
 
 func (s *Service) CircuitDescription(label pkg.CircuitID) CircuitDescription {
-	c, exists := s.evalEnvs[label]
+	c, exists := s.circuits[label]
 	if !exists {
 		panic(fmt.Errorf("circuit does not exist"))
 	}
@@ -276,4 +308,20 @@ func (pe *ProtocolEnvironment) OutgoingShares() chan<- protocols.Share {
 
 func (pe *ProtocolEnvironment) IncomingShares() <-chan protocols.Share {
 	return pe.incoming
+}
+
+// Register is called by the transport when a new peer register itself for the setup.
+func (s *Service) Register(peer transport.Peer) error {
+	s.Logf("compute registered peer %v", peer.PeerID)
+	return nil // TODO: Implement
+}
+
+// Unregister is called by the transport when a peer is unregistered from the setup.
+func (s *Service) Unregister(peer transport.Peer) error {
+	s.Logf("compute unregistered peer %v", peer.PeerID)
+	return nil // TODO: Implement
+}
+
+func (s *Service) Logf(msg string, v ...any) {
+	log.Printf("%s | %s\n", s.id, fmt.Sprintf(msg, v...))
 }

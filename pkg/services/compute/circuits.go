@@ -69,6 +69,14 @@ type CircuitDescription struct {
 	GaloisKeys               utils.Set[uint64]
 }
 
+func ParseCircuit(c Circuit, cid pkg.CircuitID, params bgv.Parameters, nodeMapping map[string]pkg.NodeID) (*CircuitDescription, error) {
+	dummyCtx := newCircuitParserCtx(cid, params, nodeMapping)
+	if err := c(dummyCtx); err != nil {
+		return nil, fmt.Errorf("error while parsing circuit: %w", err)
+	}
+	return &dummyCtx.cDesc, nil
+}
+
 type circuitParserContext struct {
 	dummyEvaluator
 	cDesc       CircuitDescription

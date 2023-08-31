@@ -79,9 +79,13 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	node.sessions = pkg.NewSessionStore()
 	node.transport = trans
 	node.peers = make(map[pkg.NodeID]*Node, len(nodeList))
+	var evaluatorID pkg.NodeID
 	for _, peer := range nodeList {
 		if peer.NodeID != node.id {
 			node.peers[peer.NodeID] = newPeerNode(peer.NodeID, peer.NodeAddress)
+		}
+		if len(peer.NodeAddress) > 0 {
+			evaluatorID = peer.NodeID
 		}
 	}
 	node.nodeList = nodeList
@@ -102,7 +106,7 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
-	node.compute, err = compute.NewComputeService(node.id, node, node.transport.GetComputeTransport())
+	node.compute, err = compute.NewComputeService(node.id, evaluatorID, node, node.transport.GetComputeTransport())
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}

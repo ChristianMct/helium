@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
@@ -232,7 +233,7 @@ func (t *Transport) dialers() map[pkg.NodeID]transport.Dialer {
 	return dialers
 }
 
-type Peer struct {
+type SetupPeer struct {
 	id                    pkg.NodeID
 	protoUpdateStream     api.SetupService_RegisterForSetupServer
 	protoUpdateStreamDone chan bool
@@ -240,15 +241,41 @@ type Peer struct {
 	connected             bool
 }
 
-func (p *Peer) ID() pkg.NodeID {
+func (p *SetupPeer) ID() pkg.NodeID {
 	return p.id
 }
 
-func (p *Peer) SendUpdate(psu protocols.StatusUpdate) {
+func (p *SetupPeer) SendUpdate(psu protocols.StatusUpdate) {
 	apiDesc := getAPIProtocolDesc(&psu.Descriptor)
 	err := p.protoUpdateStream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(psu.Status)})
 	if err != nil {
 		p.protoUpdateStreamDone <- true
+	}
+}
+
+type ComputePeer struct {
+	id                  pkg.NodeID
+	circuitUpdateStream api.ComputeService_RegisterForComputeServer
+	circuitUpdateQueue  chan circuits.Update
+	cli                 api.ComputeServiceClient
+	connected           bool
+}
+
+func (p *ComputePeer) ID() pkg.NodeID {
+	return p.id
+}
+
+func (p *ComputePeer) SendUpdate(cu circuits.Update) {
+
+	apiCU := &api.ComputeUpdate{ComputeSignature: &api.ComputeSignature{CircuitName: cu.CircuitName, CircuitID: string(cu.CircuitID)}}
+	if cu.StatusUpdate != nil {
+		apiDesc := getAPIProtocolDesc(&cu.StatusUpdate.Descriptor)
+		apiCU.ProtocolUpdate = &api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(cu.StatusUpdate.Status)}
+	}
+	err := p.circuitUpdateStream.Send(apiCU)
+	if err != nil {
+		log.Println(err)
+		close(p.circuitUpdateQueue)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
@@ -113,8 +114,8 @@ func main() {
 	}
 
 	var cloudID pkg.NodeID
-	var cLabel pkg.CircuitID
-	var cSign compute.Signature
+	var cid pkg.CircuitID
+	var cSign circuits.Signature
 	var ctx context.Context
 	var computeService *compute.Service
 	if *docompute {
@@ -129,21 +130,15 @@ func main() {
 		// We need to load the circuit before the cloud goes online so that clients do not query for unexpected ciphertexts.
 		app.registerCircuits()
 		cloudID = app.nl[0].NodeID
-		cLabel = pkg.CircuitID("test-circuit-0")
-		cSign = compute.Signature{
+		cid = pkg.CircuitID("test-circuit-0")
+		cSign = circuits.Signature{
 			CircuitName: app.cd.CircuitName,
-			Delegate:    cloudID,
 		}
 		ctx = pkg.NewContext(&app.sess.ID, nil)
 		computeService = app.node.GetComputeService()
 
-		err = computeService.LoadCircuit(ctx, cSign, cLabel)
-		if err != nil {
-			panic(err)
-		}
-
 		// infer setup description
-		compSd, err := setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cLabel))
+		compSd, err := setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cid))
 		if err != nil {
 			panic(err)
 		}
@@ -160,7 +155,7 @@ func main() {
 
 	// COMPUTE
 	if *docompute {
-		app.computePhase(cloudID, ctx, cLabel, cSign)
+		app.computePhase(cloudID, ctx, cid, cSign)
 	}
 
 	// keeps the node running until SIGINT or SIGTERM

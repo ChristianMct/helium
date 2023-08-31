@@ -9,6 +9,7 @@ require (
 	golang.org/x/crypto v0.0.0-20220926161630-eccd6366d1be
 	golang.org/x/net v0.7.0
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+	gonum.org/v1/gonum v0.14.0
 	google.golang.org/grpc v1.51.0
 	google.golang.org/protobuf v1.27.1
 )
@@ -33,7 +34,7 @@ require (
 	go.opencensus.io v0.22.5 // indirect
 	golang.org/x/exp v0.0.0-20230321023759-10a507213a29 // indirect
 	golang.org/x/sys v0.5.0 // indirect
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/text v0.8.0 // indirect
 	google.golang.org/genproto v0.0.0-20201014134559-03b6142f0dc9 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

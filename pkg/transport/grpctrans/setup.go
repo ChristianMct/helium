@@ -27,9 +27,8 @@ type setupTransport struct {
 
 	outgoingProtocolUpdates     chan protocols.StatusUpdate
 	outgoingProtocolUpdatesDone chan struct{}
-
-	mPeers sync.RWMutex
-	peers  map[pkg.NodeID]*Peer
+	mPeers                      sync.RWMutex
+	peers                       map[pkg.NodeID]*SetupPeer
 }
 
 func (t *Transport) newSetupTransport() *setupTransport {
@@ -39,19 +38,17 @@ func (t *Transport) newSetupTransport() *setupTransport {
 
 	pc.outgoingProtocolUpdates = make(chan protocols.StatusUpdate)
 	pc.outgoingProtocolUpdatesDone = make(chan struct{})
-
-	pc.peers = make(map[pkg.NodeID]*Peer)
+	pc.peers = make(map[pkg.NodeID]*SetupPeer)
 	for _, nid := range pc.nodeList {
-		pc.peers[nid.NodeID] = &Peer{
+		pc.peers[nid.NodeID] = &SetupPeer{
 			id: nid.NodeID,
 		}
 	}
-
 	go func() {
 
 		for pd := range pc.outgoingProtocolUpdates {
 
-			subscribed := make([]*Peer, 0, len(pc.peers))
+			subscribed := make([]*SetupPeer, 0, len(pc.peers))
 			pc.mPeers.RLock()
 			for _, peer := range pc.peers {
 				if peer.connected {
@@ -65,7 +62,7 @@ func (t *Transport) newSetupTransport() *setupTransport {
 			}
 		}
 
-		subscribed := make([]*Peer, 0, len(pc.peers))
+		subscribed := make([]*SetupPeer, 0, len(pc.peers))
 		pc.mPeers.RLock()
 		for _, peer := range pc.peers {
 			if peer.connected {

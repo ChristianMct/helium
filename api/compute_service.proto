@@ -31,7 +31,27 @@ message CiphertextRequest {
     optional Signature signature = 2;
 }
 
+
+message ComputeSignature {
+    string CircuitName = 1;
+    string CircuitID = 2;
+}
+
+enum ComputeStatus {
+    COMPLETED = 0;
+    EVALUATING = 1;
+}
+
+message ComputeUpdate {
+    ComputeSignature ComputeSignature = 1;
+    ComputeStatus ComputeStatus = 2;
+    optional ProtocolUpdate ProtocolUpdate = 3;
+}
+
 service ComputeService {
+
+    rpc RegisterForCompute(Void) returns (stream ComputeUpdate) {}
+
     rpc GetCiphertext(CiphertextRequest) returns (Ciphertext) {}
 
     rpc PutCiphertext(Ciphertext) returns (CiphertextID) {}

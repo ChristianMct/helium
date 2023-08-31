@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
@@ -57,6 +58,9 @@ type SetupServiceTransport interface {
 
 // ComputeServiceTransport is an interface for the transport layer supporting the compute service.
 type ComputeServiceTransport interface {
+	RegisterForComputeAt(context.Context, pkg.NodeID) (<-chan circuits.Update, error)
+
+	PutCircuitUpdates(circuits.Update) (seq int, err error)
 
 	// GetCiphertext queries the transport for the designated ciphertext
 	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
@@ -78,13 +82,17 @@ type ShareTransport interface {
 	OutgoingShares() chan<- protocols.Share
 }
 
-// SetupServiceHandler handles queries from the transport to the setup service.
-type SetupServiceHandler interface {
+type PeerRegisteringHandler interface {
 	// Register is called by the transport when a new peer register itself for the setup.
 	Register(Peer) error
 
 	// Unregister is called by the transport when a peer is unregistered from the setup.
 	Unregister(Peer) error
+}
+
+// SetupServiceHandler handles queries from the transport to the setup service.
+type SetupServiceHandler interface {
+	PeerRegisteringHandler
 
 	// GetProtocolStatus returns the node's list of protocol along with their status.
 	GetProtocolStatus() []protocols.StatusUpdate
@@ -96,6 +104,8 @@ type SetupServiceHandler interface {
 
 // ComputeServiceHandler handles queries from the transport to the compute service.
 type ComputeServiceHandler interface {
+	PeerRegisteringHandler
+
 	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
 	PutCiphertext(context.Context, pkg.Ciphertext) error
 }

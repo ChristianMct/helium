@@ -14,9 +14,9 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
-// ServiceEvaluationEnvironment defines the interface that is available to the service
+// CircuitInstance defines the interface that is available to the service
 // to access evaluation contexts of a particular circuit evaluation.
-type ServiceEvaluationEnvironment interface {
+type CircuitInstance interface {
 
 	// CircuitDescription returns the CircuitDescription for the circuit executing within this context.
 	CircuitDescription() CircuitDescription

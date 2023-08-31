@@ -18,6 +18,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type ComputeServiceClient interface {
+	RegisterForCompute(ctx context.Context, in *Void, opts ...grpc.CallOption) (ComputeService_RegisterForComputeClient, error)
 	GetCiphertext(ctx context.Context, in *CiphertextRequest, opts ...grpc.CallOption) (*Ciphertext, error)
 	PutCiphertext(ctx context.Context, in *Ciphertext, opts ...grpc.CallOption) (*CiphertextID, error)
 	// PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
@@ -33,6 +34,38 @@ type computeServiceClient struct {
 
 func NewComputeServiceClient(cc grpc.ClientConnInterface) ComputeServiceClient {
 	return &computeServiceClient{cc}
+}
+
+func (c *computeServiceClient) RegisterForCompute(ctx context.Context, in *Void, opts ...grpc.CallOption) (ComputeService_RegisterForComputeClient, error) {
+	stream, err := c.cc.NewStream(ctx, &ComputeService_ServiceDesc.Streams[0], "/helium_proto.ComputeService/RegisterForCompute", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &computeServiceRegisterForComputeClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type ComputeService_RegisterForComputeClient interface {
+	Recv() (*ComputeUpdate, error)
+	grpc.ClientStream
+}
+
+type computeServiceRegisterForComputeClient struct {
+	grpc.ClientStream
+}
+
+func (x *computeServiceRegisterForComputeClient) Recv() (*ComputeUpdate, error) {
+	m := new(ComputeUpdate)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (c *computeServiceClient) GetCiphertext(ctx context.Context, in *CiphertextRequest, opts ...grpc.CallOption) (*Ciphertext, error) {
@@ -63,7 +96,7 @@ func (c *computeServiceClient) PutShare(ctx context.Context, in *Share, opts ...
 }
 
 func (c *computeServiceClient) StreamShares(ctx context.Context, opts ...grpc.CallOption) (ComputeService_StreamSharesClient, error) {
-	stream, err := c.cc.NewStream(ctx, &ComputeService_ServiceDesc.Streams[0], "/helium_proto.ComputeService/StreamShares", opts...)
+	stream, err := c.cc.NewStream(ctx, &ComputeService_ServiceDesc.Streams[1], "/helium_proto.ComputeService/StreamShares", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +130,7 @@ func (x *computeServiceStreamSharesClient) Recv() (*Share, error) {
 // All implementations must embed UnimplementedComputeServiceServer
 // for forward compatibility
 type ComputeServiceServer interface {
+	RegisterForCompute(*Void, ComputeService_RegisterForComputeServer) error
 	GetCiphertext(context.Context, *CiphertextRequest) (*Ciphertext, error)
 	PutCiphertext(context.Context, *Ciphertext) (*CiphertextID, error)
 	// PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
@@ -111,6 +145,9 @@ type ComputeServiceServer interface {
 type UnimplementedComputeServiceServer struct {
 }
 
+func (UnimplementedComputeServiceServer) RegisterForCompute(*Void, ComputeService_RegisterForComputeServer) error {
+	return status.Errorf(codes.Unimplemented, "method RegisterForCompute not implemented")
+}
 func (UnimplementedComputeServiceServer) GetCiphertext(context.Context, *CiphertextRequest) (*Ciphertext, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCiphertext not implemented")
 }
@@ -134,6 +171,27 @@ type UnsafeComputeServiceServer interface {
 
 func RegisterComputeServiceServer(s grpc.ServiceRegistrar, srv ComputeServiceServer) {
 	s.RegisterService(&ComputeService_ServiceDesc, srv)
+}
+
+func _ComputeService_RegisterForCompute_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(Void)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ComputeServiceServer).RegisterForCompute(m, &computeServiceRegisterForComputeServer{stream})
+}
+
+type ComputeService_RegisterForComputeServer interface {
+	Send(*ComputeUpdate) error
+	grpc.ServerStream
+}
+
+type computeServiceRegisterForComputeServer struct {
+	grpc.ServerStream
+}
+
+func (x *computeServiceRegisterForComputeServer) Send(m *ComputeUpdate) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 func _ComputeService_GetCiphertext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -237,6 +295,11 @@ var ComputeService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "RegisterForCompute",
+			Handler:       _ComputeService_RegisterForCompute_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "StreamShares",
 			Handler:       _ComputeService_StreamShares_Handler,
