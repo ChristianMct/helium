@@ -34,6 +34,7 @@ type testSetting struct {
 
 var testSettings = []testSetting{
 	{N: 4},
+	{N: 4, T: 3},
 }
 
 var TestCircuits = map[string]Circuit{
@@ -201,6 +202,7 @@ var TestCircuits = map[string]Circuit{
 
 		return nil
 	},
+
 	"psi-2PCKS": func(ec EvaluationContext) error {
 		opIn1 := ec.Input("//light-0/in-0")
 		opIn2 := ec.Input("//light-1/in-0")
@@ -265,10 +267,6 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				if ts.T != ts.N {
-					t.Skip("T != N not yet supported in cloud-assisted setting")
-				}
-
 				var testConfig = node.LocalTestConfig{
 					HelperNodes: 1,
 					LightNodes:  4,
@@ -329,21 +327,33 @@ func TestCloudEvalCircuit(t *testing.T) {
 						t.Fatal(err)
 					}
 					clients[i].Encryptor, err = bgv.NewEncryptor(bgvParams, cpk)
+					if err != nil {
+						t.Fatal(err)
+					}
 				}
 
-				var cSign = circuits.Signature{
-					CircuitName: "CloudMul4CKS",
-					CircuitID:   pkg.CircuitID("test-circuit-0"),
+				var cSigns = []circuits.Signature{
+					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-0")},
+					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-1")},
+					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-2")},
+					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-3")},
+					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-4")},
 				}
 
-				c := TestCircuits[cSign.CircuitName]
-				cDesc, err := ParseCircuit(c, cSign.CircuitID, bgvParams, nil)
-				if err != nil {
-					t.Fatal(err)
+				cDescs := make([]*CircuitDescription, len(cSigns))
+				for i, cSign := range cSigns {
+					c := TestCircuits[cSign.CircuitName]
+					cDescs[i], err = ParseCircuit(c, cSign.CircuitID, bgvParams, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
 				}
 
-				sigs := make(chan circuits.Signature, 1)
-				sigs <- cSign
+				sigs := make(chan circuits.Signature, len(cSigns))
+				for _, sig := range cSigns {
+					sigs <- sig
+				}
+				close(sigs)
 
 				ctx := pkg.NewContext(&sessionID, nil)
 
@@ -374,11 +384,14 @@ func TestCloudEvalCircuit(t *testing.T) {
 							if err != nil {
 								return nil, err
 							}
-							op := pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.Node.ID(), cSign.CircuitID)), Ciphertext: ct}
+							op := pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.Node.ID(), s.CircuitID)), Ciphertext: ct}
 							return []pkg.Operand{op}, nil
 						}
 
-						outLabels := cDesc.OutputsFor[client.NodeID]
+						outLabels := utils.NewEmptySet[pkg.OperandLabel]()
+						for _, cDesc := range cDescs {
+							outLabels.AddAll(cDesc.OutputsFor[client.NodeID])
+						}
 						outChan := make(chan CircuitOutput, len(outLabels))
 						errExec := client.Execute(ctx, nil, ip, outChan)
 						if errExec != nil {
@@ -387,45 +400,45 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 						if len(outLabels) > 0 {
 
-							outs := <-outChan
-							if outs.Error != nil {
-								t.Errorf("unexpected error in output: %s", outs.Error)
-							}
-							if outs.Signature != cSign {
-								t.Errorf("unexpected output signature: %v", outs.Signature)
-							}
-
-							var opOut pkg.Operand
-							for _, op := range outs.Ops {
-								if !outLabels.Contains(op.OperandLabel) {
-									t.Errorf("unexpected operand output: %v", op.OperandLabel)
+							for out := range outChan {
+								if out.Error != nil {
+									t.Errorf("unexpected error in output: %s", out.Error)
 								}
-								outLabels.Remove(op.OperandLabel)
-								opOut = op
+
+								var opOut pkg.Operand
+								for _, op := range out.Ops {
+									if !outLabels.Contains(op.OperandLabel) {
+										t.Errorf("unexpected operand output: %v", op.OperandLabel)
+									}
+									outLabels.Remove(op.OperandLabel)
+									opOut = op
+								}
+
+								cliSess, _ := client.GetSessionFromID(sessionID)
+								// _ = recSk
+								_ = cliSess
+								//cliSess.GetSecretKeyForGroup() // TODO the succeeding dec subset
+								sk, err := cliSess.GetSecretKey()
+								if err != nil {
+									return err
+								}
+								decryptor, err := bgv.NewDecryptor(bgvParams, sk)
+								if err != nil {
+									t.Fatal(err)
+								}
+								ptdec := decryptor.DecryptNew(opOut.Ciphertext)
+								res := make([]uint64, bgvParams.PlaintextSlots())
+								err = decoder.Decode(ptdec, res)
+								if err != nil {
+									t.Fatal(err)
+								}
+								require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
 							}
 
 							if len(outLabels) != 0 {
 								t.Errorf("expected outputs where not received: %v", outLabels)
 							}
 
-							cliSess, _ := client.GetSessionFromID(sessionID)
-							// _ = recSk
-							_ = cliSess
-							sk, err := cliSess.GetSecretKey()
-							if err != nil {
-								return err
-							}
-							decryptor, err := bgv.NewDecryptor(bgvParams, sk)
-							if err != nil {
-								t.Fatal(err)
-							}
-							ptdec := decryptor.DecryptNew(opOut.Ciphertext)
-							res := make([]uint64, bgvParams.PlaintextSlots())
-							err = decoder.Decode(ptdec, res)
-							if err != nil {
-								t.Fatal(err)
-							}
-							require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
 						}
 						return nil
 					})

@@ -199,7 +199,7 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 	peer.protoUpdateStreamDone = make(chan bool)
 	t.mPeers.Unlock()
 
-	err := t.srvHandler.Register(transport.Peer{PeerID: peerID})
+	err := t.srvHandler.Register(peerID)
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 	peer.connected = false
 	peer.protoUpdateStream = nil
 	t.mPeers.Unlock()
-	return t.srvHandler.Unregister(transport.Peer{PeerID: peerID})
+	return t.srvHandler.Unregister(peerID)
 }
 
 func (t *setupTransport) GetAggregationOutput(ctx context.Context, apipd *api.ProtocolDescriptor) (*api.AggregationOutput, error) {

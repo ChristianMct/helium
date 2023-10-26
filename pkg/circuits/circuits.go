@@ -1,6 +1,8 @@
 package circuits
 
 import (
+	"encoding/json"
+
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 )
@@ -21,4 +23,12 @@ type Update struct {
 	Signature
 	Status
 	*protocols.StatusUpdate
+}
+
+func (u Update) String() string {
+	s, err := json.Marshal(u)
+	if err != nil {
+		panic(err)
+	}
+	return string(s)
 }

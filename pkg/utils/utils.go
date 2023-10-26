@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -106,6 +107,19 @@ func (s Set[T]) Copy() Set[T] {
 	sc := NewEmptySet[T]()
 	sc.AddAll(s)
 	return sc
+}
+
+func GetRandomSliceOfSize[T any](t int, nodes []T) []T {
+	cid := make([]T, len(nodes))
+	copy(cid, nodes)
+	rand.Shuffle(len(cid), func(i, j int) {
+		cid[i], cid[j] = cid[j], cid[i]
+	})
+	return cid[:t]
+}
+
+func GetRandomSetOfSize[T comparable](t int, nodes Set[T]) Set[T] {
+	return NewSet(GetRandomSliceOfSize(t, nodes.Elements()))
 }
 
 func Must(bs []byte, err error) []byte {

@@ -180,7 +180,7 @@ func (a *App) setupPhase() {
 }
 
 // computePhase executes the computational phase of Helium.
-func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.CircuitID, cSign compute.Signature) {
+func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.CircuitID, cSign circuits.Signature) {
 	bgvParams, err := bgv.NewParameters(*a.sess.Params, 65537)
 	if err != nil {
 		panic(err)
@@ -188,24 +188,30 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 
 	encoder := bgv.NewEncoder(bgvParams)
 
-	ops := []pkg.Operand{}
-
+	var sigs chan circuits.Signature
+	var outs chan compute.CircuitOutput
+	var inputProvider compute.InputProvider
 	// craft input for session nodes
 	if utils.NewSet(a.sess.Nodes).Contains(a.node.ID()) {
-		switch cSign.CircuitName {
-		case "psi-2", "psi-4", "psi-8", "psi-2-PCKS":
-			ops = a.getClientOperandsPSI(bgvParams, encoder, cLabel)
-		case "pir-3", "pir-5", "pir-9":
-			ops = a.getClientOperandsPIR(bgvParams, encoder, cLabel)
-		default:
-			panic(fmt.Errorf("unknown circuit name: %s", cSign.CircuitName))
+		inputProvider = func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) {
+			switch cSign.CircuitName {
+			case "psi-2", "psi-4", "psi-8", "psi-2-PCKS":
+				return a.getClientOperandsPSI(bgvParams, encoder, cLabel), nil
+			case "pir-3", "pir-5", "pir-9":
+				return a.getClientOperandsPIR(bgvParams, encoder, cLabel), nil
+			default:
+				return nil, fmt.Errorf("unknown circuit name: %s", cSign.CircuitName)
+			}
 		}
+		outs = make(chan compute.CircuitOutput, 1)
+	} else {
+		inputProvider = compute.NoInput
 	}
 
 	computeService := a.node.GetComputeService()
 	// execute
 	start := time.Now()
-	outCtList, err := computeService.Execute(ctx, cLabel, ops...)
+	err = computeService.Execute(ctx, sigs, inputProvider, outs)
 	if err != nil {
 		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %w", err))
 	}
@@ -213,15 +219,15 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	a.outputStats(a.cd.CircuitName, "compute", elapsed)
 
 	// retrieve output
-	if len(outCtList) <= 0 {
+	if outs == nil {
 		log.Println("No outputs to retrieve")
 		return
 	}
-	outCt := outCtList[0]
-	if outCt.Ciphertext == nil {
+	out := <-outs
+	if out.Ops[0].Ciphertext == nil {
 		panic(fmt.Errorf("Output ciphertext is nil"))
 	}
-	log.Printf("[Compute] Got encrypted output: %v", outCt)
+	log.Printf("[Compute] Got encrypted output: %v", out.Ops[0].OperandLabel)
 
 	var outputSk *rlwe.SecretKey
 
@@ -248,11 +254,11 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	if err != nil {
 		panic(err)
 	}
-	outPt := decryptor.DecryptNew(outCt.Ciphertext)
-	out := make([]uint64, bgvParams.PlaintextSlots())
-	encoder.Decode(outPt, out)
+	outputPt := decryptor.DecryptNew(out.Ops[0].Ciphertext)
+	output := make([]uint64, bgvParams.PlaintextSlots())
+	encoder.Decode(outputPt, output)
 
-	log.Printf("[Compute] Retrieved output: %v\n", out[:8])
+	log.Printf("[Compute] Retrieved output: %v\n", output[:8])
 }
 
 // getClientOperandsPSI returns the operands that this client node will input into the PSI computation.

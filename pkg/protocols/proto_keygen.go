@@ -280,7 +280,7 @@ func (p *cpkProtocol) ReadCRP() (CRP, error) {
 
 // run runs the cpkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
 func (p *cpkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
-	p.Logf("started running with %v", p.Descriptor)
+	p.Logf("started running with participants %v", p.Descriptor.Participants)
 
 	if p.crp == nil {
 		panic(fmt.Errorf("Aggregate method called before Init at node %s", p.self))
@@ -381,8 +381,8 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 	for {
 		select {
 		case share := <-env.IncomingShares():
-			p.Logf("new share from %s", share.From)
 			done, err := aggregator.PutShare(share)
+			p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 			if err != nil {
 				return err
 			}

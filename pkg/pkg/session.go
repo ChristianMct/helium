@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
@@ -438,15 +437,6 @@ func (s *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
 
 func (s *Session) Contains(nodeID NodeID) bool {
 	return utils.NewSet(s.Nodes).Contains(nodeID)
-}
-
-func GetRandomClientSlice(t int, nodes []NodeID) []NodeID {
-	cid := make([]NodeID, len(nodes))
-	copy(cid, nodes)
-	rand.Shuffle(len(cid), func(i, j int) {
-		cid[i], cid[j] = cid[j], cid[i]
-	})
-	return cid[:t]
 }
 
 func (s *Session) String() string {

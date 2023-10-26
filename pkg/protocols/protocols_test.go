@@ -9,6 +9,7 @@ import (
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/pkg"
 	. "github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -213,7 +214,7 @@ func (te *testEnvironment) getParticipants(t int) []pkg.NodeID {
 	if t == 0 || t > len(te.SessionNodes()) {
 		t = len(te.SessionNodes())
 	}
-	return pkg.GetRandomClientSlice(t, te.SessionNodesIds())
+	return utils.GetRandomSliceOfSize(t, te.SessionNodesIds())
 }
 
 func (te *testEnvironment) envForNode(nid pkg.NodeID) *testNodeEnvironment {

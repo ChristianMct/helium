@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
+	"github.com/ldsec/helium/pkg/utils"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -26,7 +29,19 @@ type Service struct {
 	sessions  pkg.SessionProvider
 	transport transport.ComputeServiceTransport
 
+	peers *pkg.PartySet
+
 	circuits map[pkg.CircuitID]CircuitInstance
+
+	// TODO Extract ProtocolRunner
+	runningProtosMu sync.RWMutex
+	runningProtos   map[pkg.ProtocolID]struct {
+		pd       protocols.Descriptor
+		incoming chan protocols.Share
+	}
+
+	incomingPdescMu sync.RWMutex
+	incomingPdesc   map[string]chan protocols.Descriptor
 }
 
 func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport) (s *Service, err error) {
@@ -39,7 +54,29 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 	s.sessions = sessions
 	s.transport = trans
 
+	s.peers = pkg.NewPartySet()
+
 	s.circuits = make(map[pkg.CircuitID]CircuitInstance)
+
+	// TODO extract protocolrunner
+	s.runningProtos = make(map[pkg.ProtocolID]struct {
+		pd       protocols.Descriptor
+		incoming chan protocols.Share
+	})
+
+	s.incomingPdesc = make(map[string]chan protocols.Descriptor)
+
+	go func() {
+		for share := range s.transport.IncomingShares() {
+			s.runningProtosMu.RLock()
+			proto, exists := s.runningProtos[share.ProtocolID]
+			s.runningProtosMu.RUnlock()
+			if !exists {
+				panic(fmt.Errorf("protocol %s is not running", share.ProtocolID))
+			}
+			proto.incoming <- share
+		}
+	}()
 
 	return s, nil
 }
@@ -94,6 +131,145 @@ func (s *Service) IsEvaluator() bool {
 	return s.id == s.evaluatorID
 }
 
+func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return pkg.Operand{}, fmt.Errorf("no such session")
+	}
+
+	protoDesc := protocols.Descriptor{Signature: sig}
+	protoDesc.Aggregator = s.evaluatorID
+
+	switch {
+	case len(protoDesc.Participants) > 0:
+
+	// CASE T < N
+	case len(protoDesc.Participants) == 0 && sess.T < len(sess.Nodes):
+		partSet := utils.NewEmptySet[pkg.NodeID]()
+		if sess.Contains(s.id) {
+			partSet.Add(s.id)
+		}
+
+		if sess.Contains(pkg.NodeID(sig.Args["target"])) {
+			partSet.Add(pkg.NodeID(sig.Args["target"]))
+		}
+
+		// Wait for enough parties to connect
+		online, err := s.peers.WaitForRegisteredIDSet(context.Background(), sess.T-len(partSet))
+		if err != nil {
+			panic(err)
+		}
+
+		// randomizes the remaining participants among the set of registered peers
+		online.Remove(partSet.Elements()...)
+		partSet.AddAll(utils.GetRandomSetOfSize(sess.T-len(partSet), online))
+
+		protoDesc.Participants = partSet.Elements()
+		//pd.Participants = pkg.GetRandomClientSlice(sess.T, sess.Nodes) // Fault injection
+
+	// CASE N
+	default:
+		protoDesc.Participants = make([]pkg.NodeID, len(sess.Nodes))
+		copy(protoDesc.Participants, sess.Nodes)
+	}
+
+	ksInt, err := protocols.NewKeyswitchProtocol(protoDesc, sess)
+	if err != nil {
+		panic(err)
+	}
+
+	pid := ksInt.ID()
+
+	s.runningProtosMu.Lock()
+	_, exists := s.runningProtos[pid]
+	if exists {
+		s.runningProtosMu.Unlock()
+		panic(fmt.Errorf("protocol already running: %s", pid))
+	}
+	incShares := make(chan protocols.Share)
+	s.runningProtos[pid] = struct {
+		pd       protocols.Descriptor
+		incoming chan protocols.Share
+	}{ksInt.Desc(), incShares}
+	s.runningProtosMu.Unlock()
+
+	ksInt.Input(in.Ciphertext)
+
+	s.transport.PutCircuitUpdates(circuits.Update{
+		Signature: circuits.Signature{}, // TODO
+		Status:    circuits.Running,
+		StatusUpdate: &protocols.StatusUpdate{
+			Descriptor: protoDesc,
+			Status:     protocols.Running,
+		}})
+
+	s.Logf("started executing %s", sig)
+	agg := <-ksInt.Aggregate(context.Background(), &ProtocolEnvironment{incoming: incShares, outgoing: nil})
+	if agg.Error != nil {
+		return pkg.Operand{}, agg.Error
+	}
+
+	s.runningProtosMu.Lock()
+	close(s.runningProtos[pid].incoming)
+	delete(s.runningProtos, pid)
+	s.runningProtosMu.Unlock()
+
+	s.transport.PutCircuitUpdates(circuits.Update{
+		Signature: circuits.Signature{}, // TODO
+		Status:    circuits.Running,
+		StatusUpdate: &protocols.StatusUpdate{
+			Descriptor: protoDesc,
+			Status:     protocols.OK,
+		}})
+
+	out = pkg.Operand{Ciphertext: (<-ksInt.Output(agg)).Result.(*rlwe.Ciphertext)}
+
+	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
+	return out, nil
+}
+
+func (s *Service) GetProtoDescAndRunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
+
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return pkg.Operand{}, fmt.Errorf("no such session")
+	}
+
+	s.incomingPdescMu.Lock()
+	pdc, has := s.incomingPdesc[sig.String()]
+	if !has {
+		pdc = make(chan protocols.Descriptor)
+		s.incomingPdesc[sig.String()] = pdc
+	}
+	s.incomingPdescMu.Unlock()
+
+	s.Logf("waiting for protocol description for %s", sig)
+	pd := <-pdc
+
+	p, err := protocols.NewProtocol(pd, sess)
+	if err != nil {
+		return pkg.Operand{}, err
+	}
+	cks, _ := p.(protocols.KeySwitchInstance)
+
+	cks.Input(in.Ciphertext)
+
+	s.Logf("started executing %s", sig)
+	cks.Aggregate(context.Background(), &ProtocolEnvironment{outgoing: s.transport.OutgoingShares()})
+
+	// agg, err := de.transport.GetAggregationFrom(pkg.NewContext(&de.sess.ID, &de.id), de.delegateID, pd.ID)
+	// if agg.Error != nil {
+	// 	return pkg.Operand{}, err
+	// }
+
+	// if pkg.NodeID(pd.Args["target"].(string)) == de.sess.NodeID {
+	// 	out = pkg.Operand{Ciphertext: (<-cks.Output(*agg)).Result.(*rlwe.Ciphertext)}
+	// }
+
+	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
+	return out, nil
+}
+
 type InputProvider func(context.Context, circuits.Signature) ([]pkg.Operand, error)
 
 var NoInput InputProvider = func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) { return nil, nil }
@@ -104,11 +280,14 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 
 	log.Printf("%s | started execute\n", s.ID())
 
+	okProt := make(chan protocols.Descriptor)
+
 	if !s.IsEvaluator() {
 		if sigs != nil {
 			panic("client submission of Signatures not supported yet")
 		}
 
+		sigs = make(chan circuits.Signature)
 		outCtx := pkg.GetOutgoingContext(ctx, s.id)
 		cus, err := s.transport.RegisterForComputeAt(outCtx, s.evaluatorID)
 		if err != nil {
@@ -116,7 +295,33 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 		}
 		go func() {
 			for cu := range cus {
-				sigs <- cu.Signature
+				if cu.StatusUpdate == nil { // TODO cleaner status/actions + closing channels
+					sigs <- cu.Signature
+					s.Logf("new circuit update: created %s", cu.Signature)
+				} else {
+					if cu.StatusUpdate.Status == protocols.OK {
+						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
+
+						continue
+					}
+					s.incomingPdescMu.Lock()
+					pdc, has := s.incomingPdesc[cu.StatusUpdate.Signature.String()]
+					if !has {
+						pdc = make(chan protocols.Descriptor, 1)
+						s.incomingPdesc[cu.StatusUpdate.Signature.String()] = pdc
+					}
+					s.incomingPdescMu.Unlock()
+					pdc <- cu.StatusUpdate.Descriptor
+					s.Logf("new circuit update: got protocol descriptor for %s", cu.StatusUpdate.Signature)
+				}
+
+			}
+			close(sigs)
+		}()
+
+		go func() {
+			for pd := range okProt {
+				s.Logf("received an ok pd: %s", pd)
 			}
 		}()
 	}
@@ -126,6 +331,8 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 		sig := sig
 		cid := sig.CircuitID
 		ctx = pkg.AppendCircuitID(ctx, cid)
+
+		s.Logf("processing signature %s", sig)
 
 		c, err := s.LoadCircuit(ctx, sig)
 		if err != nil {
@@ -154,9 +361,18 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 		}()
 
 		for op := range c.LocalOutputs() {
-			out <- CircuitOutput{Signature: sig, Ops: []pkg.Operand{op}, Error: nil}
+			s.Logf("got output operand %s", op.OperandLabel)
+			if out != nil {
+				out <- CircuitOutput{Signature: sig, Ops: []pkg.Operand{op}, Error: nil}
+			}
 		}
 	}
+
+	if out != nil {
+		close(out)
+	}
+
+	s.transport.Close()
 
 	log.Printf("%s | execute returned\n", s.ID())
 	return nil
@@ -229,7 +445,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 		}
 
 		op := pkg.Operand{OperandLabel: pkg.OperandLabel(ct.ID), Ciphertext: &ct.Ciphertext}
-		err = c.IncomingInput(op)
+		err = c.IncomingOperand(op)
 		if err != nil {
 			return err
 		}
@@ -311,14 +527,22 @@ func (pe *ProtocolEnvironment) IncomingShares() <-chan protocols.Share {
 }
 
 // Register is called by the transport when a new peer register itself for the setup.
-func (s *Service) Register(peer transport.Peer) error {
-	s.Logf("compute registered peer %v", peer.PeerID)
+func (s *Service) Register(peer pkg.NodeID) error {
+	if err := s.peers.Register(peer); err != nil {
+		s.Logf("error when registering peer %s for compute: %s", peer, err)
+		return err
+	}
+	s.Logf("compute registered peer %v", peer)
 	return nil // TODO: Implement
 }
 
 // Unregister is called by the transport when a peer is unregistered from the setup.
-func (s *Service) Unregister(peer transport.Peer) error {
-	s.Logf("compute unregistered peer %v", peer.PeerID)
+func (s *Service) Unregister(peer pkg.NodeID) error {
+	if err := s.peers.Unregister(peer); err != nil {
+		s.Logf("error when unregistering peer %s for compute: %s", peer, err)
+		return err
+	}
+	s.Logf("compute unregistered peer %v", peer)
 	return nil // TODO: Implement
 }
 

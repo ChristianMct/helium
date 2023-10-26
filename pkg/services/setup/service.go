@@ -26,9 +26,7 @@ type Service struct {
 	sessions  pkg.SessionProvider
 	transport transport.SetupServiceTransport
 
-	cPeers sync.Cond
-	mPeers sync.RWMutex
-	peers  map[pkg.NodeID]transport.Peer
+	peers *pkg.PartySet
 
 	runningProtosMu sync.RWMutex
 	runningProtos   map[pkg.ProtocolID]struct {
@@ -53,8 +51,7 @@ func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transpor
 	s.self = id
 	s.sessions = sessions
 
-	s.peers = make(map[pkg.NodeID]transport.Peer)
-	s.cPeers = sync.Cond{L: &s.mPeers}
+	s.peers = pkg.NewPartySet()
 
 	s.runningProtos = make(map[pkg.ProtocolID]struct {
 		pd       protocols.Descriptor
@@ -370,15 +367,19 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					if sess.Contains(s.self) {
 						partSet.Add(s.self)
 					}
+
 					// Wait for at least T parties to connect
-					online, err := s.waitForRegisteredIDSet(context.Background(), sess.T-len(partSet))
+					online, err := s.peers.WaitForRegisteredIDSet(context.Background(), sess.T-len(partSet))
 					if err != nil {
 						panic(err)
 					}
-					partSet.AddAll(online)
+
+					// randomizes the remaining participants among the set of registered peers
+					online.Remove(partSet.Elements()...)
+					partSet.AddAll(utils.GetRandomSetOfSize(sess.T-len(partSet), online))
 
 					// select T parties at random
-					pd.Participants = pkg.GetRandomClientSlice(sess.T, partSet.Elements())
+					pd.Participants = partSet.Elements()
 					//pd.Participants = pkg.GetRandomClientSlice(sess.T, sess.Nodes) // Fault injection
 
 				// CASE N
@@ -583,32 +584,6 @@ func (s *Service) storeProtocolOutput(outputs chan struct {
 	}
 }
 
-func (s *Service) Register(peer transport.Peer) error {
-	s.cPeers.L.Lock()
-	if _, exists := s.peers[peer.ID()]; exists {
-		// return fmt.Errorf("peer with id %s already registered", peer.ID())
-		s.Logf("peer %s was already registered", peer.ID())
-	}
-	s.peers[peer.ID()] = peer
-	s.cPeers.L.Unlock()
-	s.cPeers.Broadcast()
-	s.Logf("peer %v registered for setup", peer.ID())
-	return nil
-}
-
-func (s *Service) Unregister(peer transport.Peer) error {
-	s.cPeers.L.Lock()
-	defer s.cPeers.L.Unlock()
-	if _, exists := s.peers[peer.ID()]; !exists {
-		s.Logf("trying to unregister unregistered peer %s", peer.ID())
-		return nil
-	}
-	delete(s.peers, peer.ID())
-	s.cPeers.Broadcast()
-	s.Logf("peer %v unregistered", peer.ID())
-	return nil
-}
-
 func (s *Service) GetProtocolStatus() []protocols.StatusUpdate {
 	s.completedProtoMu.RLock()
 	s.runningProtosMu.RLock()
@@ -633,36 +608,24 @@ func (s *Service) GetProtocolOutput(pd protocols.Descriptor) (*protocols.Aggrega
 	return &protocols.AggregationOutput{Share: protocols.Share{ShareDescriptor: protocols.ShareDescriptor{Type: pd.Signature.Type}, MHEShare: share}}, nil
 }
 
-func (s *Service) waitForRegisteredIDSet(ctx context.Context, size int) (utils.Set[pkg.NodeID], error) {
-	connset := make(chan utils.Set[pkg.NodeID])
-	go func() {
-		s.cPeers.L.Lock()
-		var connected utils.Set[pkg.NodeID]
-		var err error
-		for connected, err = s.registeredIDs(), ctx.Err(); len(connected) < size && err == nil; connected, err = s.registeredIDs(), ctx.Err() {
-			s.cPeers.Wait()
-		}
-		if err == nil {
-			connset <- connected
-		} else {
-			close(connset)
-		}
-		s.cPeers.L.Unlock()
-	}()
-	select {
-	case cs := <-connset:
-		return cs, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+// Register is called by the transport when a new peer register itself for the setup.
+func (s *Service) Register(peer pkg.NodeID) error {
+	if err := s.peers.Register(peer); err != nil {
+		s.Logf("error when registering peer %s for compute: %s", peer, err)
+		return err
 	}
+	s.Logf("compute registered peer %v", peer)
+	return nil // TODO: Implement
 }
 
-func (s *Service) registeredIDs() utils.Set[pkg.NodeID] {
-	connected := make(utils.Set[pkg.NodeID])
-	for peerID := range s.peers {
-		connected.Add(peerID)
+// Unregister is called by the transport when a peer is unregistered from the setup.
+func (s *Service) Unregister(peer pkg.NodeID) error {
+	if err := s.peers.Unregister(peer); err != nil {
+		s.Logf("error when unregistering peer %s for compute: %s", peer, err)
+		return err
 	}
-	return connected
+	s.Logf("compute unregistered peer %v", peer)
+	return nil // TODO: Implement
 }
 
 func (s *Service) Logf(msg string, v ...any) {

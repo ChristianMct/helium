@@ -64,7 +64,7 @@ type Circuit func(EvaluationContext) error
 type CircuitDescription struct {
 	InputSet, Ops, OutputSet utils.Set[pkg.OperandLabel]
 	OutputsFor               map[pkg.NodeID]utils.Set[pkg.OperandLabel]
-	KeySwitchOps             map[string]protocols.Descriptor
+	KeySwitchOps             map[string]protocols.Signature
 	NeedRlk                  bool
 	GaloisKeys               utils.Set[uint64]
 }
@@ -95,7 +95,7 @@ func newCircuitParserCtx(cid pkg.CircuitID, params bgv.Parameters, nodeMapping m
 			Ops:          utils.NewEmptySet[pkg.OperandLabel](),
 			OutputSet:    utils.NewEmptySet[pkg.OperandLabel](),
 			OutputsFor:   make(map[pkg.NodeID]utils.Set[pkg.OperandLabel]),
-			KeySwitchOps: make(map[string]protocols.Descriptor),
+			KeySwitchOps: make(map[string]protocols.Signature),
 			GaloisKeys:   make(utils.Set[uint64]),
 		},
 		SubCtx:      make(map[pkg.CircuitID]*circuitParserContext, 0),
@@ -177,55 +177,54 @@ func (e *circuitParserContext) SubCircuit(id pkg.CircuitID, cd Circuit) (Evaluat
 	return subCtx, err
 }
 
-func (e *circuitParserContext) registerKeyOps(pd protocols.Descriptor) error {
+func (e *circuitParserContext) registerKeyOps(sig protocols.Signature) error {
 
-	target, hasTarget := pd.Signature.Args["target"]
+	target, hasTarget := sig.Args["target"]
 	if !hasTarget {
 		return fmt.Errorf("protocol parameter should have a target")
 	}
 
 	if e.nodeMapping != nil {
-		pd.Signature.Args["target"] = string(e.nodeMapping[target])
+		sig.Args["target"] = string(e.nodeMapping[target])
 	}
 
-	if _, exists := e.cDesc.KeySwitchOps[pd.Signature.String()]; exists {
-		return fmt.Errorf("protocol with id %s exists", pd.Signature.String())
+	if _, exists := e.cDesc.KeySwitchOps[sig.String()]; exists {
+		return fmt.Errorf("protocol with id %s exists", sig.String())
 	}
 
-	e.cDesc.KeySwitchOps[pd.Signature.String()] = pd
+	e.cDesc.KeySwitchOps[sig.String()] = sig
 	return nil
 }
 
-func GetProtocolDescriptor(t protocols.Type, in pkg.Operand, params map[string]string) (pd protocols.Descriptor) {
+func GetProtocolSignature(t protocols.Type, in pkg.OperandLabel, params map[string]string) (pd protocols.Signature) {
 	parm := make(map[string]string, len(params))
 	for k, v := range params {
 		parm[k] = v
 	}
-	parm["op"] = string(in.OperandLabel)
-	pd = protocols.Descriptor{Signature: protocols.Signature{Type: t, Args: parm}}
-	return pd
+	parm["op"] = string(in)
+	return protocols.Signature{Type: t, Args: parm}
 }
 
 func (e *circuitParserContext) DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	pd := GetProtocolDescriptor(protocols.DEC, in, params)
+	pd := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(e.circID), params)
 	if err = e.registerKeyOps(pd); err != nil {
 		panic(err)
 	}
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))}, nil
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Type))}, nil
 }
 
 func (e *circuitParserContext) PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	pd := GetProtocolDescriptor(protocols.PCKS, in, params)
+	pd := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(e.circID), params)
 	if err = e.registerKeyOps(pd); err != nil {
 		panic(err)
 	}
-	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))}, nil
+	return pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Type))}, nil
 }
 
 func (e *circuitParserContext) Parameters() bgv.Parameters {

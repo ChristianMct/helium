@@ -8,7 +8,6 @@ import (
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -24,7 +23,7 @@ type CircuitInstance interface {
 	// LocalInput provides the local inputs to the circuit executing within this context.
 	LocalInputs([]pkg.Operand) error
 
-	IncomingInput(pkg.Operand) error
+	IncomingOperand(pkg.Operand) error
 
 	// LocalOutput returns a channel where the circuit executing within this context will write its outputs.
 	LocalOutputs() chan pkg.Operand
@@ -42,44 +41,31 @@ type CircuitInstance interface {
 type fullEvaluatorContext struct {
 	*bgv.Evaluator
 
-	isLight map[pkg.NodeID]bool
-
-	transport transport.ComputeServiceTransport
-
-	sess   *pkg.Session
-	params bgv.Parameters
-	id     pkg.CircuitID
+	service *Service
+	sess    *pkg.Session
+	params  bgv.Parameters
+	cid     pkg.CircuitID
 
 	outgoingOps, ops, inputOps map[pkg.OperandLabel]*FutureOperand
-
-	protos map[string]protocols.KeySwitchInstance
 
 	inputs, outputs chan pkg.Operand
 
 	f     Circuit
 	cDesc CircuitDescription
-
-	// TODO Extract ProtocolRunner
-	runningProtosMu sync.RWMutex
-	runningProtos   map[pkg.ProtocolID]struct {
-		pd       protocols.Descriptor
-		incoming chan protocols.Share
-	}
 }
 
 // newFullEvaluationContext creates a new full-evaluator context used by aggregators to execute a circuit.
 func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, cDef Circuit, nodeMapping map[string]pkg.NodeID) *fullEvaluatorContext {
 	se := new(fullEvaluatorContext)
-	se.id = id
+	se.cid = id
 	se.sess = sess
+	se.service = s
 
 	var err error
 	se.params, err = bgv.NewParameters(*sess.Params, 65537)
 	if err != nil {
 		panic(err)
 	}
-
-	se.isLight = make(map[pkg.NodeID]bool)
 
 	dummyCtx := newCircuitParserCtx(id, se.params, nodeMapping)
 	if err := cDef(dummyCtx); err != nil {
@@ -106,48 +92,16 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, 
 		se.ops[opl] = &FutureOperand{}
 	}
 
-	se.protos = make(map[string]protocols.KeySwitchInstance)
-
-	for protoID, protoDesc := range se.cDesc.KeySwitchOps {
-		protoDesc.Aggregator = s.id
-		part := utils.NewSet(sess.Nodes)
-		protoDesc.Participants = part.Elements() // TODO decide on exec
-		proto, err := protocols.NewProtocol(protoDesc, sess)
-		if err != nil {
-			panic(err)
-		}
-		se.protos[protoID], _ = proto.(protocols.KeySwitchInstance)
-	}
-
 	se.inputs, se.outputs = make(chan pkg.Operand, len(se.cDesc.InputSet)), make(chan pkg.Operand, len(se.cDesc.OutputSet))
 
 	se.f = cDef
-
-	se.transport = s.transport
-	// TODO extract protocolrunner
-
-	se.runningProtos = make(map[pkg.ProtocolID]struct {
-		pd       protocols.Descriptor
-		incoming chan protocols.Share
-	})
-	go func() {
-		for incShare := range se.transport.IncomingShares() {
-			se.runningProtosMu.RLock()
-			proto, exists := se.runningProtos[incShare.ProtocolID]
-			se.runningProtosMu.RUnlock()
-			if !exists {
-				panic("protocol is not running")
-			}
-			proto.incoming <- incShare
-		}
-	}()
 
 	return se
 }
 
 func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 
-	log.Printf("%s | started full context Execute of %s\n", se.sess.NodeID, se.id)
+	log.Printf("%s | started full context Execute of %s\n", se.sess.NodeID, se.cid)
 
 	var err error
 	rlk := new(rlwe.RelinearizationKey)
@@ -180,7 +134,7 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 	err = se.f(se)
 
 	close(se.outputs)
-	log.Printf("%s | full context Execute returned, err = %v \n", se.sess.NodeID, err)
+	log.Printf("%s | %s | full context Execute returned, err = %v \n", se.sess.NodeID, se.cid, err)
 
 	return err
 }
@@ -192,7 +146,7 @@ func (se *fullEvaluatorContext) LocalInputs(lops []pkg.Operand) error {
 	return nil
 }
 
-func (se *fullEvaluatorContext) IncomingInput(op pkg.Operand) error {
+func (se *fullEvaluatorContext) IncomingOperand(op pkg.Operand) error {
 	se.inputs <- op
 	return nil
 }
@@ -202,7 +156,7 @@ func (se *fullEvaluatorContext) LocalOutputs() chan pkg.Operand {
 }
 
 func (se *fullEvaluatorContext) Input(opl pkg.OperandLabel) pkg.Operand {
-	fop, exists := se.inputOps[opl.ForCircuit(se.id)]
+	fop, exists := se.inputOps[opl.ForCircuit(se.cid)]
 	if !exists {
 		panic(fmt.Errorf("unexpected input: %s", opl))
 	}
@@ -212,7 +166,7 @@ func (se *fullEvaluatorContext) Input(opl pkg.OperandLabel) pkg.Operand {
 }
 
 func (se *fullEvaluatorContext) Set(op pkg.Operand) {
-	se.ops[op.OperandLabel.ForCircuit(se.id)].Done(op)
+	se.ops[op.OperandLabel.ForCircuit(se.cid)].Done(op)
 }
 
 func (se *fullEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
@@ -223,8 +177,8 @@ func (se *fullEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
 }
 
 func (se *fullEvaluatorContext) Output(op pkg.Operand, to pkg.NodeID) {
-	se.ops[op.OperandLabel.ForCircuit(se.id)].Done(op)
-	se.outputs <- pkg.Operand{OperandLabel: op.OperandLabel.ForCircuit(se.id), Ciphertext: op.Ciphertext}
+	se.ops[op.OperandLabel.ForCircuit(se.cid)].Done(op)
+	se.outputs <- pkg.Operand{OperandLabel: op.OperandLabel.ForCircuit(se.cid), Ciphertext: op.Ciphertext}
 }
 
 func (se *fullEvaluatorContext) SubCircuit(_ pkg.CircuitID, _ Circuit) (EvaluationContext, error) {
@@ -232,43 +186,19 @@ func (se *fullEvaluatorContext) SubCircuit(_ pkg.CircuitID, _ Circuit) (Evaluati
 }
 
 func (se *fullEvaluatorContext) DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	pd := GetProtocolDescriptor(protocols.DEC, in, params)
-	pd.Aggregator = se.sess.NodeID
-	pd.Participants = se.sess.Nodes
-	return se.runKeySwitch(pd, in)
+	sig := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(se.cid), params)
+	return se.runKeySwitch(sig, in)
 }
 
 func (se *fullEvaluatorContext) PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	pd := GetProtocolDescriptor(protocols.PCKS, in, params)
-	pd.Aggregator = se.sess.NodeID
-	pd.Participants = se.sess.Nodes
-	return se.runKeySwitch(pd, in)
+	sig := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(se.cid), params)
+	return se.runKeySwitch(sig, in)
 }
 
-func (se *fullEvaluatorContext) runKeySwitch(pd protocols.Descriptor, in pkg.Operand) (out pkg.Operand, err error) {
+func (se *fullEvaluatorContext) runKeySwitch(sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
 	se.Set(in)
-
-	cksInt := se.protos[pd.Signature.String()]
-
-	incShares := make(chan protocols.Share)
-	se.runningProtosMu.Lock()
-	se.runningProtos[cksInt.ID()] = struct {
-		pd       protocols.Descriptor
-		incoming chan protocols.Share
-	}{cksInt.Desc(), incShares}
-	se.runningProtosMu.Unlock()
-
-	cksInt.Input(in.Ciphertext)
-
-	agg := <-cksInt.Aggregate(context.Background(), &ProtocolEnvironment{incoming: incShares, outgoing: se.transport.OutgoingShares()})
-	if agg.Error != nil {
-		return pkg.Operand{}, agg.Error
-	}
-
-	out = pkg.Operand{Ciphertext: (<-cksInt.Output(agg)).Result.(*rlwe.Ciphertext)}
-
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))
-	return out, nil
+	ctx := pkg.NewContext(&se.sess.ID, &se.cid)
+	return se.service.RunKeySwitch(ctx, sig, in)
 }
 
 func (se *fullEvaluatorContext) Parameters() bgv.Parameters {
@@ -292,31 +222,27 @@ func (se *fullEvaluatorContext) resolveRemoteInputs(ctx context.Context, ins uti
 	// TODO parallel querying
 
 	// fetches all inputs from full nodes
-	go func() {
-		for in := range ins {
+	// go func() {
+	// 	for in := range ins {
 
-			var op pkg.Operand
+	// 		var op pkg.Operand
 
-			inURL := pkg.NewURL(string(in))
-			if len(inURL.Host) == 0 || inURL.Host == string(se.sess.NodeID) {
-				continue
-			}
+	// 		inURL := pkg.NewURL(string(in))
+	// 		if len(inURL.Host) == 0 || inURL.Host == string(se.sess.NodeID) {
+	// 			continue
+	// 		}
 
-			if se.isLight[inURL.NodeID()] {
-				continue // skipping light node inputs coming in push mode
-			}
+	// 		ctx = pkg.NewContext(&se.sess.ID, &se.id) // TODO: derive from passed context
 
-			ctx = pkg.NewContext(&se.sess.ID, &se.id) // TODO: derive from passed context
-
-			ct, err := se.transport.GetCiphertext(ctx, pkg.CiphertextID(in))
-			if err != nil {
-				log.Printf("%s | could not resolve input %s: %s", se.sess.NodeID, in, err)
-				continue
-			}
-			op = pkg.Operand{OperandLabel: in, Ciphertext: &ct.Ciphertext}
-			se.inputs <- op
-		}
-	}()
+	// 		ct, err := se.transport.GetCiphertext(ctx, pkg.CiphertextID(in))
+	// 		if err != nil {
+	// 			log.Printf("%s | could not resolve input %s: %s", se.sess.NodeID, in, err)
+	// 			continue
+	// 		}
+	// 		op = pkg.Operand{OperandLabel: in, Ciphertext: &ct.Ciphertext}
+	// 		se.inputs <- op
+	// 	}
+	// }()
 
 	go func() {
 		for op := range se.inputs {

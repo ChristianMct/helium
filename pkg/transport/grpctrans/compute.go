@@ -80,11 +80,16 @@ func (env *computeTransport) PutCircuitUpdates(cu circuits.Update) (seq int, err
 	for _, peer := range env.peers {
 		if peer.connected {
 			peer.circuitUpdateQueue <- cu
+			//log.Printf("queued cu to %s: %+v", peer.id, cu)
 		}
 	}
 	env.mPeers.RUnlock()
 
 	return seq, nil
+}
+
+func (env *computeTransport) Close() {
+	close(env.outgoingCircuitUpdatesDone)
 }
 
 func (env *computeTransport) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
@@ -140,7 +145,7 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 		return fmt.Errorf("client must specify node id for stream")
 	}
 
-	err := t.srvHandler.Register(transport.Peer{PeerID: peerID})
+	err := t.srvHandler.Register(peerID)
 	if err != nil {
 		return err
 	}
@@ -162,24 +167,29 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 	var done bool
 	for !done {
 		select {
-		case <-t.outgoingCircuitUpdatesDone:
-			done = true
-		case <-stream.Context().Done():
-			done = true
-		case cu, closed := <-peer.circuitUpdateQueue:
-			if !closed {
+		case cu, more := <-peer.circuitUpdateQueue:
+			if more {
 				peer.SendUpdate(cu)
 			} else {
 				done = true
 			}
+		case <-t.outgoingCircuitUpdatesDone:
+			done = true
+			close(peer.circuitUpdateQueue)
+		case <-stream.Context().Done():
+			done = true
+			close(peer.circuitUpdateQueue)
 		}
 	}
-
+	err = t.srvHandler.Unregister(peerID)
+	if err != nil {
+		return err
+	}
 	t.mPeers.Lock()
 	peer.connected = false
 	peer.circuitUpdateStream = nil
 	t.mPeers.Unlock()
-	return t.srvHandler.Unregister(transport.Peer{PeerID: peerID})
+	return nil
 }
 
 type ComputeTransportHandler struct {
@@ -242,13 +252,15 @@ func (t *computeTransport) RegisterForComputeAt(ctx context.Context, peerID pkg.
 				}
 				return
 			}
-
 			cu := circuits.Update{Signature: circuits.Signature{CircuitName: apicu.ComputeSignature.CircuitName, CircuitID: pkg.CircuitID(apicu.ComputeSignature.CircuitID)}, Status: circuits.Status(apicu.ComputeStatus)}
 			if apicu.ProtocolUpdate != nil {
 				pdesc := getProtocolDescFromAPI(apicu.ProtocolUpdate.ProtocolDescriptor)
 				cu.StatusUpdate = &protocols.StatusUpdate{Descriptor: *pdesc, Status: protocols.Status(apicu.ProtocolUpdate.ProtocolStatus)}
 			}
+			cu.String()
+
 			descStream <- cu
+			//log.Printf("received cu: %v", cu)
 		}
 
 	}()

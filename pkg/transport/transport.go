@@ -62,6 +62,8 @@ type ComputeServiceTransport interface {
 
 	PutCircuitUpdates(circuits.Update) (seq int, err error)
 
+	Close()
+
 	// GetCiphertext queries the transport for the designated ciphertext
 	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
 
@@ -84,10 +86,10 @@ type ShareTransport interface {
 
 type PeerRegisteringHandler interface {
 	// Register is called by the transport when a new peer register itself for the setup.
-	Register(Peer) error
+	Register(pkg.NodeID) error
 
 	// Unregister is called by the transport when a peer is unregistered from the setup.
-	Unregister(Peer) error
+	Unregister(pkg.NodeID) error
 }
 
 // SetupServiceHandler handles queries from the transport to the setup service.

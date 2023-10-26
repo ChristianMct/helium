@@ -86,7 +86,7 @@ func (p *keySwitchProtocol) Aggregate(ctx context.Context, env Transport) chan A
 }
 
 func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) AggregationOutput {
-	p.Logf("started running with %v", p.Descriptor)
+	p.Logf("started running with participants %v", p.Descriptor.Participants)
 
 	// part := utils.NewSet(p.Descriptor.Participants) // TODO: reads from protomap for now
 	// if p.Descriptor.Type == CKS || p.Descriptor.Type == DEC {

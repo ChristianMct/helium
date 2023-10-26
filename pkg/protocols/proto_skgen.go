@@ -26,7 +26,7 @@ func (p *skgProtocol) Aggregate(ctx context.Context, env Transport) chan Aggrega
 
 func (p *skgProtocol) aggregate(ctx context.Context, env Transport) AggregationOutput {
 
-	p.Logf("started running with %v", p.Descriptor)
+	p.Logf("started running with participants %v", p.Descriptor.Participants)
 
 	if !p.shareProviders.Contains(p.self) {
 		p.Logf("finalized protocol (N=T)")

@@ -273,6 +273,7 @@ func (p *ComputePeer) SendUpdate(cu circuits.Update) {
 		apiCU.ProtocolUpdate = &api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(cu.StatusUpdate.Status)}
 	}
 	err := p.circuitUpdateStream.Send(apiCU)
+	//log.Printf("sent cu to %s", p.id)
 	if err != nil {
 		log.Println(err)
 		close(p.circuitUpdateQueue)

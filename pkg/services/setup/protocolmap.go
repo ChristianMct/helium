@@ -77,8 +77,8 @@ func ComputeDescriptionToSetupDescription(cd compute.CircuitDescription) (Descri
 
 	// determine aggregators
 	aggregators := make([]pkg.NodeID, 0)
-	for _, keySwitchPD := range cd.KeySwitchOps {
-		aggregators = append(aggregators, pkg.NodeID(keySwitchPD.Signature.Args["aggregator"]))
+	for _, ksSig := range cd.KeySwitchOps {
+		aggregators = append(aggregators, pkg.NodeID(ksSig.Args["aggregator"]))
 	}
 	// log.Printf("[Convert] Aggregators are %v\n", aggregators)
 
@@ -100,10 +100,10 @@ func ComputeDescriptionToSetupDescription(cd compute.CircuitDescription) (Descri
 	}
 
 	// Public Keys of output receivers
-	for _, keySwitchPD := range cd.KeySwitchOps {
+	for _, ksSig := range cd.KeySwitchOps {
 		// there is an external receiver
-		if keySwitchPD.Signature.Type == protocols.PCKS {
-			sender := pkg.NodeID(keySwitchPD.Signature.Args["target"])
+		if ksSig.Type == protocols.PCKS {
+			sender := pkg.NodeID(ksSig.Args["target"])
 			receivers := append(aggregators, sessionNodes...)
 			keyField := struct {
 				Sender    pkg.NodeID

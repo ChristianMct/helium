@@ -28,7 +28,7 @@ func (p *pkProtocol) ReadCRP() (CRP, error) {
 
 // run runs the pkProtocol allowing participants to provide shares and aggregators to aggregate such shares.
 func (p *pkProtocol) run(ctx context.Context, env Transport) AggregationOutput {
-	p.Logf("started running with %v", p.Descriptor)
+	p.Logf("started running with participants %v", p.Descriptor.Participants)
 
 	// pkProtocols can only have one participant: the sender of the public key
 	if len(p.Participants) != 1 {

@@ -3,7 +3,6 @@ package compute
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 
 	"github.com/ldsec/helium/pkg/protocols"
@@ -25,8 +24,9 @@ type delegatedEvaluatorContext struct {
 
 	transport transport.ComputeServiceTransport
 
-	id         pkg.CircuitID
+	cid        pkg.CircuitID
 	sess       *pkg.Session
+	service    *Service
 	delegateID pkg.NodeID
 
 	params bgv.Parameters
@@ -45,8 +45,9 @@ func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, sess *pkg.
 	de := new(delegatedEvaluatorContext)
 	de.delegateID = delegateID
 	de.sess = sess
+	de.service = s
 	de.f = cDef
-	de.id = cid
+	de.cid = cid
 
 	var err error
 	de.params, err = bgv.NewParameters(*sess.Params, 65537)
@@ -75,7 +76,7 @@ func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, sess *pkg.
 
 func (de *delegatedEvaluatorContext) Execute(ctx context.Context) error {
 
-	log.Printf("Node %s | started delegated context Execute of %s\n", de.sess.NodeID, de.id)
+	log.Printf("Node %s | started delegated context Execute of %s\n", de.sess.NodeID, de.cid)
 
 	// starts go routine to send the local inputs to delegate
 	go func() {
@@ -88,7 +89,7 @@ func (de *delegatedEvaluatorContext) Execute(ctx context.Context) error {
 	err := de.f(de)
 	close(de.outputs)
 
-	log.Printf("Node %s | delegate context Execute returned, err = %v \n", de.sess.NodeID, err)
+	log.Printf("Node %s | %s | delegate context Execute returned, err = %v \n", de.sess.NodeID, de.cid, err)
 
 	return err
 }
@@ -100,7 +101,7 @@ func (de *delegatedEvaluatorContext) LocalInputs(lops []pkg.Operand) error {
 	return nil
 }
 
-func (de *delegatedEvaluatorContext) IncomingInput(op pkg.Operand) error {
+func (de *delegatedEvaluatorContext) IncomingOperand(op pkg.Operand) error {
 	de.inputs <- op
 	return nil
 }
@@ -125,7 +126,7 @@ func (de *delegatedEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
 	if ctURL.Host == "" {
 		ctURL.Host = string(de.delegateID)
 	}
-	ct, err := de.transport.GetCiphertext(pkg.NewContext(&de.sess.ID, &de.id), ctURL.CiphertextID())
+	ct, err := de.transport.GetCiphertext(pkg.NewContext(&de.sess.ID, &de.cid), ctURL.CiphertextID())
 	if err != nil {
 		panic(err)
 	}
@@ -134,49 +135,25 @@ func (de *delegatedEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
 
 func (de *delegatedEvaluatorContext) Output(op pkg.Operand, to pkg.NodeID) {
 	if to == de.sess.NodeID {
-		op = de.Get(op.OperandLabel.ForCircuit(de.id))
+		op = de.Get(op.OperandLabel)
 		de.outputs <- op
 	}
 }
 
-func (de *delegatedEvaluatorContext) runKeySwitch(pd protocols.Descriptor, in pkg.Operand) (out pkg.Operand, err error) {
-	p, err := protocols.NewProtocol(pd, de.sess)
-	if err != nil {
-		return pkg.Operand{}, err
-	}
-	cks, _ := p.(protocols.KeySwitchInstance)
-
-	op := de.Get(in.OperandLabel.ForCircuit(de.id))
-
-	cks.Input(op.Ciphertext)
-
-	cks.Aggregate(context.Background(), &ProtocolEnvironment{outgoing: de.transport.OutgoingShares()})
-
-	// agg, err := de.transport.GetAggregationFrom(pkg.NewContext(&de.sess.ID, &de.id), de.delegateID, pd.ID)
-	// if agg.Error != nil {
-	// 	return pkg.Operand{}, err
-	// }
-
-	// if pkg.NodeID(pd.Args["target"].(string)) == de.sess.NodeID {
-	// 	out = pkg.Operand{Ciphertext: (<-cks.Output(*agg)).Result.(*rlwe.Ciphertext)}
-	// }
-
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Signature.Type))
-	return out, nil
+func (de *delegatedEvaluatorContext) runKeySwitch(sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
+	op := de.Get(in.OperandLabel.ForCircuit(de.cid))
+	ctx := pkg.NewContext(&de.sess.ID, &de.cid)
+	return de.service.GetProtoDescAndRunKeySwitch(ctx, sig, op)
 }
 
 func (de *delegatedEvaluatorContext) DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	pd := GetProtocolDescriptor(protocols.DEC, in, params)
-	pd.Aggregator = de.delegateID
-	pd.Participants = de.sess.Nodes
-	return de.runKeySwitch(pd, in)
+	sig := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(de.cid), params)
+	return de.runKeySwitch(sig, in)
 }
 
 func (de *delegatedEvaluatorContext) PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
-	pd := GetProtocolDescriptor(protocols.PCKS, in, params)
-	pd.Aggregator = de.delegateID
-	pd.Participants = de.sess.Nodes
-	return de.runKeySwitch(pd, in)
+	sig := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(de.cid), params)
+	return de.runKeySwitch(sig, in)
 }
 
 func (de *delegatedEvaluatorContext) SubCircuit(pkg.CircuitID, Circuit) (EvaluationContext, error) {
