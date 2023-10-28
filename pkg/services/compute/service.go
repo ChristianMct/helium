@@ -12,7 +12,10 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/utils"
+	"github.com/tuneinsight/lattigo/v4/drlwe"
+	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -131,7 +134,7 @@ func (s *Service) IsEvaluator() bool {
 	return s.id == s.evaluatorID
 }
 
-func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
+func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (outOp pkg.Operand, err error) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
 		return pkg.Operand{}, fmt.Errorf("no such session")
@@ -222,10 +225,20 @@ func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in 
 			Status:     protocols.OK,
 		}})
 
-	out = pkg.Operand{Ciphertext: (<-ksInt.Output(agg)).Result.(*rlwe.Ciphertext)}
+	outCt := (<-ksInt.Output(agg)).Result.(*rlwe.Ciphertext)
+	if protoDesc.Signature.Type == protocols.DEC && sess.T < len(sess.Nodes) {
 
-	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
-	return out, nil
+		target := pkg.NodeID(protoDesc.Signature.Args["target"])
+
+		lagrangeCoeff := s.getLagrangeCoeff(sess, target, protoDesc.Participants)
+		ringQP := &ringqp.Ring{RingQ: sess.Params.RingQ()}
+		// If decrypt among T<N, pre-multiplies the c1 elem by the Lagrange coeff.
+		// This avoids requiring participant set on the receiver party side for decryption.
+		ringQP.MulRNSScalarMontgomery(ringqp.Poly{Q: outCt.Value[1]}, lagrangeCoeff, ringqp.Poly{Q: outCt.Value[1]})
+	}
+	outOp = pkg.Operand{Ciphertext: outCt}
+	outOp.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
+	return outOp, nil
 }
 
 func (s *Service) GetProtoDescAndRunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
@@ -280,8 +293,6 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 
 	log.Printf("%s | started execute\n", s.ID())
 
-	okProt := make(chan protocols.Descriptor)
-
 	if !s.IsEvaluator() {
 		if sigs != nil {
 			panic("client submission of Signatures not supported yet")
@@ -301,7 +312,6 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 				} else {
 					if cu.StatusUpdate.Status == protocols.OK {
 						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
-
 						continue
 					}
 					s.incomingPdescMu.Lock()
@@ -317,12 +327,6 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 
 			}
 			close(sigs)
-		}()
-
-		go func() {
-			for pd := range okProt {
-				s.Logf("received an ok pd: %s", pd)
-			}
 		}()
 	}
 
@@ -389,6 +393,8 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
 	}
 
+	s.Logf("%s queried for ciphertext id %s", pkg.SenderIDFromIncomingContext(ctx), ctID)
+
 	ctURL, err := pkg.ParseURL(string(ctID))
 	if err != nil {
 		return nil, fmt.Errorf("invalid ciphertext id format")
@@ -413,15 +419,6 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 
 	return ct, nil
 }
-
-// func (s *Service) GetCiphertext(ctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
-
-// 	ctMsg := ct.ToGRPC()
-
-// 	log.Printf("%s | got request from %s - GET %s \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), id)
-
-// 	return ctMsg, nil
-// }
 
 func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 
@@ -462,42 +459,6 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 		log.Printf("%s | got ciphertext %s for session storage\n", s.ID(), ct.ID)
 	}
 	return nil
-
-	// // checks if input is sent for a circuit
-	// cid := pkg.CircuitIDFromIncomingContext(ctx)
-	// if cid != "" {
-
-	// 	c, envExists := s.evalEnvs[cid]
-	// 	if !envExists {
-	// 		return nil, status.Errorf(codes.InvalidArgument, "circuit %s does not exist", cid)
-	// 	}
-
-	// 	cFull, isFull := c.(*fullEvaluatorContext)
-	// 	if !isFull {
-	// 		return nil, status.Errorf(codes.InvalidArgument, "circuit %s not executing as full context", cid)
-	// 	}
-
-	// 	op := pkg.Operand{OperandLabel: pkg.OperandLabel(ct.ID), Ciphertext: &ct.Ciphertext}
-
-	// 	cFull.inputs <- op
-
-	// 	log.Printf("%s | got request from %s - PUT %s for circuit id \"%s\" \n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), ct.ID, cid)
-	// 	return ct.ID.ToGRPC(), nil
-	// }
-
-	// // otherwise just store the ct in the session
-	// if ct.ID == "" {
-	// 	ct.ID = pkg.CiphertextID(uuid.New().String())
-	// }
-
-	// // stores the ciphertext
-	// err = sess.Store(ct)
-	// if err != nil {
-	// 	return nil, status.Errorf(codes.Internal, fmt.Sprintf("%s", err))
-	// }
-
-	// log.Printf("%s | got request from %s - PUT %s for session storage\n", s.ID(), pkg.SenderIDFromIncomingContext(ctx), ct.ID)
-	// return &api.CiphertextID{CiphertextId: string(ct.ID)}, nil
 }
 
 func (s *Service) ID() pkg.NodeID {
@@ -548,4 +509,42 @@ func (s *Service) Unregister(peer pkg.NodeID) error {
 
 func (s *Service) Logf(msg string, v ...any) {
 	log.Printf("%s | %s\n", s.id, fmt.Sprintf(msg, v...))
+}
+
+// getLagrangeCoeff computes the Lagrange coefficient for party target in the sk reconstruction from T<N shares by
+// the participant group.
+// TODO: replace by some Lattigo interface ?
+func (s *Service) getLagrangeCoeff(sess *pkg.Session, target pkg.NodeID, participants []pkg.NodeID) ring.RNSScalar {
+
+	own := sess.SPKS[target]
+	if own == 0 {
+		panic("bad target")
+	}
+
+	others := make([]drlwe.ShamirPublicPoint, 0)
+	for _, p := range participants {
+		if p != target {
+			others = append(others, sess.SPKS[p])
+		}
+	}
+
+	ringQP := &ringqp.Ring{RingQ: sess.Params.RingQ()}
+	lagrangeCoeff := ringQP.NewRNSScalarFromUInt64(1)
+
+	for i, s := range ringQP.RingQ.SubRings {
+		lagrangeCoeff[i] = ring.MForm(lagrangeCoeff[i], s.Modulus, s.BRedConstant)
+	}
+
+	// precomputes lagrange coefficient factors
+	//lagrangeCoeffs := make(map[drlwe.ShamirPublicPoint]ring.RNSScalar)
+	for _, spk := range others {
+		if spk != own {
+			tmp1 := ringQP.NewRNSScalar()
+			ringQP.SubRNSScalar(ringQP.NewRNSScalarFromUInt64(uint64(spk)), ringQP.NewRNSScalarFromUInt64(uint64(own)), tmp1)
+			ringQP.Inverse(tmp1)
+			ringQP.MulRNSScalar(tmp1, ringQP.NewRNSScalarFromUInt64(uint64(spk)), tmp1)
+			ringQP.MulRNSScalar(lagrangeCoeff, tmp1, lagrangeCoeff)
+		}
+	}
+	return lagrangeCoeff
 }
