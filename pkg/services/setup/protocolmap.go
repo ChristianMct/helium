@@ -5,10 +5,12 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/utils"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 )
 
 type Description struct {
@@ -59,10 +61,15 @@ func mergeReceivers(r1, r2 []pkg.NodeID) (rOut []pkg.NodeID) {
 	return nil
 }
 
-// ComputeDescriptionToSetupDescription converts a CircuitDescription into a setup.Description by
+// CircuitToSetupDescription converts a CircuitDescription into a setup.Description by
 // extractiong the keys needed for the correct circuit execution.
-func ComputeDescriptionToSetupDescription(cd compute.CircuitDescription) (Description, error) {
+func CircuitToSetupDescription(cSig circuits.Signature, c compute.Circuit, params bgv.Parameters) (Description, error) {
 	sd := Description{}
+
+	cd, err := compute.ParseCircuit(c, cSig.CircuitID, params, nil)
+	if err != nil {
+		return Description{}, err
+	}
 
 	// determine session nodes
 	sessionNodes := make([]pkg.NodeID, 0)

@@ -3,7 +3,7 @@ services:
   cloud:
     image: heliummpc/helium:latest
     container_name: cloud
-    command: -docompute=false
+    #command: -docompute=false
     volumes:
       - ../cloud.json:/helium/config/node.json
       - ../setup.json:/helium/config/setup.json
@@ -15,7 +15,7 @@ services:
   node-0:
     image: heliummpc/helium:latest
     container_name: node-0
-    command: -docompute=false
+    #command: -docompute=false
     cap_add:
       - NET_ADMIN
     environment:
@@ -33,7 +33,7 @@ services:
   node-1:
     image: heliummpc/helium:latest
     container_name: node-1
-    command: -docompute=false
+    #command: -docompute=false
     cap_add:
       - NET_ADMIN
     environment:
@@ -50,7 +50,7 @@ services:
   node-2:
     image: heliummpc/helium:latest
     container_name: node-2
-    command: -docompute=false
+    #command: -docompute=false
     cap_add:
       - NET_ADMIN
     environment:

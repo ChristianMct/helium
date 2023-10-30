@@ -331,7 +331,10 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 		sk = rlwe.NewSecretKey(*sess.Params)
 		spks := make([]drlwe.ShamirPublicPoint, len(parties))
 		for i, pid := range parties {
-			spks[i] = sess.SPKS[pid]
+			var has bool
+			if spks[i], has = sess.SPKS[pid]; !has {
+				return nil, fmt.Errorf("unknown Shamir public point for party %s", pid)
+			}
 		}
 		tsk, err := sess.GetThresholdSecretKey()
 		if err != nil {

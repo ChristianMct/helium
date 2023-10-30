@@ -291,7 +291,7 @@ var NoInput InputProvider = func(ctx context.Context, s circuits.Signature) ([]p
 // func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
 func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, out chan CircuitOutput) error {
 
-	log.Printf("%s | started execute\n", s.ID())
+	log.Printf("%s | started compute execute\n", s.ID())
 
 	if !s.IsEvaluator() {
 		if sigs != nil {
@@ -465,13 +465,12 @@ func (s *Service) ID() pkg.NodeID {
 	return s.id
 }
 
-func (s *Service) CircuitDescription(label pkg.CircuitID) CircuitDescription {
-	c, exists := s.circuits[label]
+func (s *Service) CircuitDefinition(label string) Circuit {
+	c, exists := CircuitDefs[label]
 	if !exists {
 		panic(fmt.Errorf("circuit does not exist"))
 	}
-
-	return c.CircuitDescription()
+	return c
 }
 
 type ProtocolEnvironment struct { // TODO dedup with Setup
@@ -518,7 +517,7 @@ func (s *Service) getLagrangeCoeff(sess *pkg.Session, target pkg.NodeID, partici
 
 	own := sess.SPKS[target]
 	if own == 0 {
-		panic("bad target")
+		panic(fmt.Errorf("bad target: %s is not in %v", target, sess.SPKS))
 	}
 
 	others := make([]drlwe.ShamirPublicPoint, 0)

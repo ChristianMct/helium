@@ -114,8 +114,7 @@ func main() {
 	}
 
 	var cloudID pkg.NodeID
-	var cid pkg.CircuitID
-	var cSign circuits.Signature
+	var cSigns []circuits.Signature
 	var ctx context.Context
 	var computeService *compute.Service
 	if *docompute {
@@ -130,19 +129,26 @@ func main() {
 		// We need to load the circuit before the cloud goes online so that clients do not query for unexpected ciphertexts.
 		app.registerCircuits()
 		cloudID = app.nl[0].NodeID
-		cid = pkg.CircuitID("test-circuit-0")
-		cSign = circuits.Signature{
-			CircuitName: app.cd.CircuitName,
+		cSigns = []circuits.Signature{
+			circuits.Signature{CircuitName: app.cd.CircuitName, CircuitID: pkg.CircuitID("test-circuit-0")},
 		}
 		ctx = pkg.NewContext(&app.sess.ID, nil)
 		computeService = app.node.GetComputeService()
 
-		// infer setup description
-		compSd, err := setup.ComputeDescriptionToSetupDescription(computeService.CircuitDescription(cid))
-		if err != nil {
-			panic(err)
+		for _, cs := range cSigns {
+			bgvParams, err := bgv.NewParameters(*app.sess.Params, 65537)
+			if err != nil {
+				panic(err)
+			}
+			// infer setup description
+			compSd, err := setup.CircuitToSetupDescription(cs, computeService.CircuitDefinition(cs.CircuitName), bgvParams)
+			if err != nil {
+				panic(err)
+			}
+			// adds the circuit's required eval keys to the app's setup description
+			app.sd = setup.MergeSetupDescriptions(app.sd, compSd)
 		}
-		app.sd = setup.MergeSetupDescriptions(app.sd, compSd)
+
 	}
 
 	log.Printf("%s | connecting...\n", app.nc.ID)
@@ -155,7 +161,7 @@ func main() {
 
 	// COMPUTE
 	if *docompute {
-		app.computePhase(cloudID, ctx, cid, cSign)
+		app.computePhase(cloudID, ctx, cSigns)
 	}
 
 	// keeps the node running until SIGINT or SIGTERM
@@ -180,8 +186,13 @@ func (a *App) setupPhase() {
 }
 
 // computePhase executes the computational phase of Helium.
-func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.CircuitID, cSign circuits.Signature) {
+func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cSigns []circuits.Signature) {
 	bgvParams, err := bgv.NewParameters(*a.sess.Params, 65537)
+	if err != nil {
+		panic(err)
+	}
+
+	cpk, err := a.node.GetSetupService().GetCollectivePublicKey()
 	if err != nil {
 		panic(err)
 	}
@@ -194,18 +205,26 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	// craft input for session nodes
 	if utils.NewSet(a.sess.Nodes).Contains(a.node.ID()) {
 		inputProvider = func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) {
-			switch cSign.CircuitName {
+			switch s.CircuitName {
 			case "psi-2", "psi-4", "psi-8", "psi-2-PCKS":
-				return a.getClientOperandsPSI(bgvParams, encoder, cLabel), nil
+				return a.getClientOperandsPSI(bgvParams, cpk, encoder, s.CircuitID), nil
 			case "pir-3", "pir-5", "pir-9":
-				return a.getClientOperandsPIR(bgvParams, encoder, cLabel), nil
+				return a.getClientOperandsPIR(bgvParams, cpk, encoder, s.CircuitID), nil
 			default:
-				return nil, fmt.Errorf("unknown circuit name: %s", cSign.CircuitName)
+				return nil, fmt.Errorf("unknown circuit name: %s", s.CircuitName)
 			}
 		}
 		outs = make(chan compute.CircuitOutput, 1)
 	} else {
 		inputProvider = compute.NoInput
+	}
+
+	if a.node.ID() == cloudID {
+		sigs = make(chan circuits.Signature, len(cSigns))
+		for _, s := range cSigns {
+			sigs <- s
+		}
+		close(sigs)
 	}
 
 	computeService := a.node.GetComputeService()
@@ -220,12 +239,13 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 
 	// retrieve output
 	if outs == nil {
-		log.Println("No outputs to retrieve")
+		log.Println("No output channel to read from")
 		return
 	}
-	out := <-outs
-	if out.Ops[0].Ciphertext == nil {
-		panic(fmt.Errorf("Output ciphertext is nil"))
+	out, has := <-outs
+	if !has {
+		log.Println("No output returned")
+		return
 	}
 	log.Printf("[Compute] Got encrypted output: %v", out.Ops[0].OperandLabel)
 
@@ -244,8 +264,16 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 	} else {
 		sessSk, err := a.sess.GetSecretKey()
 		if err != nil {
-			log.Printf("error while decrypting output: the session secret key is not present. Is this node (%s) the indended receiver?\n", a.node.ID())
+			log.Printf("error while decrypting output: the session secret key is not present.\n", a.node.ID())
 			return
+		}
+		if a.sess.T < len(a.sess.Nodes) {
+			tsk, err := a.sess.GetThresholdSecretKey()
+			if err != nil {
+				log.Printf("error while decrypting output: the threshold secret key is not present.\n", a.node.ID())
+				return
+			}
+			sessSk = &rlwe.SecretKey{Value: tsk.Poly}
 		}
 		outputSk = sessSk
 	}
@@ -262,12 +290,8 @@ func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cLabel pkg.C
 }
 
 // getClientOperandsPSI returns the operands that this client node will input into the PSI computation.
-func (a *App) getClientOperandsPSI(bgvParams bgv.Parameters, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+func (a *App) getClientOperandsPSI(bgvParams bgv.Parameters, cpk *rlwe.PublicKey, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
-	cpk, err := a.sess.GetCollectivePublicKey()
-	if err != nil {
-		panic(err)
-	}
 
 	encryptor, err := bgv.NewEncryptor(bgvParams, cpk)
 	if err != nil {
@@ -295,12 +319,8 @@ func (a *App) getClientOperandsPSI(bgvParams bgv.Parameters, encoder *bgv.Encode
 }
 
 // getClientOperandsPIR returns the operands that this client node will input into the PIR computation.
-func (a *App) getClientOperandsPIR(bgvParams bgv.Parameters, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
+func (a *App) getClientOperandsPIR(bgvParams bgv.Parameters, cpk *rlwe.PublicKey, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
 	ops := []pkg.Operand{}
-	cpk, err := a.sess.GetCollectivePublicKey()
-	if err != nil {
-		panic(err)
-	}
 
 	encryptor, err := bgv.NewEncryptor(bgvParams, cpk)
 	if err != nil {
@@ -310,7 +330,7 @@ func (a *App) getClientOperandsPIR(bgvParams bgv.Parameters, encoder *bgv.Encode
 	// craft input
 	inData := make([]uint64, bgvParams.N())
 
-	reqFromNode := 1
+	reqFromNode := 2
 
 	if a.node.ID() == "node-0" {
 		inData[reqFromNode] = 1
@@ -342,7 +362,6 @@ func (a *App) getClientOperandsPIR(bgvParams bgv.Parameters, encoder *bgv.Encode
 
 // registerCircuits registers some predefined circuits in the global state of the compute service.
 func (a *App) registerCircuits() {
-
 	for label, cDef := range testCircuits {
 		if err := compute.RegisterCircuit(label, cDef); err != nil {
 			panic(err)
@@ -353,7 +372,6 @@ func (a *App) registerCircuits() {
 // outputStats outputs the total network usage and time take to execute a protocol phase.
 func (a *App) outputStats(circuit, phase string, elapsed time.Duration) {
 	log.Println("==============", phase, "phase ==============")
-	log.Printf("%s | finished setup for N=%d T=%d", a.nc.ID, len(a.nl), a.nc.SessionParameters[0].T)
 	log.Printf("%s | execute returned after %s", a.nc.ID, elapsed)
 	log.Printf("%s | network stats: %s\n", a.nc.ID, a.node.GetTransport().GetNetworkStats())
 

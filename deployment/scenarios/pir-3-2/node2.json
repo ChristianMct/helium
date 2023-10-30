@@ -6,12 +6,13 @@
     "SessionParameters": [{
         "ID": "test-session",
         "T": 2,
-        "RLWEParams": {"LogN":13,"Q":[18014398508400641,18014398510645249,18014398510661633],"P":[36028797018652673]},
+        "RLWEParams": {"LogN":13,"Q":[18014398508400641,18014398510645249,18014398510661633],"P":[36028797018652673], "NTTFlag": true},
         "Nodes": ["node-0", "node-1", "node-2"],
-		"PublicSeed": "bGF0dGlnMA==",
-        "ObjectStoreConfig": {
-            "BackendName": "mem"       
-        }
+        "ShamirPks" : {"node-0": 1, "node-1":2, "node-2":3},
+		"PublicSeed": "bGF0dGlnMA=="
     }],
-    "SignatureParameters": {"Type": 1}
+    "SignatureParameters": {"Type": 1},
+    "ObjectStoreConfig": {
+        "BackendName": "mem"       
+    }
 }
