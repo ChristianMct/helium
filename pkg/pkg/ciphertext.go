@@ -147,6 +147,14 @@ func (ctt CiphertextType) String() string {
 	return typeToString[ctt]
 }
 
+func (opl OperandLabel) HasHost(id NodeID) bool {
+	nopl, err := url.Parse(string(opl))
+	if err != nil {
+		panic(fmt.Errorf("invalid operand label: %s", opl))
+	}
+	return nopl.Host == string(id)
+}
+
 func (opl OperandLabel) ForCircuit(cid CircuitID) OperandLabel {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {

@@ -1,39 +1,28 @@
 package node
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/ldsec/helium/pkg/api"
+	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
+	"github.com/ldsec/helium/pkg/utils"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
 
-type Context struct {
-	C context.Context
-}
-
-func (c Context) SenderID() string {
-	md, hasIncomingContext := metadata.FromIncomingContext(c.C)
-	if hasIncomingContext && len(md.Get("node_id")) == 1 {
-		return md.Get("node_id")[0]
-	}
-	return ""
-}
-
-func (c Context) SessionID() pkg.SessionID {
-	md, hasIncomingContext := metadata.FromIncomingContext(c.C)
-	if hasIncomingContext && len(md.Get("session_id")) == 1 {
-		return pkg.SessionID(md.Get("session_id")[0])
-	}
-	return ""
-}
+const WriteStats = false
 
 type Node struct {
 	addr pkg.NodeAddress
@@ -79,13 +68,13 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	node.sessions = pkg.NewSessionStore()
 	node.transport = trans
 	node.peers = make(map[pkg.NodeID]*Node, len(nodeList))
-	var evaluatorID pkg.NodeID
+	var cloudID pkg.NodeID
 	for _, peer := range nodeList {
 		if peer.NodeID != node.id {
 			node.peers[peer.NodeID] = newPeerNode(peer.NodeID, peer.NodeAddress)
 		}
 		if len(peer.NodeAddress) > 0 {
-			evaluatorID = peer.NodeID
+			cloudID = peer.NodeID
 		}
 	}
 	node.nodeList = nodeList
@@ -102,11 +91,11 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 		}
 	}
 
-	node.setup, err = setup.NewSetupService(node.id, node, node.transport.GetSetupTransport(), os)
+	node.setup, err = setup.NewSetupService(node.id, cloudID, node, node.transport.GetSetupTransport(), os)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
-	node.compute, err = compute.NewComputeService(node.id, evaluatorID, node, node.transport.GetComputeTransport())
+	node.compute, err = compute.NewComputeService(node.id, cloudID, node, node.transport.GetComputeTransport(), node.setup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}
@@ -115,6 +104,86 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	node.transport.RegisterComputeService(node.compute)
 
 	return node, nil
+}
+
+func (node *Node) Run(ctx context.Context, app App, outChan chan compute.CircuitOutput) (err error) {
+	sessId, _ := pkg.SessionIDFromContext(ctx)
+	sess, exists := node.GetSessionFromID(sessId)
+	if !exists {
+		return fmt.Errorf("session `%s` was not created", sessId)
+	}
+	N := len(sess.Nodes)
+	T := sess.T
+
+	params, err := bgv.NewParameters(*sess.Params, 65537)
+	if err != nil {
+		return fmt.Errorf("cannot instantiate cryptographic parameters: %w", err)
+	}
+
+	for cName, circuit := range app.Circuits {
+		compute.RegisterCircuit(cName, circuit)
+	}
+
+	// creates a setup.Description from the config and provided compute.Description
+	var setupDesc setup.Description
+	if app.SetupDescription != nil {
+		setupDesc = setup.MergeSetupDescriptions(setupDesc, *app.SetupDescription)
+	}
+	for _, cs := range app.ComputeDescription {
+		c, exists := compute.CircuitDefinition(cs.CircuitName)
+		if !exists {
+			return fmt.Errorf("error while converting circuit to setup description: circuit does not exist")
+		}
+		// infer setup description
+		compSd, err := setup.CircuitToSetupDescription(cs, c, params)
+		if err != nil {
+			return fmt.Errorf("error while converting circuit to setup description: %w", err)
+		}
+		// adds the circuit's required eval keys to the app's setup description
+		setupDesc = setup.MergeSetupDescriptions(setupDesc, compSd)
+	}
+
+	outputSet := make(utils.Set[pkg.OperandLabel])
+	for _, cs := range app.ComputeDescription {
+		c, exists := compute.CircuitDefinition(cs.CircuitName)
+		if !exists {
+			return fmt.Errorf("error while parsing circuit: circuit does not exist")
+		}
+		cd, err := compute.ParseCircuit(c, cs.CircuitID, params, nil)
+		if !exists {
+			return fmt.Errorf("error while parsing circuit: %w", err)
+		}
+		outputSet.AddAll(cd.OutputsFor[node.id])
+	}
+	node.Logf("expecting outputs: %s", outputSet)
+
+	setupSrv, computeSrv := node.GetSetupService(), node.GetComputeService()
+
+	// executes the setup phase
+	start := time.Now()
+	err = setupSrv.Execute(ctx, setupDesc)
+	if err != nil {
+		return fmt.Errorf("error during setup: %w", err)
+	}
+	elapsed := time.Since(start)
+	node.OutputStats("setup", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+
+	//executes the compute phase
+	sigs := make(chan circuits.Signature, len(app.ComputeDescription))
+	for _, cs := range app.ComputeDescription {
+		sigs <- cs
+	}
+	close(sigs)
+
+	start = time.Now()
+	err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outChan)
+	if err != nil {
+		return fmt.Errorf("error during compute: %w", err)
+	}
+	elapsed = time.Since(start)
+	node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+
+	return nil
 }
 
 func (node *Node) GetTransport() transport.Transport {
@@ -226,4 +295,57 @@ func (node *Node) GetSessionFromIncomingContext(ctx context.Context) (*pkg.Sessi
 // Close releases all the resources allocated by the node.
 func (node *Node) Close() error {
 	return node.sessions.Close()
+}
+
+func (node *Node) Logf(msg string, v ...any) {
+	log.Printf("%s | %s\n", node.id, fmt.Sprintf(msg, v...))
+}
+
+// outputStats outputs the total network usage and time take to execute a protocol phase.
+func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
+	log.Println("==============", phase, "phase ==============")
+	log.Printf("%s | time %s", node.ID(), elapsed)
+	log.Printf("%s | network: %s\n", node.ID(), node.GetTransport().GetNetworkStats())
+	if write {
+		stats := map[string]string{
+			"Wall":  fmt.Sprint(elapsed),
+			"Sent":  fmt.Sprint(node.GetTransport().GetNetworkStats().DataSent),
+			"Recvt": fmt.Sprint(node.GetTransport().GetNetworkStats().DataRecv),
+			"ID":    fmt.Sprint(node.ID()),
+			"Phase": phase,
+		}
+		for _, md := range metadata {
+			for k, v := range md {
+				stats[k] = v
+			}
+		}
+		var statsJSON []byte
+		statsJSON, err := json.MarshalIndent(stats, "", "\t")
+		if err != nil {
+			panic(err)
+		}
+		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s-%s.json", phase, node.ID()), statsJSON, 0600); errWrite != nil {
+			log.Println(errWrite)
+		}
+	}
+}
+
+type Context struct {
+	C context.Context
+}
+
+func (c Context) SenderID() string {
+	md, hasIncomingContext := metadata.FromIncomingContext(c.C)
+	if hasIncomingContext && len(md.Get("node_id")) == 1 {
+		return md.Get("node_id")[0]
+	}
+	return ""
+}
+
+func (c Context) SessionID() pkg.SessionID {
+	md, hasIncomingContext := metadata.FromIncomingContext(c.C)
+	if hasIncomingContext && len(md.Get("session_id")) == 1 {
+		return pkg.SessionID(md.Get("session_id")[0])
+	}
+	return ""
 }

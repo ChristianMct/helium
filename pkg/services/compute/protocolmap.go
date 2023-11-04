@@ -1,5 +1,5 @@
 package compute
 
-type Description struct {
-	CircuitName string
-}
+import "github.com/ldsec/helium/pkg/circuits"
+
+type Description []circuits.Signature

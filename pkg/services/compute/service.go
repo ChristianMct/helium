@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+var CircuitDefsLock sync.RWMutex
 var CircuitDefs = map[string]Circuit{}
 
 type Service struct {
@@ -31,6 +32,7 @@ type Service struct {
 
 	sessions  pkg.SessionProvider
 	transport transport.ComputeServiceTransport
+	pkBackend PublicKeyBackend
 
 	peers *pkg.PartySet
 
@@ -47,7 +49,41 @@ type Service struct {
 	incomingPdesc   map[string]chan protocols.Descriptor
 }
 
-func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport) (s *Service, err error) {
+type PublicKeyBackend interface {
+	GetCollectivePublicKey() (*rlwe.PublicKey, error)
+	GetGaloisKey(galEl uint64) (*rlwe.GaloisKey, error)
+	GetRelinearizationKey() (*rlwe.RelinearizationKey, error)
+}
+
+type MemoryKeyBackend struct {
+	*rlwe.PublicKey
+	GaloisKeys map[uint64]*rlwe.GaloisKey
+	*rlwe.RelinearizationKey
+}
+
+func (pkb *MemoryKeyBackend) GetCollectivePublicKey() (cpk *rlwe.PublicKey, err error) {
+	if pkb.PublicKey == nil {
+		err = fmt.Errorf("no collective public key registered in this backend")
+	}
+	return pkb.PublicKey, err
+}
+
+func (pkb *MemoryKeyBackend) GetGaloisKey(galEl uint64) (gk *rlwe.GaloisKey, err error) {
+	var has bool
+	if gk, has = pkb.GaloisKeys[galEl]; !has {
+		err = fmt.Errorf("no public galois key registered in this backend")
+	}
+	return gk, err
+}
+
+func (pkb *MemoryKeyBackend) GetRelinearizationKey() (rlk *rlwe.RelinearizationKey, err error) {
+	if pkb.RelinearizationKey == nil {
+		err = fmt.Errorf("no public relinearization key registered in this backend")
+	}
+	return pkb.RelinearizationKey, err
+}
+
+func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport, pkBackend PublicKeyBackend) (s *Service, err error) {
 	s = new(Service)
 
 	s.id = id
@@ -56,6 +92,7 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 
 	s.sessions = sessions
 	s.transport = trans
+	s.pkBackend = pkBackend
 
 	s.peers = pkg.NewPartySet()
 
@@ -85,11 +122,20 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 }
 
 func RegisterCircuit(name string, cd Circuit) error {
+	CircuitDefsLock.Lock()
+	defer CircuitDefsLock.Unlock()
 	if _, exists := CircuitDefs[name]; exists {
 		return fmt.Errorf("circuit with name %s already registered", name)
 	}
 	CircuitDefs[name] = cd
 	return nil
+}
+
+func CircuitDefinition(label string) (c Circuit, exists bool) {
+	CircuitDefsLock.RLock()
+	defer CircuitDefsLock.RUnlock()
+	c, exists = CircuitDefs[label]
+	return
 }
 
 // LoadCircuit loads the circuit creating the necessary evaluation environments.
@@ -107,14 +153,14 @@ func (s *Service) LoadCircuit(ctx context.Context, sig circuits.Signature) (Circ
 		return nil, fmt.Errorf("session does not exist")
 	}
 
-	cDef, exist := CircuitDefs[sig.CircuitName]
+	cDef, exist := CircuitDefinition(sig.CircuitName)
 	if !exist {
 		return nil, fmt.Errorf("circuit definition with name \"%s\" does not exist", sig.CircuitName)
 	}
 
 	var ci CircuitInstance
 	if s.IsEvaluator() {
-		ci = s.newFullEvaluationContext(sess, cid, cDef, nil)
+		ci = s.newFullEvaluationContext(sess, s.pkBackend, cid, cDef, nil)
 	} else {
 		ci = s.newDelegatedEvaluatorContext(s.evaluatorID, sess, cid, cDef)
 	}
@@ -125,8 +171,8 @@ func (s *Service) LoadCircuit(ctx context.Context, sig circuits.Signature) (Circ
 }
 
 type CircuitOutput struct {
-	circuits.Signature
-	Ops   []pkg.Operand
+	pkg.OperandLabel
+	Pt    *rlwe.Plaintext
 	Error error
 }
 
@@ -270,32 +316,28 @@ func (s *Service) GetProtoDescAndRunKeySwitch(ctx context.Context, sig protocols
 	s.Logf("started executing %s", sig)
 	cks.Aggregate(context.Background(), &ProtocolEnvironment{outgoing: s.transport.OutgoingShares()})
 
-	// agg, err := de.transport.GetAggregationFrom(pkg.NewContext(&de.sess.ID, &de.id), de.delegateID, pd.ID)
-	// if agg.Error != nil {
-	// 	return pkg.Operand{}, err
-	// }
-
-	// if pkg.NodeID(pd.Args["target"].(string)) == de.sess.NodeID {
-	// 	out = pkg.Operand{Ciphertext: (<-cks.Output(*agg)).Result.(*rlwe.Ciphertext)}
-	// }
-
 	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
 	return out, nil
 }
 
-type InputProvider func(context.Context, circuits.Signature) ([]pkg.Operand, error)
+type InputProvider func(context.Context, pkg.OperandLabel) (*rlwe.Plaintext, error)
 
-var NoInput InputProvider = func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) { return nil, nil }
+var NoInput InputProvider = func(_ context.Context, _ pkg.OperandLabel) (*rlwe.Plaintext, error) { return nil, nil }
 
 // TODO: async execute that returns ops as they are computed
 // func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
 func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, out chan CircuitOutput) error {
 
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return fmt.Errorf("no session found in context")
+	}
+
 	log.Printf("%s | started compute execute\n", s.ID())
 
 	if !s.IsEvaluator() {
 		if sigs != nil {
-			panic("client submission of Signatures not supported yet")
+			s.Logf("client submission of Signatures not supported yet, discarding sigs...")
 		}
 
 		sigs = make(chan circuits.Signature)
@@ -330,6 +372,19 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 		}()
 	}
 
+	// initializes an encryptor for the inputs. TODO: check if node actually needs it.
+	var cpk *rlwe.PublicKey
+	var encryptor *rlwe.Encryptor
+	var err error
+	cpk, err = s.pkBackend.GetCollectivePublicKey()
+	if err != nil {
+		return fmt.Errorf("error while loading encryption context: %w", err)
+	}
+	encryptor, err = rlwe.NewEncryptor(sess.Params, cpk)
+	if err != nil {
+		return fmt.Errorf("error while loading encryption context: %w", err)
+	}
+
 	for sig := range sigs {
 
 		sig := sig
@@ -347,9 +402,25 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 			s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Running})
 		}
 
-		localOps, err := ip(ctx, sig)
-		if err != nil {
-			return fmt.Errorf("input provider returned an error: %w", err)
+		// extracts own input labels TODO: put in circuitDesc ?
+		localInputsLabels := make(utils.Set[pkg.OperandLabel])
+		for lbl := range c.CircuitDescription().InputSet {
+			if lbl.HasHost(s.id) {
+				localInputsLabels.Add(lbl)
+			}
+		}
+
+		localOps := []pkg.Operand{}
+		for lbl := range localInputsLabels {
+			inPt, err := ip(ctx, lbl)
+			if err != nil {
+				return fmt.Errorf("input provider returned an error: %w", err)
+			}
+			ct, err := encryptor.EncryptNew(inPt)
+			if err != nil {
+				return fmt.Errorf("could not encrypt input plaintext: %w", err)
+			}
+			localOps = append(localOps, pkg.Operand{OperandLabel: lbl, Ciphertext: ct})
 		}
 
 		err = c.LocalInputs(localOps)
@@ -364,10 +435,33 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 			}
 		}()
 
+		var decryptor *rlwe.Decryptor
+		if len(c.CircuitDescription().OutputsFor[s.id]) > 0 {
+
+			sk, err := sess.GetSecretKey()
+			if err != nil {
+				return err
+			}
+			if sess.T < len(sess.Nodes) {
+				tsk, err := sess.GetThresholdSecretKey()
+				if err != nil {
+					return err
+				}
+				sk = &rlwe.SecretKey{Value: tsk.Poly}
+			}
+			decryptor, err = rlwe.NewDecryptor(sess.Params, sk)
+			if err != nil {
+				return err
+			}
+		}
+
 		for op := range c.LocalOutputs() {
-			s.Logf("got output operand %s", op.OperandLabel)
-			if out != nil {
-				out <- CircuitOutput{Signature: sig, Ops: []pkg.Operand{op}, Error: nil}
+			if len(c.CircuitDescription().OutputsFor[s.id]) > 0 {
+				s.Logf("decrypting output operand %s", op.OperandLabel)
+				ptdec := decryptor.DecryptNew(op.Ciphertext)
+				if out != nil {
+					out <- CircuitOutput{OperandLabel: op.OperandLabel, Pt: ptdec, Error: nil}
+				}
 			}
 		}
 	}
@@ -465,12 +559,8 @@ func (s *Service) ID() pkg.NodeID {
 	return s.id
 }
 
-func (s *Service) CircuitDefinition(label string) Circuit {
-	c, exists := CircuitDefs[label]
-	if !exists {
-		panic(fmt.Errorf("circuit does not exist"))
-	}
-	return c
+func (s *Service) SetPublicKeyBackend(pkbk PublicKeyBackend) { // TODO: provided at init
+	s.pkBackend = pkbk
 }
 
 type ProtocolEnvironment struct { // TODO dedup with Setup

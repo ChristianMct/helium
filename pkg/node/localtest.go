@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/objectstore"
+	"github.com/ldsec/helium/pkg/services/compute"
+	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 
@@ -38,6 +40,7 @@ type LocalTestConfig struct {
 	//DoThresholdSetup bool
 	InsecureChannels  bool // are we using (m)TLS to establish the channels between nodes?
 	ObjectStoreConfig *objectstore.Config
+	SimSetup          *setup.Description // if set, replace the pk backend for the compute service with a simulated setup backend
 }
 
 // LocalTest represent a local test setting with several nodes and a single
@@ -53,11 +56,14 @@ type LocalTest struct {
 	SkIdeal     *rlwe.SecretKey
 	NodeConfigs []Config
 	pkg.NodesList
+	compute.PublicKeyBackend
 }
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
 func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 	test = new(LocalTest)
+	memPkBackend := &compute.MemoryKeyBackend{}
+	test.PublicKeyBackend = memPkBackend
 	test.NodeConfigs, test.NodesList = genNodeConfigs(config)
 	test.Nodes = make([]*Node, config.FullNodes+config.LightNodes+config.HelperNodes+config.ExternalNodes)
 	for i, nc := range test.NodeConfigs {
@@ -90,6 +96,38 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 				panic(err)
 			}
 			test.Params.RingQP().AtLevel(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level()).Add(sk.Value, test.SkIdeal.Value, test.SkIdeal.Value)
+		}
+
+		// initialise key generation
+		if config.SimSetup != nil {
+			kg := rlwe.NewKeyGenerator(test.Params)
+			sk := test.SkIdeal
+			if config.SimSetup.Cpk != nil {
+				cpk, err := kg.GenPublicKeyNew(sk)
+				if err != nil {
+					panic(err)
+				}
+				memPkBackend.PublicKey = cpk
+			}
+			for _, gkrec := range config.SimSetup.GaloisKeys {
+				gk, err := kg.GenGaloisKeyNew(gkrec.GaloisEl, sk)
+				if err != nil {
+					panic(err)
+				}
+				memPkBackend.GaloisKeys[gk.GaloisElement] = gk
+
+			}
+			if config.SimSetup.Rlk != nil {
+				rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
+				if err != nil {
+					panic(err)
+				}
+				memPkBackend.RelinearizationKey = rlk
+			}
+
+			for _, node := range test.Nodes {
+				node.GetComputeService().SetPublicKeyBackend(memPkBackend)
+			}
 		}
 
 		// if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {

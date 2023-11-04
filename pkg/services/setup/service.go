@@ -26,7 +26,8 @@ type Service struct {
 	sessions  pkg.SessionProvider
 	transport transport.SetupServiceTransport
 
-	peers *pkg.PartySet
+	peers      *pkg.PartySet
+	aggregator pkg.NodeID
 
 	runningProtosMu sync.RWMutex
 	runningProtos   map[pkg.ProtocolID]struct {
@@ -45,13 +46,14 @@ type Service struct {
 	*drlwe.Combiner
 }
 
-func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transport.SetupServiceTransport, objStore objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownId, aggregatorId pkg.NodeID, sessions pkg.SessionProvider, trans transport.SetupServiceTransport, objStore objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
-	s.self = id
+	s.self = ownId
 	s.sessions = sessions
 
 	s.peers = pkg.NewPartySet()
+	s.aggregator = aggregatorId
 
 	s.runningProtos = make(map[pkg.ProtocolID]struct {
 		pd       protocols.Descriptor
@@ -71,13 +73,11 @@ func NewSetupService(id pkg.NodeID, sessions pkg.SessionProvider, trans transpor
 
 // Execute executes the ProtocolFetchShareTasks of s. These tasks consist in retrieving the share from each peer in the
 // protocol and aggregating the shares.
-func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
+func (s *Service) Execute(ctx context.Context, sd Description) error {
 
 	s.Logf("started Execute")
 
-	sessID := pkg.SessionID("test-session") // TODO non-hardcoded session
-
-	sess, exists := s.sessions.GetSessionFromID(sessID)
+	sess, exists := s.sessions.GetSessionFromContext(ctx)
 	if !exists {
 		panic("test session does not exist")
 	}
@@ -90,18 +90,9 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 	s.Logf("protocol results can be loaded from the object store: %s", sigListHasResult)
 	s.Logf("protocol will be executed: %s", sigListNoResult)
 
-	// set of full nodes (that might be aggregators/helpers)
-	aggregators := make(utils.Set[pkg.NodeID])
-	for _, node := range nl {
-		if node.NodeAddress != "" {
-			aggregators.Add(node.NodeID)
-		}
-	}
-
 	// 2. REGISTRATION: register for setup to the aggregator
-	ctx := pkg.NewContext(&sessID, nil)
 	outCtx := pkg.GetOutgoingContext(context.Background(), s.self)
-	protosUpdatesChan := s.registerToAggregatorsForSetup(&aggregators, outCtx)
+	protosUpdatesChan := s.registerToAggregatorsForSetup(utils.NewSingletonSet(s.aggregator), outCtx)
 
 	// split protocols updates into to run and completed.
 	protoToRun, protoCompleted := make(chan protocols.Descriptor), make(chan protocols.Descriptor)
@@ -148,7 +139,7 @@ func (s *Service) Execute(sd Description, nl pkg.NodesList) error {
 		protocols.Output
 	})
 	var allAggsDone <-chan bool
-	if aggregators.Contains(s.self) {
+	if s.aggregator == s.self {
 		allAggsDone = s.aggregate(ctx, sigListNoResult, outputs, sess)
 	} else {
 		nop := make(chan bool)
@@ -194,9 +185,9 @@ func (s *Service) filterSignatureList(sl SignatureList) (noResult, hasResult Sig
 	return
 }
 
-// registerToAggregatorsForSetup registers the caller to all the aggregator.
+// registerToAggregatorsForSetup registers the caller to all aggregators in the aggregator set of node ids.
 // Returns a channel where protocols updates are sent.
-func (s *Service) registerToAggregatorsForSetup(aggregators *utils.Set[pkg.NodeID], outCtx context.Context) <-chan protocols.StatusUpdate {
+func (s *Service) registerToAggregatorsForSetup(aggregators utils.Set[pkg.NodeID], outCtx context.Context) <-chan protocols.StatusUpdate {
 	// channel that carries protocol updates (for all protocols).
 	protosUpdatesChan := make(chan protocols.StatusUpdate)
 	var aggDone sync.WaitGroup

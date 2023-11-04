@@ -219,64 +219,64 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 	return sess, nil
 }
 
-// GetCollectivePublicKey loads the collective public key from the ObjectStore.
-func (s *Session) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
-	cpk := new(rlwe.PublicKey)
+// // GetCollectivePublicKey loads the collective public key from the ObjectStore.
+// func (s *Session) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
+// 	cpk := new(rlwe.PublicKey)
 
-	if err := s.ObjectStore.Load("CKG()", cpk); err != nil {
-		return nil, fmt.Errorf("error while loading the collective public key: %w", err)
-	}
+// 	if err := s.ObjectStore.Load("CKG()", cpk); err != nil {
+// 		return nil, fmt.Errorf("error while loading the collective public key: %w", err)
+// 	}
 
-	return cpk, nil
-}
+// 	return cpk, nil
+// }
 
-// SetCollectivePublicKey stores the collective public key into the ObjectStore.
-func (s *Session) SetCollectivePublicKey(cpk *rlwe.PublicKey) error {
-	if err := s.ObjectStore.Store("CKG()", cpk); err != nil {
-		return fmt.Errorf("error while storing the collective public key: %w", err)
-	}
+// // SetCollectivePublicKey stores the collective public key into the ObjectStore.
+// func (s *Session) SetCollectivePublicKey(cpk *rlwe.PublicKey) error {
+// 	if err := s.ObjectStore.Store("CKG()", cpk); err != nil {
+// 		return fmt.Errorf("error while storing the collective public key: %w", err)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-// GetRelinearizationKey loads the relinearization key from the ObjectStore.
-func (s *Session) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
-	rlk := new(rlwe.RelinearizationKey)
+// // GetRelinearizationKey loads the relinearization key from the ObjectStore.
+// func (s *Session) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
+// 	rlk := new(rlwe.RelinearizationKey)
 
-	if err := s.ObjectStore.Load("RKG_2()", rlk); err != nil {
-		return nil, fmt.Errorf("error while loading the relinearization key: %w", err)
-	}
+// 	if err := s.ObjectStore.Load("RKG_2()", rlk); err != nil {
+// 		return nil, fmt.Errorf("error while loading the relinearization key: %w", err)
+// 	}
 
-	return rlk, nil
-}
+// 	return rlk, nil
+// }
 
-// SetRelinearizationKey stores the relinearization key into the ObjectStore.
-func (s *Session) SetRelinearizationKey(rlk *rlwe.RelinearizationKey) error {
-	if err := s.ObjectStore.Store("RKG_2()", rlk); err != nil {
-		return fmt.Errorf("error while storing the relinearization key: %w", err)
-	}
+// // SetRelinearizationKey stores the relinearization key into the ObjectStore.
+// func (s *Session) SetRelinearizationKey(rlk *rlwe.RelinearizationKey) error {
+// 	if err := s.ObjectStore.Store("RKG_2()", rlk); err != nil {
+// 		return fmt.Errorf("error while storing the relinearization key: %w", err)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-// SetRotationKey loads the rotation key identified by the Galois element from the ObjectStore.
-func (s *Session) GetRotationKey(galEl uint64) (*rlwe.GaloisKey, error) {
-	rtk := new(rlwe.GaloisKey)
-	if err := s.ObjectStore.Load(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
-		return nil, fmt.Errorf("error while loading the rotation key with galEl %d: %w", galEl, err)
-	}
+// // SetRotationKey loads the rotation key identified by the Galois element from the ObjectStore.
+// func (s *Session) GetRotationKey(galEl uint64) (*rlwe.GaloisKey, error) {
+// 	rtk := new(rlwe.GaloisKey)
+// 	if err := s.ObjectStore.Load(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
+// 		return nil, fmt.Errorf("error while loading the rotation key with galEl %d: %w", galEl, err)
+// 	}
 
-	return rtk, nil
-}
+// 	return rtk, nil
+// }
 
-// SetRotationKey stores the rotation key identified by the Galois element into the ObjectStore.
-func (s *Session) SetRotationKey(rtk *rlwe.GaloisKey, galEl uint64) error {
-	if err := s.ObjectStore.Store(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
-		return fmt.Errorf("error while storing the rotation key with galEl %d: %w", galEl, err)
-	}
+// // SetRotationKey stores the rotation key identified by the Galois element into the ObjectStore.
+// func (s *Session) SetRotationKey(rtk *rlwe.GaloisKey, galEl uint64) error {
+// 	if err := s.ObjectStore.Store(fmt.Sprintf("RTG(GalEl=%d)", galEl), rtk); err != nil {
+// 		return fmt.Errorf("error while storing the rotation key with galEl %d: %w", galEl, err)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 func (s *Session) GetPublicKey() (*rlwe.PublicKey, error) {
 	cpk := new(rlwe.PublicKey)

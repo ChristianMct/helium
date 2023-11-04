@@ -117,6 +117,8 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				localTest.Start()
 
+				ctx := pkg.NewContext(&testConfig.Session.ID, nil)
+
 				// Start public key generation
 				t.Run("FullSetup", func(t *testing.T) {
 
@@ -124,7 +126,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 					// runs the cloud
 					g.Go(func() error {
-						errExec := clou.Execute(setup, localTest.NodesList)
+						errExec := clou.Execute(ctx, setup)
 						if errExec != nil {
 							errExec = fmt.Errorf("cloud (%s) error: %w", clou.Node.ID(), errExec)
 						}
@@ -144,7 +146,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 					for c := range online {
 						c := c
 						g.Go(func() error {
-							errExec := c.Execute(setup, localTest.NodesList)
+							errExec := c.Execute(ctx, setup)
 							if errExec != nil {
 								errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
 							}
@@ -172,7 +174,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 					for c := range delayed {
 						c := c
 						g.Go(func() error {
-							errExec := c.Execute(setup, localTest.NodesList)
+							errExec := c.Execute(ctx, setup)
 							if errExec != nil {
 								errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
 							}

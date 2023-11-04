@@ -11,6 +11,7 @@ import (
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/pkg"
 	. "github.com/ldsec/helium/pkg/services/compute"
+	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
 
@@ -274,6 +275,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
+					SimSetup: &setup.Description{Cpk: []pkg.NodeID{}, Rlk: []pkg.NodeID{}},
 				}
 
 				localtest := node.NewLocalTest(testConfig)
@@ -297,40 +299,10 @@ func TestCloudEvalCircuit(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// initialise key generation
-				kg := rlwe.NewKeyGenerator(params)
-				sk := localtest.SkIdeal
-
-				if err := clou.Session.SetSecretKey(sk.CopyNew()); err != nil {
-					t.Fatal(err)
-				}
-				pk, err := kg.GenPublicKeyNew(sk.CopyNew())
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := clou.SetCollectivePublicKey(pk); err != nil {
-					t.Fatal(err)
-				}
-				rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
-				if err := clou.SetRelinearizationKey(rlk); err != nil {
-					t.Fatal(err)
-				}
 
 				localtest.Start()
 
 				decoder := bgv.NewEncoder(bgvParams)
-
-				for i := range clients {
-					clients[i].Encoder = decoder.ShallowCopy()
-					cpk, err := clou.GetCollectivePublicKey()
-					if err != nil {
-						t.Fatal(err)
-					}
-					clients[i].Encryptor, err = bgv.NewEncryptor(bgvParams, cpk)
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
 
 				var cSigns = []circuits.Signature{
 					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-0")},
@@ -372,20 +344,17 @@ func TestCloudEvalCircuit(t *testing.T) {
 					i := i
 					g.Go(func() error {
 
-						var ip InputProvider = func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) {
+						encoder := decoder.ShallowCopy()
+
+						var ip InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
 							data := []uint64{1, 1, 1, 1, 1, 1}
 							data[i] = uint64(i + 1)
 							pt := bgv.NewPlaintext(params, params.MaxLevelQ())
-							err := client.Encoder.Encode(data, pt)
+							err := encoder.Encode(data, pt)
 							if err != nil {
 								return nil, err
 							}
-							ct, err := client.Encryptor.EncryptNew(pt)
-							if err != nil {
-								return nil, err
-							}
-							op := pkg.Operand{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.Node.ID(), s.CircuitID)), Ciphertext: ct}
-							return []pkg.Operand{op}, nil
+							return pt, nil
 						}
 
 						outLabels := utils.NewEmptySet[pkg.OperandLabel]()
@@ -405,35 +374,12 @@ func TestCloudEvalCircuit(t *testing.T) {
 									t.Errorf("unexpected error in output: %s", out.Error)
 								}
 
-								var opOut pkg.Operand
-								for _, op := range out.Ops {
-									if !outLabels.Contains(op.OperandLabel) {
-										t.Errorf("unexpected operand output: %v", op.OperandLabel)
-									}
-									outLabels.Remove(op.OperandLabel)
-									opOut = op
+								if !outLabels.Contains(out.OperandLabel) {
+									t.Errorf("unexpected operand output: %v", out.OperandLabel)
 								}
+								outLabels.Remove(out.OperandLabel)
 
-								cliSess, _ := client.GetSessionFromID(sessionID)
-								// _ = recSk
-								_ = cliSess
-								//cliSess.GetSecretKeyForGroup() // TODO the succeeding dec subset
-								sk, err := cliSess.GetSecretKey()
-								if err != nil {
-									return err
-								}
-								if ts.T < ts.N {
-									tsk, err := cliSess.GetThresholdSecretKey()
-									if err != nil {
-										return err
-									}
-									sk = &rlwe.SecretKey{Value: tsk.Poly}
-								}
-								decryptor, err := bgv.NewDecryptor(bgvParams, sk)
-								if err != nil {
-									t.Fatal(err)
-								}
-								ptdec := decryptor.DecryptNew(opOut.Ciphertext)
+								ptdec := out.Pt
 								res := make([]uint64, bgvParams.PlaintextSlots())
 								err = decoder.Decode(ptdec, res)
 								if err != nil {
@@ -447,6 +393,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 							}
 
 						}
+						client.Node.Logf("is done")
 						return nil
 					})
 				}
@@ -487,6 +434,7 @@ func TestCloudPCKS(t *testing.T) {
 						RLWEParams: literalParams,
 						T:          ts.T,
 					},
+					SimSetup: &setup.Description{Cpk: []pkg.NodeID{}, Rlk: []pkg.NodeID{}},
 				}
 
 				localtest := node.NewLocalTest(testConfig)
@@ -510,27 +458,10 @@ func TestCloudPCKS(t *testing.T) {
 
 				params := localtest.Params
 				bgvParams, _ := bgv.NewParameters(params, 65537)
-				// initialise key generation
-				kg := rlwe.NewKeyGenerator(params)
-				sk := localtest.SkIdeal
 
-				if err := clou.Session.SetSecretKey(sk.CopyNew()); err != nil {
-					t.Fatal(err)
-				}
-				pk, err := kg.GenPublicKeyNew(sk.CopyNew())
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := clou.SetCollectivePublicKey(pk); err != nil {
-					t.Fatal(err)
-				}
-				rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
-				if err := clou.SetRelinearizationKey(rlk); err != nil {
-					t.Fatal(err)
-				}
 				localtest.Start()
 
-				decoder := bgv.NewEncoder(bgvParams)
+				encoder := bgv.NewEncoder(bgvParams)
 
 				recPk, err := external_0Sess.GetPublicKey()
 				if err != nil {
@@ -544,15 +475,6 @@ func TestCloudPCKS(t *testing.T) {
 					t.Fatal(err)
 				}
 				for i := range clients {
-					clients[i].Encoder = decoder.ShallowCopy()
-					cpk, err := clou.Session.GetCollectivePublicKey()
-					if err != nil {
-						t.Fatal(err)
-					}
-					clients[i].Encryptor, err = bgv.NewEncryptor(bgvParams, cpk)
-					if err != nil {
-						t.Fatal(err)
-					}
 					cliSess, _ := clients[i].GetSessionFromID(sessionID)
 					if err = cliSess.SetOutputPkForNode("external-0", recPk); err != nil {
 						t.Fatal(err)
@@ -597,17 +519,18 @@ func TestCloudPCKS(t *testing.T) {
 					client := client
 					i := i
 					g.Go(func() error {
-						ip := func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) {
+						encoder := encoder.ShallowCopy()
+						ip := func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
 							data := make([]uint64, 6)
 							data[i] = 1
 							data[i+1] = 1
 							pt := bgv.NewPlaintext(params, params.MaxLevelQ())
-							client.Encoder.Encode(data, pt)
-							ct, err := client.Encryptor.EncryptNew(pt)
-							if err != nil {
-								t.Fatal(err)
-							}
-							return []pkg.Operand{{OperandLabel: pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", client.Node.ID(), s.CircuitID)), Ciphertext: ct}}, nil
+							encoder.Encode(data, pt)
+							// ct, err := client.Encryptor.EncryptNew(pt)
+							// if err != nil {
+							// 	t.Fatal(err)
+							// }
+							return pt, nil
 						}
 
 						errExec := client.Execute(ctx, nil, ip, nil)
@@ -631,21 +554,20 @@ func TestCloudPCKS(t *testing.T) {
 						return fmt.Errorf("Node %s: %w", external_0.ID(), err)
 					}
 
-					outputSk, err := external_0Sess.GetSecretKey()
-					if err != nil {
-						return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
+					// outputSk, err := external_0Sess.GetSecretKey()
+					// if err != nil {
+					// 	return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
 
-					}
-					decryptor, err := bgv.NewDecryptor(bgvParams, outputSk)
-					if err != nil {
-						t.Fatal(err)
-					}
+					// }
+					// decryptor, err := bgv.NewDecryptor(bgvParams, outputSk)
+					// if err != nil {
+					// 	t.Fatal(err)
+					// }
 
 					for out := range outChan {
-						ctOut := out.Ops[0].Ciphertext
-						ptdec := decryptor.DecryptNew(ctOut)
+						ptdec := out.Pt
 						res := make([]uint64, bgvParams.PlaintextSlots())
-						decoder.Decode(ptdec, res)
+						encoder.Decode(ptdec, res)
 						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, res[:6])
 					}
 					return nil

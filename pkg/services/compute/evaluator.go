@@ -43,6 +43,7 @@ type fullEvaluatorContext struct {
 
 	service *Service
 	sess    *pkg.Session
+	pkbk    PublicKeyBackend
 	params  bgv.Parameters
 	cid     pkg.CircuitID
 
@@ -55,10 +56,11 @@ type fullEvaluatorContext struct {
 }
 
 // newFullEvaluationContext creates a new full-evaluator context used by aggregators to execute a circuit.
-func (s *Service) newFullEvaluationContext(sess *pkg.Session, id pkg.CircuitID, cDef Circuit, nodeMapping map[string]pkg.NodeID) *fullEvaluatorContext {
+func (s *Service) newFullEvaluationContext(sess *pkg.Session, pkbk PublicKeyBackend, id pkg.CircuitID, cDef Circuit, nodeMapping map[string]pkg.NodeID) *fullEvaluatorContext {
 	se := new(fullEvaluatorContext)
 	se.cid = id
 	se.sess = sess
+	se.pkbk = pkbk
 	se.service = s
 
 	var err error
@@ -106,7 +108,7 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 	var err error
 	rlk := new(rlwe.RelinearizationKey)
 	if se.cDesc.NeedRlk {
-		rlk, err = se.sess.GetRelinearizationKey()
+		rlk, err = se.pkbk.GetRelinearizationKey()
 		if err != nil {
 			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
@@ -115,7 +117,7 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 	gks := make([]*rlwe.GaloisKey, 0, len(se.cDesc.GaloisKeys))
 	for galEl := range se.cDesc.GaloisKeys {
 		var err error
-		gk, err := se.sess.GetRotationKey(galEl)
+		gk, err := se.GetGaloisKey(galEl)
 		if err != nil {
 			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
