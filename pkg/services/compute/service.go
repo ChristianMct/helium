@@ -324,9 +324,15 @@ type InputProvider func(context.Context, pkg.OperandLabel) (*rlwe.Plaintext, err
 
 var NoInput InputProvider = func(_ context.Context, _ pkg.OperandLabel) (*rlwe.Plaintext, error) { return nil, nil }
 
+type OutputReceiver func(context.Context, CircuitOutput) (err error)
+
+var NoOutput OutputReceiver = func(_ context.Context, _ CircuitOutput) (err error) {
+	return fmt.Errorf("receiver should not receive any output")
+}
+
 // TODO: async execute that returns ops as they are computed
 // func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
-func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, out chan CircuitOutput) error {
+func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, or OutputReceiver) error {
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
@@ -459,15 +465,9 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 			if len(c.CircuitDescription().OutputsFor[s.id]) > 0 {
 				s.Logf("decrypting output operand %s", op.OperandLabel)
 				ptdec := decryptor.DecryptNew(op.Ciphertext)
-				if out != nil {
-					out <- CircuitOutput{OperandLabel: op.OperandLabel, Pt: ptdec, Error: nil}
-				}
+				or(ctx, CircuitOutput{OperandLabel: op.OperandLabel, Pt: ptdec, Error: nil})
 			}
 		}
-	}
-
-	if out != nil {
-		close(out)
 	}
 
 	s.transport.Close()

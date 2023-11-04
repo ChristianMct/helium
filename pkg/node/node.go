@@ -106,7 +106,7 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	return node, nil
 }
 
-func (node *Node) Run(ctx context.Context, app App, outChan chan compute.CircuitOutput) (err error) {
+func (node *Node) Run(ctx context.Context, app App) (err error) {
 	sessId, _ := pkg.SessionIDFromContext(ctx)
 	sess, exists := node.GetSessionFromID(sessId)
 	if !exists {
@@ -176,7 +176,7 @@ func (node *Node) Run(ctx context.Context, app App, outChan chan compute.Circuit
 	close(sigs)
 
 	start = time.Now()
-	err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outChan)
+	err = computeSrv.Execute(ctx, sigs, *app.InputProvider, *app.OutputReceiver)
 	if err != nil {
 		return fmt.Errorf("error during compute: %w", err)
 	}

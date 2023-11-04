@@ -58,14 +58,20 @@ func TestHelium(t *testing.T) {
 		app := App{
 			ComputeDescription: cDesc,
 			InputProvider:      &compute.NoInput,
+			OutputReceiver:     &compute.NoOutput,
 			Circuits:           testCircuits,
 		}
-		cloud.Run(ctx, app, nil)
+		cloud.Run(ctx, app)
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		cloud.Logf("Run returned")
 		return nil
 	})
+
+	resCount := 0
+	resChan := make(chan []uint64, len(cDesc))
 
 	for i, node := range clients {
 		i := i
@@ -83,34 +89,43 @@ func TestHelium(t *testing.T) {
 				return pt, nil
 			}
 
+			var or compute.OutputReceiver = func(ctx context.Context, co compute.CircuitOutput) (err error) {
+				res := make([]uint64, params.PlaintextSlots())
+				err = encoder.Decode(co.Pt, res)
+				if err != nil {
+					return err
+				}
+				resChan <- res
+				resCount++
+				if resCount == len(cDesc) {
+					close(resChan)
+				}
+				return nil
+			}
+
 			app := App{
 				ComputeDescription: cDesc,
 				InputProvider:      &ip,
+				OutputReceiver:     &or,
 				Circuits:           testCircuits,
 			}
 
-			outChan := make(chan compute.CircuitOutput, len(app.ComputeDescription))
-
-			err := node.Run(ctx, app, outChan)
+			err := node.Run(ctx, app)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			for out := range outChan {
-				res := make([]uint64, params.PlaintextSlots())
-				err = encoder.Decode(out.Pt, res)
-				if err != nil {
-					t.Fatal(err)
-				}
-				require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
-			}
-
-			node.Logf("channel closed")
+			node.Logf("Run returned")
 
 			return nil
 		})
 
 	}
+
 	g.Wait()
+
+	for res := range resChan {
+		require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
+	}
 
 }

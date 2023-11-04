@@ -10,4 +10,5 @@ type App struct {
 	ComputeDescription compute.Description
 	Circuits           map[string]compute.Circuit
 	*compute.InputProvider
+	*compute.OutputReceiver
 }
