@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/compute"
@@ -63,10 +62,10 @@ func mergeReceivers(r1, r2 []pkg.NodeID) (rOut []pkg.NodeID) {
 
 // CircuitToSetupDescription converts a CircuitDescription into a setup.Description by
 // extractiong the keys needed for the correct circuit execution.
-func CircuitToSetupDescription(cSig circuits.Signature, c compute.Circuit, params bgv.Parameters) (Description, error) {
+func CircuitToSetupDescription(c compute.Circuit, params bgv.Parameters) (Description, error) {
 	sd := Description{}
 
-	cd, err := compute.ParseCircuit(c, cSig.CircuitID, params, nil)
+	cd, err := compute.ParseCircuit(c, "dummy-cid", params, nil)
 	if err != nil {
 		return Description{}, err
 	}

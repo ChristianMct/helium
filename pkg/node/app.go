@@ -6,9 +6,7 @@ import (
 )
 
 type App struct {
-	SetupDescription   *setup.Description
-	ComputeDescription compute.Description
-	Circuits           map[string]compute.Circuit
+	SetupDescription *setup.Description
+	Circuits         map[string]compute.Circuit
 	*compute.InputProvider
-	*compute.OutputReceiver
 }

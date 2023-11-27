@@ -1,6 +1,7 @@
 package node
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/ldsec/helium/pkg/circuits"
@@ -10,7 +11,6 @@ import (
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
-	"golang.org/x/sync/errgroup"
 )
 
 func failIfNonNil(t *testing.T, err error) {
@@ -52,79 +52,70 @@ func TestHelium(t *testing.T) {
 
 	ctx := pkg.NewContext(&sessParams.ID, nil)
 
-	g := new(errgroup.Group)
+	app := App{
+		InputProvider: &compute.NoInput,
+		Circuits:      TestCircuits,
+	}
+	sigs, _, err := cloud.Run(ctx, app)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	g.Go(func() error {
-		app := App{
-			ComputeDescription: cDesc,
-			InputProvider:      &compute.NoInput,
-			OutputReceiver:     &compute.NoOutput,
-			Circuits:           testCircuits,
+	outs := make(chan compute.CircuitOutput)
+	wg := new(sync.WaitGroup)
+	wg.Add(len(clients))
+	for i, node := range clients {
+		i := i
+		node := node
+		var ip compute.InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
+			encoder := bgv.NewEncoder(params)
+			data := []uint64{1, 1, 1, 1, 1, 1}
+			data[i] = uint64(i + 1)
+			pt := bgv.NewPlaintext(params, params.MaxLevelQ())
+			err := encoder.Encode(data, pt)
+			if err != nil {
+				return nil, err
+			}
+			return pt, nil
 		}
-		cloud.Run(ctx, app)
+
+		app := App{
+			InputProvider: &ip,
+			Circuits:      TestCircuits,
+		}
+
+		_, outi, err := node.Run(ctx, app)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		cloud.Logf("Run returned")
-		return nil
-	})
-
-	resCount := 0
-	resChan := make(chan []uint64, len(cDesc))
-
-	for i, node := range clients {
-		i := i
-		node := node
-		encoder := bgv.NewEncoder(params)
-		g.Go(func() error {
-			var ip compute.InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
-				data := []uint64{1, 1, 1, 1, 1, 1}
-				data[i] = uint64(i + 1)
-				pt := bgv.NewPlaintext(params, params.MaxLevelQ())
-				err := encoder.Encode(data, pt)
-				if err != nil {
-					return nil, err
-				}
-				return pt, nil
+		// sends all results back to the main test goroutine
+		go func() {
+			for co := range outi {
+				//<-time.After(time.Second)
+				outs <- co
 			}
-
-			var or compute.OutputReceiver = func(ctx context.Context, co compute.CircuitOutput) (err error) {
-				res := make([]uint64, params.PlaintextSlots())
-				err = encoder.Decode(co.Pt, res)
-				if err != nil {
-					return err
-				}
-				resChan <- res
-				resCount++
-				if resCount == len(cDesc) {
-					close(resChan)
-				}
-				return nil
-			}
-
-			app := App{
-				ComputeDescription: cDesc,
-				InputProvider:      &ip,
-				OutputReceiver:     &or,
-				Circuits:           testCircuits,
-			}
-
-			err := node.Run(ctx, app)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			node.Logf("Run returned")
-
-			return nil
-		})
-
+			node.Logf("is done")
+			wg.Done()
+		}()
 	}
 
-	g.Wait()
+	go func() {
+		for _, cd := range cDesc {
+			sigs <- cd
+		}
+		close(sigs)
+		wg.Wait()
+		close(outs)
+	}()
 
-	for res := range resChan {
+	encoder := bgv.NewEncoder(params)
+	for co := range outs {
+		res := make([]uint64, params.PlaintextSlots())
+		err = encoder.Decode(co.Pt, res)
+		if err != nil {
+			t.Fatal(err)
+		}
 		require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
 	}
 

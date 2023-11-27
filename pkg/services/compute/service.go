@@ -23,6 +23,8 @@ import (
 var CircuitDefsLock sync.RWMutex
 var CircuitDefs = map[string]Circuit{}
 
+const parallelExecutions int = 10
+
 type Service struct {
 	id pkg.NodeID
 
@@ -324,15 +326,9 @@ type InputProvider func(context.Context, pkg.OperandLabel) (*rlwe.Plaintext, err
 
 var NoInput InputProvider = func(_ context.Context, _ pkg.OperandLabel) (*rlwe.Plaintext, error) { return nil, nil }
 
-type OutputReceiver func(context.Context, CircuitOutput) (err error)
-
-var NoOutput OutputReceiver = func(_ context.Context, _ CircuitOutput) (err error) {
-	return fmt.Errorf("receiver should not receive any output")
-}
-
 // TODO: async execute that returns ops as they are computed
 // func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
-func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, or OutputReceiver) error {
+func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, outs chan CircuitOutput) error {
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
@@ -386,89 +382,105 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 	if err != nil {
 		return fmt.Errorf("error while loading encryption context: %w", err)
 	}
+
 	encryptor, err = rlwe.NewEncryptor(sess.Params, cpk)
 	if err != nil {
 		return fmt.Errorf("error while loading encryption context: %w", err)
 	}
 
-	for sig := range sigs {
-
-		sig := sig
-		cid := sig.CircuitID
-		ctx = pkg.AppendCircuitID(ctx, cid)
-
-		s.Logf("processing signature %s", sig)
-
-		c, err := s.LoadCircuit(ctx, sig)
+	var sk *rlwe.SecretKey
+	var decryptor *rlwe.Decryptor
+	if sess.Contains(s.id) {
+		sk, err = sess.GetSecretKey()
 		if err != nil {
-			return fmt.Errorf("could not load circuit: %w", err)
+			return err
 		}
-
-		if s.IsEvaluator() {
-			s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Running})
-		}
-
-		// extracts own input labels TODO: put in circuitDesc ?
-		localInputsLabels := make(utils.Set[pkg.OperandLabel])
-		for lbl := range c.CircuitDescription().InputSet {
-			if lbl.HasHost(s.id) {
-				localInputsLabels.Add(lbl)
-			}
-		}
-
-		localOps := []pkg.Operand{}
-		for lbl := range localInputsLabels {
-			inPt, err := ip(ctx, lbl)
-			if err != nil {
-				return fmt.Errorf("input provider returned an error: %w", err)
-			}
-			ct, err := encryptor.EncryptNew(inPt)
-			if err != nil {
-				return fmt.Errorf("could not encrypt input plaintext: %w", err)
-			}
-			localOps = append(localOps, pkg.Operand{OperandLabel: lbl, Ciphertext: ct})
-		}
-
-		err = c.LocalInputs(localOps)
-		if err != nil {
-			return fmt.Errorf("bad input to circuit: %w", err)
-		}
-
-		// starts the evaluation routine
-		go func() {
-			if errExec := c.Execute(ctx); errExec != nil {
-				panic(errExec)
-			}
-		}()
-
-		var decryptor *rlwe.Decryptor
-		if len(c.CircuitDescription().OutputsFor[s.id]) > 0 {
-
-			sk, err := sess.GetSecretKey()
+		if sess.T < len(sess.Nodes) {
+			tsk, err := sess.GetThresholdSecretKey()
 			if err != nil {
 				return err
 			}
-			if sess.T < len(sess.Nodes) {
-				tsk, err := sess.GetThresholdSecretKey()
-				if err != nil {
-					return err
-				}
-				sk = &rlwe.SecretKey{Value: tsk.Poly}
-			}
-			decryptor, err = rlwe.NewDecryptor(sess.Params, sk)
-			if err != nil {
-				return err
-			}
-		}
-
-		for op := range c.LocalOutputs() {
-			if len(c.CircuitDescription().OutputsFor[s.id]) > 0 {
-				s.Logf("decrypting output operand %s", op.OperandLabel)
-				ptdec := decryptor.DecryptNew(op.Ciphertext)
-				or(ctx, CircuitOutput{OperandLabel: op.OperandLabel, Pt: ptdec, Error: nil})
-			}
+			sk = &rlwe.SecretKey{Value: tsk.Poly}
 		}
 	}
+
+	wg := new(sync.WaitGroup)
+	for w := 0; w < parallelExecutions; w++ {
+		wg.Add(1)
+		w := w
+		go func() {
+			defer wg.Done()
+
+			encryptor := encryptor.ShallowCopy()
+			if sk != nil { // TODO: use ShallowCopy when fixed on lattigo side
+				decryptor, err = rlwe.NewDecryptor(sess.Params, sk)
+				if err != nil {
+					panic(err)
+				}
+			}
+
+			for sig := range sigs {
+
+				sig := sig
+				cid := sig.CircuitID
+				ctx = pkg.AppendCircuitID(ctx, cid)
+
+				s.Logf("processing signature %s on goroutine %d", sig, w)
+
+				c, err := s.LoadCircuit(ctx, sig)
+				if err != nil {
+					panic(fmt.Errorf("could not load circuit: %w", err))
+				}
+
+				if s.IsEvaluator() {
+					s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Running})
+				}
+
+				// extracts own input labels TODO: put in circuitDesc ?
+				localInputsLabels := make(utils.Set[pkg.OperandLabel])
+				for lbl := range c.CircuitDescription().InputSet {
+					if lbl.HasHost(s.id) {
+						localInputsLabels.Add(lbl)
+					}
+				}
+
+				localOps := []pkg.Operand{}
+				for lbl := range localInputsLabels {
+					inPt, err := ip(ctx, lbl)
+					if err != nil {
+						panic(fmt.Errorf("input provider returned an error: %w", err))
+					}
+					ct, err := encryptor.EncryptNew(inPt)
+					if err != nil {
+						panic(fmt.Errorf("could not encrypt input plaintext: %w", err))
+					}
+					localOps = append(localOps, pkg.Operand{OperandLabel: lbl, Ciphertext: ct})
+				}
+
+				err = c.LocalInputs(localOps)
+				if err != nil {
+					panic(fmt.Errorf("bad input to circuit: %w", err))
+				}
+
+				// starts the evaluation routine
+				go func() {
+					if errExec := c.Execute(ctx); errExec != nil {
+						panic(errExec)
+					}
+				}()
+
+				for op := range c.LocalOutputs() {
+					if len(c.CircuitDescription().OutputsFor[s.id]) > 0 {
+						s.Logf("decrypting output operand %s", op.OperandLabel)
+						ptdec := decryptor.DecryptNew(op.Ciphertext)
+						outs <- CircuitOutput{OperandLabel: op.OperandLabel, Pt: ptdec, Error: nil}
+					}
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 
 	s.transport.Close()
 

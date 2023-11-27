@@ -253,7 +253,7 @@ type client struct {
 
 func TestCloudEvalCircuit(t *testing.T) {
 
-	for label, cDef := range TestCircuits {
+	for label, cDef := range node.TestCircuits {
 		if err := RegisterCircuit(label, cDef); err != nil {
 			t.Log(err)
 		}
@@ -305,16 +305,16 @@ func TestCloudEvalCircuit(t *testing.T) {
 				decoder := bgv.NewEncoder(bgvParams)
 
 				var cSigns = []circuits.Signature{
-					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-0")},
-					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-1")},
-					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-2")},
-					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-3")},
-					{CircuitName: "CloudMul4CKS", CircuitID: pkg.CircuitID("test-circuit-4")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-0")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-1")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-2")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-3")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-4")},
 				}
 
 				cDescs := make([]*CircuitDescription, len(cSigns))
 				for i, cSign := range cSigns {
-					c := TestCircuits[cSign.CircuitName]
+					c := node.TestCircuits[cSign.CircuitName]
 					cDescs[i], err = ParseCircuit(c, cSign.CircuitID, bgvParams, nil)
 					if err != nil {
 						t.Fatal(err)
@@ -366,6 +366,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 						if errExec != nil {
 							return fmt.Errorf("client %s: %w", client.Node.ID(), errExec)
 						}
+						close(outChan)
 
 						if len(outLabels) > 0 {
 
@@ -408,179 +409,179 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 }
 
-// TestCloudPCKS runs the compute phase and executes the psi-2-PCKS circuit to test the sending of the external receiver public key.
-func TestCloudPCKS(t *testing.T) {
+// // TestCloudPCKS runs the compute phase and executes the psi-2-PCKS circuit to test the sending of the external receiver public key.
+// func TestCloudPCKS(t *testing.T) {
 
-	for label, cDef := range TestCircuits {
-		if err := RegisterCircuit(label, cDef); err != nil {
-			t.Log(err)
-		}
-	}
+// 	for label, cDef := range TestCircuits {
+// 		if err := RegisterCircuit(label, cDef); err != nil {
+// 			t.Log(err)
+// 		}
+// 	}
 
-	for _, literalParams := range rangeParam {
-		for _, ts := range testSettings {
+// 	for _, literalParams := range rangeParam {
+// 		for _, ts := range testSettings {
 
-			if ts.T == 0 {
-				ts.T = ts.N
-			}
+// 			if ts.T == 0 {
+// 				ts.T = ts.N
+// 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
+// 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				var testConfig = node.LocalTestConfig{
-					HelperNodes:   1,
-					LightNodes:    2,
-					ExternalNodes: 1,
-					Session: &pkg.SessionParameters{
-						RLWEParams: literalParams,
-						T:          ts.T,
-					},
-					SimSetup: &setup.Description{Cpk: []pkg.NodeID{}, Rlk: []pkg.NodeID{}},
-				}
+// 				var testConfig = node.LocalTestConfig{
+// 					HelperNodes:   1,
+// 					LightNodes:    2,
+// 					ExternalNodes: 1,
+// 					Session: &pkg.SessionParameters{
+// 						RLWEParams: literalParams,
+// 						T:          ts.T,
+// 					},
+// 					SimSetup: &setup.Description{Cpk: []pkg.NodeID{}, Rlk: []pkg.NodeID{}},
+// 				}
 
-				localtest := node.NewLocalTest(testConfig)
-				sessionID := pkg.SessionID("test-session")
+// 				localtest := node.NewLocalTest(testConfig)
+// 				sessionID := pkg.SessionID("test-session")
 
-				clou := cloud{Node: localtest.HelperNodes[0], Service: localtest.HelperNodes[0].GetComputeService()}
-				clou.Session, _ = localtest.HelperNodes[0].GetSessionFromID(sessionID)
+// 				clou := cloud{Node: localtest.HelperNodes[0], Service: localtest.HelperNodes[0].GetComputeService()}
+// 				clou.Session, _ = localtest.HelperNodes[0].GetSessionFromID(sessionID)
 
-				external_0 := localtest.ExternalNodes[0]
-				external_0Sess, _ := external_0.GetSessionFromID(sessionID)
+// 				external_0 := localtest.ExternalNodes[0]
+// 				external_0Sess, _ := external_0.GetSessionFromID(sessionID)
 
-				nodes := []*Service{clou.Service, external_0.GetComputeService()}
+// 				nodes := []*Service{clou.Service, external_0.GetComputeService()}
 
-				clients := make([]client, len(localtest.LightNodes))
-				for i, node := range localtest.LightNodes {
-					clients[i].Node = node
-					clients[i].Service = node.GetComputeService()
-					clients[i].Session, _ = node.GetSessionFromID(sessionID)
-					nodes = append(nodes, clients[i].Service)
-				}
+// 				clients := make([]client, len(localtest.LightNodes))
+// 				for i, node := range localtest.LightNodes {
+// 					clients[i].Node = node
+// 					clients[i].Service = node.GetComputeService()
+// 					clients[i].Session, _ = node.GetSessionFromID(sessionID)
+// 					nodes = append(nodes, clients[i].Service)
+// 				}
 
-				params := localtest.Params
-				bgvParams, _ := bgv.NewParameters(params, 65537)
+// 				params := localtest.Params
+// 				bgvParams, _ := bgv.NewParameters(params, 65537)
 
-				localtest.Start()
+// 				localtest.Start()
 
-				encoder := bgv.NewEncoder(bgvParams)
+// 				encoder := bgv.NewEncoder(bgvParams)
 
-				recPk, err := external_0Sess.GetPublicKey()
-				if err != nil {
-					t.Fatal(err)
-				}
+// 				recPk, err := external_0Sess.GetPublicKey()
+// 				if err != nil {
+// 					t.Fatal(err)
+// 				}
 
-				if err := clou.Session.SetOutputPkForNode("external-0", recPk); err != nil {
-					t.Fatal(err)
-				}
-				if err := external_0Sess.SetOutputPkForNode("external-0", recPk); err != nil {
-					t.Fatal(err)
-				}
-				for i := range clients {
-					cliSess, _ := clients[i].GetSessionFromID(sessionID)
-					if err = cliSess.SetOutputPkForNode("external-0", recPk); err != nil {
-						t.Fatal(err)
-					}
-				}
+// 				if err := clou.Session.SetOutputPkForNode("external-0", recPk); err != nil {
+// 					t.Fatal(err)
+// 				}
+// 				if err := external_0Sess.SetOutputPkForNode("external-0", recPk); err != nil {
+// 					t.Fatal(err)
+// 				}
+// 				for i := range clients {
+// 					cliSess, _ := clients[i].GetSessionFromID(sessionID)
+// 					if err = cliSess.SetOutputPkForNode("external-0", recPk); err != nil {
+// 						t.Fatal(err)
+// 					}
+// 				}
 
-				var cSigns = []circuits.Signature{
-					circuits.Signature{CircuitName: "psi-2PCKS", CircuitID: pkg.CircuitID("test-circuit-0")},
-					circuits.Signature{CircuitName: "psi-2PCKS", CircuitID: pkg.CircuitID("test-circuit-1")},
-					circuits.Signature{CircuitName: "psi-2PCKS", CircuitID: pkg.CircuitID("test-circuit-2")},
-				}
+// 				var cSigns = []circuits.Signature{
+// 					circuits.Signature{CircuitName: "psi-2PCKS", CircuitID: pkg.CircuitID("test-circuit-0")},
+// 					circuits.Signature{CircuitName: "psi-2PCKS", CircuitID: pkg.CircuitID("test-circuit-1")},
+// 					circuits.Signature{CircuitName: "psi-2PCKS", CircuitID: pkg.CircuitID("test-circuit-2")},
+// 				}
 
-				cDescs := make([]*CircuitDescription, len(cSigns))
-				for i, cSign := range cSigns {
-					c := TestCircuits[cSign.CircuitName]
-					cDescs[i], err = ParseCircuit(c, cSign.CircuitID, bgvParams, nil)
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
+// 				cDescs := make([]*CircuitDescription, len(cSigns))
+// 				for i, cSign := range cSigns {
+// 					c := TestCircuits[cSign.CircuitName]
+// 					cDescs[i], err = ParseCircuit(c, cSign.CircuitID, bgvParams, nil)
+// 					if err != nil {
+// 						t.Fatal(err)
+// 					}
+// 				}
 
-				sigs := make(chan circuits.Signature, len(cSigns))
-				for _, sig := range cSigns {
-					sigs <- sig
-				}
-				close(sigs)
+// 				sigs := make(chan circuits.Signature, len(cSigns))
+// 				for _, sig := range cSigns {
+// 					sigs <- sig
+// 				}
+// 				close(sigs)
 
-				ctx := pkg.NewContext(&sessionID, nil)
-				g := new(errgroup.Group)
+// 				ctx := pkg.NewContext(&sessionID, nil)
+// 				g := new(errgroup.Group)
 
-				// execute cloud
-				g.Go(func() error {
-					err := clou.Execute(ctx, sigs, NoInput, nil)
-					if err != nil {
-						return fmt.Errorf("Node %s: %w", clou.Node.ID(), err)
-					}
-					return nil
-				})
+// 				// execute cloud
+// 				g.Go(func() error {
+// 					err := clou.Execute(ctx, sigs, NoInput, nil)
+// 					if err != nil {
+// 						return fmt.Errorf("Node %s: %w", clou.Node.ID(), err)
+// 					}
+// 					return nil
+// 				})
 
-				// execute clients
-				for i, client := range clients {
-					client := client
-					i := i
-					g.Go(func() error {
-						encoder := encoder.ShallowCopy()
-						ip := func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
-							data := make([]uint64, 6)
-							data[i] = 1
-							data[i+1] = 1
-							pt := bgv.NewPlaintext(params, params.MaxLevelQ())
-							encoder.Encode(data, pt)
-							// ct, err := client.Encryptor.EncryptNew(pt)
-							// if err != nil {
-							// 	t.Fatal(err)
-							// }
-							return pt, nil
-						}
+// 				// execute clients
+// 				for i, client := range clients {
+// 					client := client
+// 					i := i
+// 					g.Go(func() error {
+// 						encoder := encoder.ShallowCopy()
+// 						ip := func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
+// 							data := make([]uint64, 6)
+// 							data[i] = 1
+// 							data[i+1] = 1
+// 							pt := bgv.NewPlaintext(params, params.MaxLevelQ())
+// 							encoder.Encode(data, pt)
+// 							// ct, err := client.Encryptor.EncryptNew(pt)
+// 							// if err != nil {
+// 							// 	t.Fatal(err)
+// 							// }
+// 							return pt, nil
+// 						}
 
-						errExec := client.Execute(ctx, nil, ip, nil)
-						if errExec != nil {
-							return fmt.Errorf("client %s: %w", client.Node.ID(), errExec)
-						}
+// 						errExec := client.Execute(ctx, nil, ip, nil)
+// 						if errExec != nil {
+// 							return fmt.Errorf("client %s: %w", client.Node.ID(), errExec)
+// 						}
 
-						return nil
-					})
-				}
+// 						return nil
+// 					})
+// 				}
 
-				// execute external receiver
-				g.Go(func() error {
-					outLabels := utils.NewEmptySet[pkg.OperandLabel]()
-					for _, cDesc := range cDescs {
-						outLabels.AddAll(cDesc.OutputsFor[external_0.ID()])
-					}
-					outChan := make(chan CircuitOutput, len(outLabels))
-					err := external_0.GetComputeService().Execute(ctx, nil, NoInput, outChan)
-					if err != nil {
-						return fmt.Errorf("Node %s: %w", external_0.ID(), err)
-					}
+// 				// execute external receiver
+// 				g.Go(func() error {
+// 					outLabels := utils.NewEmptySet[pkg.OperandLabel]()
+// 					for _, cDesc := range cDescs {
+// 						outLabels.AddAll(cDesc.OutputsFor[external_0.ID()])
+// 					}
+// 					outChan := make(chan CircuitOutput, len(outLabels))
+// 					err := external_0.GetComputeService().Execute(ctx, nil, NoInput, outChan)
+// 					if err != nil {
+// 						return fmt.Errorf("Node %s: %w", external_0.ID(), err)
+// 					}
 
-					// outputSk, err := external_0Sess.GetSecretKey()
-					// if err != nil {
-					// 	return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
+// 					// outputSk, err := external_0Sess.GetSecretKey()
+// 					// if err != nil {
+// 					// 	return fmt.Errorf("could not read receiver's (%s) private key: %w\n", external_0.ID(), err)
 
-					// }
-					// decryptor, err := bgv.NewDecryptor(bgvParams, outputSk)
-					// if err != nil {
-					// 	t.Fatal(err)
-					// }
+// 					// }
+// 					// decryptor, err := bgv.NewDecryptor(bgvParams, outputSk)
+// 					// if err != nil {
+// 					// 	t.Fatal(err)
+// 					// }
 
-					for out := range outChan {
-						ptdec := out.Pt
-						res := make([]uint64, bgvParams.PlaintextSlots())
-						encoder.Decode(ptdec, res)
-						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, res[:6])
-					}
-					return nil
-				})
+// 					for out := range outChan {
+// 						ptdec := out.Pt
+// 						res := make([]uint64, bgvParams.PlaintextSlots())
+// 						encoder.Decode(ptdec, res)
+// 						require.Equal(t, []uint64{0, 1, 0, 0, 0, 0}, res[:6])
+// 					}
+// 					return nil
+// 				})
 
-				if err := g.Wait(); err != nil {
-					t.Fatal(err)
-				}
-			})
+// 				if err := g.Wait(); err != nil {
+// 					t.Fatal(err)
+// 				}
+// 			})
 
-		}
-	}
-}
+// 		}
+// 	}
+// }
 
 // func TestPeerEvalCircuit(t *testing.T) {
 

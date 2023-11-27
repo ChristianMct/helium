@@ -13,8 +13,8 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
-// testCircuits is a map mapping a circuitID string to each circuit function.
-var testCircuits = map[string]compute.Circuit{
+// TestCircuits is a map mapping a circuitID string to each circuit function.
+var TestCircuits = map[string]compute.Circuit{
 	"identity-1": func(ec compute.EvaluationContext) error {
 		opIn := ec.Input("//node-0/in-0")
 

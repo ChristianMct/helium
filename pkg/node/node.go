@@ -16,7 +16,6 @@ import (
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
-	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -106,84 +105,71 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	return node, nil
 }
 
-func (node *Node) Run(ctx context.Context, app App) (err error) {
+func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
 	sessId, _ := pkg.SessionIDFromContext(ctx)
 	sess, exists := node.GetSessionFromID(sessId)
 	if !exists {
-		return fmt.Errorf("session `%s` was not created", sessId)
+		return nil, nil, fmt.Errorf("session `%s` was not created", sessId)
 	}
 	N := len(sess.Nodes)
 	T := sess.T
 
 	params, err := bgv.NewParameters(*sess.Params, 65537)
 	if err != nil {
-		return fmt.Errorf("cannot instantiate cryptographic parameters: %w", err)
+		return nil, nil, fmt.Errorf("cannot instantiate cryptographic parameters: %w", err)
 	}
 
 	for cName, circuit := range app.Circuits {
 		compute.RegisterCircuit(cName, circuit)
 	}
 
-	// creates a setup.Description from the config and provided compute.Description
+	// creates a setup.Description from the config and provided circuits
 	var setupDesc setup.Description
 	if app.SetupDescription != nil {
 		setupDesc = setup.MergeSetupDescriptions(setupDesc, *app.SetupDescription)
 	}
-	for _, cs := range app.ComputeDescription {
-		c, exists := compute.CircuitDefinition(cs.CircuitName)
-		if !exists {
-			return fmt.Errorf("error while converting circuit to setup description: circuit does not exist")
-		}
+	for _, cs := range app.Circuits {
 		// infer setup description
-		compSd, err := setup.CircuitToSetupDescription(cs, c, params)
+		compSd, err := setup.CircuitToSetupDescription(cs, params)
 		if err != nil {
-			return fmt.Errorf("error while converting circuit to setup description: %w", err)
+			return nil, nil, fmt.Errorf("error while converting circuit to setup description: %w", err)
 		}
 		// adds the circuit's required eval keys to the app's setup description
 		setupDesc = setup.MergeSetupDescriptions(setupDesc, compSd)
 	}
 
-	outputSet := make(utils.Set[pkg.OperandLabel])
-	for _, cs := range app.ComputeDescription {
-		c, exists := compute.CircuitDefinition(cs.CircuitName)
-		if !exists {
-			return fmt.Errorf("error while parsing circuit: circuit does not exist")
-		}
-		cd, err := compute.ParseCircuit(c, cs.CircuitID, params, nil)
-		if !exists {
-			return fmt.Errorf("error while parsing circuit: %w", err)
-		}
-		outputSet.AddAll(cd.OutputsFor[node.id])
-	}
-	node.Logf("expecting outputs: %s", outputSet)
-
 	setupSrv, computeSrv := node.GetSetupService(), node.GetComputeService()
 
+	setupDone := make(chan struct{})
 	// executes the setup phase
-	start := time.Now()
-	err = setupSrv.Execute(ctx, setupDesc)
-	if err != nil {
-		return fmt.Errorf("error during setup: %w", err)
-	}
-	elapsed := time.Since(start)
-	node.OutputStats("setup", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+	go func() {
+		start := time.Now()
+		err = setupSrv.Execute(ctx, setupDesc)
+		if err != nil {
+			panic(fmt.Errorf("error during setup: %w", err))
+		}
+		elapsed := time.Since(start)
+		node.OutputStats("setup", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+		close(setupDone)
+	}()
 
-	//executes the compute phase
-	sigs := make(chan circuits.Signature, len(app.ComputeDescription))
-	for _, cs := range app.ComputeDescription {
-		sigs <- cs
-	}
-	close(sigs)
+	sigs = make(chan circuits.Signature)
+	outs = make(chan compute.CircuitOutput)
 
-	start = time.Now()
-	err = computeSrv.Execute(ctx, sigs, *app.InputProvider, *app.OutputReceiver)
-	if err != nil {
-		return fmt.Errorf("error during compute: %w", err)
-	}
-	elapsed = time.Since(start)
-	node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+	go func() {
+		<-setupDone
+		start := time.Now()
+		err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outs)
+		if err != nil {
+			panic(fmt.Errorf("error during compute: %w", err)) // TODO return error somehow
+		}
+		elapsed := time.Since(start)
+		close(outs)
+		node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
 
-	return nil
+	}()
+
+	return sigs, outs, nil
 }
 
 func (node *Node) GetTransport() transport.Transport {
