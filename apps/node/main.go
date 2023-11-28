@@ -2,16 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 	"strconv"
-	"strings"
-	"syscall"
-	"time"
 
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
@@ -21,7 +16,6 @@ import (
 
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/services/compute"
-	"github.com/ldsec/helium/pkg/services/setup"
 )
 
 const DefaultAddress = ""
@@ -32,20 +26,18 @@ var (
 	nodeList         = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
 	insecureChannels = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
 	tlsdir           = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
-	outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
-	docompute        = flag.Bool("docompute", true, "executes the compute phase")
-	setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
-	computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
-	keepRunning      = flag.Bool("keepRunning", false, "keeps the node running until system SIGINT or SIGTERM")
+	// outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
+	// docompute        = flag.Bool("docompute", true, "executes the compute phase")
+	// setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
+	// computeFile      = flag.String("compute", "/helium/config/compute.json", "the compute description file")
+	// keepRunning      = flag.Bool("keepRunning", false, "keeps the node running until system SIGINT or SIGTERM")
 )
 
-type App struct {
-	nc   node.Config
-	nl   pkg.NodesList
-	sd   setup.Description
-	cd   compute.Description
-	node *node.Node
-	sess *pkg.Session
+type Config struct {
+	nc node.Config
+	nl pkg.NodesList
+	// sd setup.Description
+	// cd compute.Description
 }
 
 // main is the entrypoint of the node application.
@@ -54,344 +46,175 @@ func main() {
 
 	flag.Parse()
 
-	// app holds all data relative to the node execution.
-	app := App{}
+	conf := Config{}
 
 	var err error
-	if err = utils.UnmarshalFromFile(*configFile, &app.nc); err != nil {
+	if err = utils.UnmarshalFromFile(*configFile, &conf.nc); err != nil {
 		log.Println("could not read config:", err)
 		os.Exit(1)
 	}
 
-	if *addr != DefaultAddress || app.nc.Address == "" {
+	if *addr != DefaultAddress || conf.nc.Address == "" {
 		// CLI addr overrides config address
-		app.nc.Address = pkg.NodeAddress(*addr)
+		conf.nc.Address = pkg.NodeAddress(*addr)
 	}
 
 	if *insecureChannels {
-		app.nc.TLSConfig.InsecureChannels = *insecureChannels
+		conf.nc.TLSConfig.InsecureChannels = *insecureChannels
 	}
 
 	if *tlsdir != "" {
-		app.nc.TLSConfig.FromDirectory = *tlsdir
+		conf.nc.TLSConfig.FromDirectory = *tlsdir
 	}
 
-	if err = utils.UnmarshalFromFile(*nodeList, &app.nl); err != nil {
+	// TODO assumes single-session nodes
+	if len(conf.nc.SessionParameters) != 1 {
+		panic("multi-session nodes not implemented")
+	}
+
+	if err = utils.UnmarshalFromFile(*nodeList, &conf.nl); err != nil {
 		log.Println("could not read nodelist:", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("%+v\n", app.nc)
+	fmt.Printf("%+v\n", conf.nc)
+	conf.nc.SessionParameters[0].RLWEParams.NTTFlag = true
+	rlweParams, err := rlwe.NewParametersFromLiteral(conf.nc.SessionParameters[0].RLWEParams)
+	if err != nil {
+		panic(err)
+	}
+	params, err := bgv.NewParameters(rlweParams, 65537)
+	if err != nil {
+		panic(err)
+	}
 
-	app.node, err = node.NewNode(app.nc, app.nl)
+	encoder := bgv.NewEncoder(params) // TODO pass encoder in ip ?
+
+	app := node.App{
+		Circuits: map[string]compute.Circuit{
+			"mul4-dec": mul4Dec,
+		},
+		InputProvider: getInputProvider(params, encoder),
+	}
+
+	node, err := node.NewNode(conf.nc, conf.nl)
 	if err != nil {
 		log.Println(err)
 		os.Exit(1)
 	}
+
 	defer func() {
-		err := app.node.Close()
+		err := node.Close()
 		if err != nil {
 			panic(err)
 		}
 	}()
 
-	// TODO assumes single-session nodes
-	if len(app.nc.SessionParameters) != 1 {
-		panic("multi-session nodes not implemented")
-	}
-
-	sessionID := pkg.SessionID(app.nc.SessionParameters[0].ID)
-	var exists bool
-	app.sess, exists = app.node.GetSessionFromID(sessionID)
-	if !exists {
-		panic(fmt.Errorf("No session found for ID: %s", sessionID))
-	}
-
-	// parse setup description
-	if err = utils.UnmarshalFromFile(*setupFile, &app.sd); err != nil {
-		log.Printf("could not read setup description file: %s\n", err)
-		os.Exit(1)
-	}
-
-	var cloudID pkg.NodeID
-	var cSigns []circuits.Signature
-	var ctx context.Context
-	var computeService *compute.Service
-	if *docompute {
-		// parse compute description
-		if err = utils.UnmarshalFromFile(*computeFile, &app.cd); err != nil {
-			log.Printf("could not read compute description file: %s\n", err)
-			os.Exit(1)
-		}
-
-		// Register and load circuit.
-		// The cloud is defined as the first node of the nodelist.
-		// We need to load the circuit before the cloud goes online so that clients do not query for unexpected ciphertexts.
-		app.registerCircuits()
-		cloudID = app.nl[0].NodeID
-		cSigns = []circuits.Signature{
-			circuits.Signature{CircuitName: app.cd.CircuitName, CircuitID: pkg.CircuitID("test-circuit-0")},
-		}
-		ctx = pkg.NewContext(&app.sess.ID, nil)
-		computeService = app.node.GetComputeService()
-
-		for _, cs := range cSigns {
-			bgvParams, err := bgv.NewParameters(*app.sess.Params, 65537)
-			if err != nil {
-				panic(err)
-			}
-			// infer setup description
-			compSd, err := setup.CircuitToSetupDescription(cs, computeService.CircuitDefinition(cs.CircuitName), bgvParams)
-			if err != nil {
-				panic(err)
-			}
-			// adds the circuit's required eval keys to the app's setup description
-			app.sd = setup.MergeSetupDescriptions(app.sd, compSd)
-		}
-
-	}
-
-	log.Printf("%s | connecting...\n", app.nc.ID)
-	if errConn := app.node.Connect(); errConn != nil {
-		panic(errConn)
-	}
-
-	// SETUP
-	app.setupPhase()
-
-	// COMPUTE
-	if *docompute {
-		app.computePhase(cloudID, ctx, cSigns)
-	}
-
-	// keeps the node running until SIGINT or SIGTERM
-	if *keepRunning {
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-		<-sigs
-	}
-	<-time.After(time.Second)
-	log.Printf("%s | exiting.", app.nc.ID)
-}
-
-// setupPhase executes the setup phase of Helium.
-func (a *App) setupPhase() {
-	start := time.Now()
-	err := a.node.GetSetupService().Execute(a.sd, a.nl)
-	if err != nil {
-		log.Printf("Node %s | SetupService.Execute() returned an error: %s", a.nc.ID, err)
-	}
-	elapsed := time.Since(start)
-	a.outputStats(a.cd.CircuitName, "setup", elapsed)
-}
-
-// computePhase executes the computational phase of Helium.
-func (a *App) computePhase(cloudID pkg.NodeID, ctx context.Context, cSigns []circuits.Signature) {
-	bgvParams, err := bgv.NewParameters(*a.sess.Params, 65537)
+	err = node.Connect()
 	if err != nil {
 		panic(err)
 	}
 
-	cpk, err := a.node.GetSetupService().GetCollectivePublicKey()
+	sessId := pkg.SessionID("test-session")
+	ctx := pkg.NewContext(&sessId, nil)
+
+	sigs, outs, err := node.Run(ctx, app)
 	if err != nil {
 		panic(err)
 	}
 
-	encoder := bgv.NewEncoder(bgvParams)
-
-	var sigs chan circuits.Signature
-	var outs chan compute.CircuitOutput
-	var inputProvider compute.InputProvider
-	// craft input for session nodes
-	if utils.NewSet(a.sess.Nodes).Contains(a.node.ID()) {
-		inputProvider = func(ctx context.Context, s circuits.Signature) ([]pkg.Operand, error) {
-			switch s.CircuitName {
-			case "psi-2", "psi-4", "psi-8", "psi-2-PCKS":
-				return a.getClientOperandsPSI(bgvParams, cpk, encoder, s.CircuitID), nil
-			case "pir-3", "pir-5", "pir-9":
-				return a.getClientOperandsPIR(bgvParams, cpk, encoder, s.CircuitID), nil
-			default:
-				return nil, fmt.Errorf("unknown circuit name: %s", s.CircuitName)
-			}
-		}
-		outs = make(chan compute.CircuitOutput, 1)
-	} else {
-		inputProvider = compute.NoInput
+	if conf.nc.ID == "cloud" {
+		sigs <- circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-1"}
+		//close(sigs)
 	}
 
-	if a.node.ID() == cloudID {
-		sigs = make(chan circuits.Signature, len(cSigns))
-		for _, s := range cSigns {
-			sigs <- s
-		}
-		close(sigs)
-	}
-
-	computeService := a.node.GetComputeService()
-	// execute
-	start := time.Now()
-	err = computeService.Execute(ctx, sigs, inputProvider, outs)
-	if err != nil {
-		panic(fmt.Errorf("[Compute] Client ComputeService.Execute() returned an error: %w", err))
-	}
-	elapsed := time.Since(start)
-	a.outputStats(a.cd.CircuitName, "compute", elapsed)
-
-	// retrieve output
-	if outs == nil {
-		log.Println("No output channel to read from")
-		return
-	}
 	out, has := <-outs
-	if !has {
-		log.Println("No output returned")
-		return
-	}
-	log.Printf("[Compute] Got encrypted output: %v", out.Ops[0].OperandLabel)
-
-	var outputSk *rlwe.SecretKey
-
-	externalReceivers := make(utils.Set[pkg.NodeID])
-	for _, externalReceiver := range a.sd.Pk {
-		externalReceivers.Add(externalReceiver.Sender)
+	if has {
+		res := make([]uint64, params.PlaintextSlots())
+		encoder.Decode(out.Pt, res)
+		fmt.Println(res[:6])
 	}
 
-	if externalReceivers.Contains(a.node.ID()) {
-		outputSk, err = a.sess.GetSecretKey()
-		if err != nil {
-			panic(err)
-		}
-	} else {
-		sessSk, err := a.sess.GetSecretKey()
-		if err != nil {
-			log.Printf("error while decrypting output: the session secret key is not present.\n", a.node.ID())
-			return
-		}
-		if a.sess.T < len(a.sess.Nodes) {
-			tsk, err := a.sess.GetThresholdSecretKey()
-			if err != nil {
-				log.Printf("error while decrypting output: the threshold secret key is not present.\n", a.node.ID())
-				return
-			}
-			sessSk = &rlwe.SecretKey{Value: tsk.Poly}
-		}
-		outputSk = sessSk
-	}
-
-	decryptor, err := bgv.NewDecryptor(bgvParams, outputSk)
-	if err != nil {
-		panic(err)
-	}
-	outputPt := decryptor.DecryptNew(out.Ops[0].Ciphertext)
-	output := make([]uint64, bgvParams.PlaintextSlots())
-	encoder.Decode(outputPt, output)
-
-	log.Printf("[Compute] Retrieved output: %v\n", output[:8])
+	log.Printf("%s | exiting.", conf.nc.ID)
 }
 
-// getClientOperandsPSI returns the operands that this client node will input into the PSI computation.
-func (a *App) getClientOperandsPSI(bgvParams bgv.Parameters, cpk *rlwe.PublicKey, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
-	ops := []pkg.Operand{}
-
-	encryptor, err := bgv.NewEncryptor(bgvParams, cpk)
-	if err != nil {
-		panic(err)
-	}
-
-	// craft input
-	inData := [8]uint64{1, 1, 1, 1, 1, 1, 1, 1}
-	val, err := strconv.Atoi(strings.Split(string(a.node.ID()), "-")[1])
-	if err != nil {
-		panic(err)
-	}
-	inData[val] = uint64(val)
-	inPt := bgv.NewPlaintext(bgvParams, bgvParams.MaxLevelQ())
-	encoder.Encode(inData[:], inPt)
-	inCt, err := encryptor.EncryptNew(inPt)
-	if err != nil {
-		panic(err)
-	}
-
-	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
-	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
-
-	return ops
-}
-
-// getClientOperandsPIR returns the operands that this client node will input into the PIR computation.
-func (a *App) getClientOperandsPIR(bgvParams bgv.Parameters, cpk *rlwe.PublicKey, encoder *bgv.Encoder, cLabel pkg.CircuitID) []pkg.Operand {
-	ops := []pkg.Operand{}
-
-	encryptor, err := bgv.NewEncryptor(bgvParams, cpk)
-	if err != nil {
-		panic(err)
-	}
-
-	// craft input
-	inData := make([]uint64, bgvParams.N())
-
-	reqFromNode := 2
-
-	if a.node.ID() == "node-0" {
-		inData[reqFromNode] = 1
-	} else {
-		val, err := strconv.Atoi(strings.Split(string(a.node.ID()), "-")[1])
+func getInputProvider(params bgv.Parameters, encoder *bgv.Encoder) *compute.InputProvider {
+	ip := func(ctx context.Context, ol pkg.OperandLabel) (*rlwe.Plaintext, error) {
+		url, err := pkg.ParseURL(string(ol))
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
-		for i := range inData {
-			inData[i] = uint64(val)
+
+		if url.NodeID() == "cloud" {
+			return nil, nil
 		}
-	}
-	inPt := bgv.NewPlaintext(bgvParams, bgvParams.MaxLevelQ())
-	err = encoder.Encode(inData[:], inPt)
-	if err != nil {
-		panic(err)
-	}
 
-	inCt, err := encryptor.EncryptNew(inPt)
-	if err != nil {
-		panic(err)
-	}
-
-	opLabel := pkg.OperandLabel(fmt.Sprintf("//%s/%s/in-0", a.node.ID(), cLabel))
-	ops = append(ops, pkg.Operand{OperandLabel: opLabel, Ciphertext: inCt})
-
-	return ops
-}
-
-// registerCircuits registers some predefined circuits in the global state of the compute service.
-func (a *App) registerCircuits() {
-	for label, cDef := range testCircuits {
-		if err := compute.RegisterCircuit(label, cDef); err != nil {
-			panic(err)
+		var pt *rlwe.Plaintext
+		switch url.CircuitID() {
+		case "test-circuit-1":
+			data := []uint64{1, 1, 1, 1, 1, 1}
+			pt = bgv.NewPlaintext(params, params.MaxLevelQ())
+			err = encoder.Encode(data, pt)
+		default:
+			err = fmt.Errorf("unexpected input: %s", ol)
 		}
-	}
-}
 
-// outputStats outputs the total network usage and time take to execute a protocol phase.
-func (a *App) outputStats(circuit, phase string, elapsed time.Duration) {
-	log.Println("==============", phase, "phase ==============")
-	log.Printf("%s | execute returned after %s", a.nc.ID, elapsed)
-	log.Printf("%s | network stats: %s\n", a.nc.ID, a.node.GetTransport().GetNetworkStats())
-
-	if *outputMetrics {
-		var statsJSON []byte
-		statsJSON, err := json.MarshalIndent(map[string]string{
-			"Wall":    fmt.Sprint(elapsed),
-			"Sent":    fmt.Sprint(a.node.GetTransport().GetNetworkStats().DataSent),
-			"Recvt":   fmt.Sprint(a.node.GetTransport().GetNetworkStats().DataRecv),
-			"N":       fmt.Sprint(len(a.sess.Nodes)),
-			"T":       fmt.Sprint(a.nc.SessionParameters[0].T),
-			"ID":      fmt.Sprint(a.nc.ID),
-			"Circuit": circuit,
-			"Phase":   phase,
-		}, "", "\t")
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
-		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s-%s-%s.json", circuit, phase, a.nc.ID), statsJSON, 0600); errWrite != nil {
-			log.Println(errWrite)
-		}
+		return pt, nil
 	}
+	return (*compute.InputProvider)(&ip)
+}
+
+func mul4Dec(e compute.EvaluationContext) error {
+
+	inputs := make(chan pkg.Operand, 4)
+	inOpls := utils.NewSet([]pkg.OperandLabel{"//node-0/in-0", "//node-1/in-0", "//node-2/in-0", "//node-3/in-0"})
+	for inOpl := range inOpls {
+		inOpl := inOpl
+		go func() {
+			inputs <- e.Input(inOpl)
+		}()
+	}
+
+	op0 := <-inputs
+	op1 := <-inputs
+
+	lvl2 := make(chan *rlwe.Ciphertext, 2)
+	go func() {
+		ev := e.NewEvaluator()
+		res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
+		ev.Relinearize(res, res)
+		lvl2 <- res
+	}()
+
+	op2 := <-inputs
+	op3 := <-inputs
+
+	go func() {
+		ev := e.NewEvaluator()
+		res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
+		ev.Relinearize(res, res)
+		lvl2 <- res
+	}()
+
+	res1, res2 := <-lvl2, <-lvl2
+	res, _ := e.MulNew(res1, res2)
+	e.Relinearize(res, res)
+
+	params := e.Parameters().Parameters
+	opres := pkg.Operand{OperandLabel: "//cloud/res-0", Ciphertext: res}
+	opout, err := e.DEC(opres, map[string]string{
+		"target":   "node-0",
+		"lvl":      strconv.Itoa(params.MaxLevel()),
+		"smudging": "1.0",
+	})
+	if err != nil {
+		return err
+	}
+
+	e.Output(opout, "node-0")
+
+	return nil
 }

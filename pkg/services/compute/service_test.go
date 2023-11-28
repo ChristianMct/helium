@@ -344,9 +344,8 @@ func TestCloudEvalCircuit(t *testing.T) {
 					i := i
 					g.Go(func() error {
 
-						encoder := decoder.ShallowCopy()
-
 						var ip InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
+							encoder := decoder.ShallowCopy()
 							data := []uint64{1, 1, 1, 1, 1, 1}
 							data[i] = uint64(i + 1)
 							pt := bgv.NewPlaintext(params, params.MaxLevelQ())

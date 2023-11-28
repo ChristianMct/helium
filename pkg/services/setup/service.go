@@ -615,7 +615,7 @@ func (s *Service) Unregister(peer pkg.NodeID) error {
 		s.Logf("error when unregistering peer %s for compute: %s", peer, err)
 		return err
 	}
-	s.Logf("compute unregistered peer %v", peer)
+	s.Logf("setup unregistered peer %v", peer)
 	return nil // TODO: Implement
 }
 
