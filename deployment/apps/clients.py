@@ -31,7 +31,7 @@ offline = nodes.copy()
 
 # changes the command command with the egress traffic shaper.
 for node in nodes:
-    conf.services[node].command = ["./shape_egress_traffic.sh"]
+    conf.services[node].command = ["./shape_egress_traffic_and_start.sh"]
 
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
