@@ -41,6 +41,14 @@ services:
       - ./nodelist.json:/helium/config/nodelist.json
     profiles: ["all", "clients"]
 
+  node-3:
+    image: heliummpc/helium:latest
+    container_name: node-3
+    volumes:
+      - ../node-3.json:/helium/config/node.json
+      - ./nodelist.json:/helium/config/nodelist.json
+    profiles: ["all", "clients"]
+
 # volumes:
   # cloud-data:
   # node-a-data:
