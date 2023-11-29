@@ -193,7 +193,11 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 		return fmt.Errorf("client must specify node id for stream")
 	}
 	t.mPeers.Lock()
-	peer := t.peers[peerID]
+	peer, has := t.peers[peerID]
+	if !has {
+		t.mPeers.Unlock()
+		return fmt.Errorf("unexpected peer id: %s", peerID)
+	}
 	peer.connected = true
 	peer.protoUpdateStream = stream
 	peer.protoUpdateStreamDone = make(chan bool)

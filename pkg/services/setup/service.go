@@ -462,6 +462,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 
 				if pd.Signature.Type == protocols.RKG_1 {
 					currRlkShare = aggOut.Share
+					s.Logf("starting RKG round 2")
 					pdAggs <- protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_2}, Participants: pd.Participants, Aggregator: s.self}
 				}
 
