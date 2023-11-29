@@ -38,7 +38,8 @@ type Service struct {
 
 	peers *pkg.PartySet
 
-	circuits map[pkg.CircuitID]CircuitInstance
+	runningCircuitsMu sync.RWMutex
+	circuits          map[pkg.CircuitID]CircuitInstance
 
 	// TODO Extract ProtocolRunner
 	runningProtosMu sync.RWMutex
@@ -146,9 +147,11 @@ func (s *Service) LoadCircuit(ctx context.Context, sig circuits.Signature) (Circ
 
 	cid := sig.CircuitID
 
+	s.runningCircuitsMu.RLock()
 	if _, exist := s.circuits[cid]; exist {
 		return nil, fmt.Errorf("circuit with label %s already exists", cid)
 	}
+	s.runningCircuitsMu.RUnlock()
 
 	sess, exist := s.sessions.GetSessionFromContext(ctx)
 	if !exist {
@@ -167,7 +170,9 @@ func (s *Service) LoadCircuit(ctx context.Context, sig circuits.Signature) (Circ
 		ci = s.newDelegatedEvaluatorContext(s.evaluatorID, sess, cid, cDef)
 	}
 
+	s.runningCircuitsMu.Lock()
 	s.circuits[cid] = ci
+	s.runningCircuitsMu.Unlock()
 
 	return ci, nil
 }
@@ -521,7 +526,9 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 	var ct *pkg.Ciphertext
 
 	if ctURL.CircuitID() != "" { // ctid belongs to a circuit
+		s.runningCircuitsMu.RLock()
 		evalCtx, envExists := s.circuits[ctURL.CircuitID()]
+		s.runningCircuitsMu.RUnlock()
 		if !envExists {
 			return nil, fmt.Errorf("ciphertext with id %s not found for circuit %s", ctID, ctURL.CircuitID())
 		}
@@ -549,8 +556,9 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 	// checks if input is sent for a circuit
 	cid := ctURL.CircuitID()
 	if cid != "" {
-
+		s.runningCircuitsMu.RLock()
 		c, envExists := s.circuits[cid]
+		s.runningCircuitsMu.RUnlock()
 		if !envExists {
 			return fmt.Errorf("for unknown circuit %s", cid)
 		}
