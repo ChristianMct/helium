@@ -3,7 +3,7 @@ services:
   cloud:
     image: heliummpc/helium:latest
     container_name: cloud
-    command: -expDuration 20s
+    command: -expDuration 10s
     volumes:
       - ../cloud.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
