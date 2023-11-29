@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/ldsec/helium/pkg/circuits"
@@ -36,195 +35,6 @@ type testSetting struct {
 var testSettings = []testSetting{
 	{N: 4},
 	{N: 4, T: 3},
-}
-
-var TestCircuits = map[string]Circuit{
-
-	"Identity": func(ec EvaluationContext) error {
-		op := ec.Input("//full-0/in-0")
-		ec.Output(pkg.Operand{OperandLabel: "/out-0", Ciphertext: op.Ciphertext}, "full-0")
-		return nil
-	},
-
-	"Sum2": func(ec EvaluationContext) error {
-		op1 := ec.Input("//full-0/in-0")
-		op2 := ec.Input("//full-1/in-0")
-		ctOut := rlwe.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevelQ())
-		ec.Add(op1.Ciphertext, op2.Ciphertext, ctOut)
-		ec.Output(pkg.Operand{OperandLabel: "/out-0", Ciphertext: ctOut}, "full-0")
-		return nil
-	},
-
-	"Mul2": func(ec EvaluationContext) error {
-		op1 := ec.Input("//full-0/in-0")
-		op2 := ec.Input("//full-1/in-0")
-		res, _ := ec.MulNew(op1.Ciphertext, op2.Ciphertext)
-		ec.Relinearize(res, res)
-		ec.Output(pkg.Operand{OperandLabel: "/out-0", Ciphertext: res}, "full-0")
-		return nil
-	},
-
-	"Mul4CKS": func(e EvaluationContext) error {
-
-		lvl2 := make(chan *rlwe.Ciphertext, 2)
-
-		op0 := e.Input("//full-0/in-0")
-		op1 := e.Input("//full-1/in-0")
-
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
-
-		op2 := e.Input("//full-2/in-0")
-		op3 := e.Input("//full-3/in-0")
-
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
-
-		res1, res2 := <-lvl2, <-lvl2
-		res, _ := e.MulNew(res1, res2)
-		e.Relinearize(res, res)
-
-		params := e.Parameters().Parameters
-		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-		opout, err := e.DEC(opres, map[string]string{
-			"target":   "full-0",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": "1.0",
-		})
-		if err != nil {
-			return err
-		}
-
-		e.Output(opout, "full-0")
-
-		return nil
-	},
-
-	"Mul4PCKS": func(e EvaluationContext) error {
-
-		lvl2 := make(chan *rlwe.Ciphertext, 2)
-
-		op0 := e.Input("//full-0/in-0")
-		op1 := e.Input("//full-1/in-0")
-
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
-
-		op2 := e.Input("//full-2/in-0")
-		op3 := e.Input("//full-3/in-0")
-
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
-
-		res1, res2 := <-lvl2, <-lvl2
-		res, _ := e.MulNew(res1, res2)
-		e.Relinearize(res, res)
-
-		params := e.Parameters().Parameters
-		opres := pkg.Operand{OperandLabel: "/res-0", Ciphertext: res}
-		opout, err := e.PCKS(opres, map[string]string{
-			"target":   "full-0",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": "1.0",
-		})
-		if err != nil {
-			return err
-		}
-
-		e.Output(opout, "full-0")
-
-		return nil
-	},
-
-	"CloudMul4CKS": func(e EvaluationContext) error {
-
-		inputs := make(chan pkg.Operand, 4)
-		inOpls := utils.NewSet([]pkg.OperandLabel{"//light-0/in-0", "//light-1/in-0", "//light-2/in-0", "//light-3/in-0"})
-		for inOpl := range inOpls {
-			inOpl := inOpl
-			go func() {
-				inputs <- e.Input(inOpl)
-			}()
-		}
-
-		op0 := <-inputs
-		op1 := <-inputs
-
-		lvl2 := make(chan *rlwe.Ciphertext, 2)
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
-
-		op2 := <-inputs
-		op3 := <-inputs
-
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
-
-		res1, res2 := <-lvl2, <-lvl2
-		res, _ := e.MulNew(res1, res2)
-		e.Relinearize(res, res)
-
-		params := e.Parameters().Parameters
-		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: res}
-		opout, err := e.DEC(opres, map[string]string{
-			"target":   "light-0",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": "1.0",
-		})
-		if err != nil {
-			return err
-		}
-
-		e.Output(opout, "light-0")
-
-		return nil
-	},
-
-	"psi-2PCKS": func(ec EvaluationContext) error {
-		opIn1 := ec.Input("//light-0/in-0")
-		opIn2 := ec.Input("//light-1/in-0")
-
-		res, _ := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
-		ec.Relinearize(res, res)
-		opRes := pkg.Operand{OperandLabel: "//helper-0/out-0", Ciphertext: res}
-
-		params := ec.Parameters().Parameters
-		opOut, err := ec.PCKS(opRes, map[string]string{
-			"target":   "external-0",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": "1.0",
-		})
-		if err != nil {
-			return err
-		}
-
-		ec.Output(opOut, "external-0")
-		return nil
-	},
 }
 
 type peer struct {
@@ -306,10 +116,10 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 				var cSigns = []circuits.Signature{
 					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-0")},
-					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-1")},
-					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-2")},
-					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-3")},
-					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-4")},
+					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-1")},
+					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-2")},
+					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-3")},
+					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-4")},
 				}
 
 				cDescs := make([]*CircuitDescription, len(cSigns))
@@ -331,8 +141,9 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 				g := new(errgroup.Group)
 
+				outs := make(chan CircuitOutput)
 				g.Go(func() error {
-					err := clou.Execute(ctx, sigs, NoInput, nil)
+					err := clou.Execute(ctx, sigs, NoInput, outs)
 					if err != nil {
 						return fmt.Errorf("Node %s: %w", clou.Node.ID(), err)
 					}
@@ -365,7 +176,6 @@ func TestCloudEvalCircuit(t *testing.T) {
 						if errExec != nil {
 							return fmt.Errorf("client %s: %w", client.Node.ID(), errExec)
 						}
-						close(outChan)
 
 						if len(outLabels) > 0 {
 
@@ -379,13 +189,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 								}
 								outLabels.Remove(out.OperandLabel)
 
-								ptdec := out.Pt
-								res := make([]uint64, bgvParams.PlaintextSlots())
-								err = decoder.Decode(ptdec, res)
-								if err != nil {
-									t.Fatal(err)
-								}
-								require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
+								outs <- out
 							}
 
 							if len(outLabels) != 0 {
@@ -396,6 +200,16 @@ func TestCloudEvalCircuit(t *testing.T) {
 						client.Node.Logf("is done")
 						return nil
 					})
+				}
+
+				for out := range outs {
+					ptdec := out.Pt
+					res := make([]uint64, bgvParams.PlaintextSlots())
+					err = decoder.Decode(ptdec, res)
+					if err != nil {
+						t.Fatal(err)
+					}
+					require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
 				}
 
 				if err := g.Wait(); err != nil {

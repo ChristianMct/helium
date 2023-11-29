@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
@@ -26,6 +28,7 @@ var (
 	nodeList         = flag.String("nodes", "/helium/config/nodelist.json", "the node list file")
 	insecureChannels = flag.Bool("insecureChannels", false, "run the MPC over unauthenticated channels")
 	tlsdir           = flag.String("tlsdir", "", "a directory with the required TLS cryptographic material")
+	expDuration      = flag.Duration("expDuration", 10*time.Second, "the duration of the experiment, see time.ParseDuration for valid input formats.")
 	// outputMetrics    = flag.Bool("outputMetrics", false, "outputs metrics to a file")
 	// docompute        = flag.Bool("docompute", true, "executes the compute phase")
 	// setupFile        = flag.String("setup", "/helium/config/setup.json", "the setup description file")
@@ -88,13 +91,15 @@ func main() {
 		panic(err)
 	}
 
+	nParty := len(conf.nc.SessionParameters[0].Nodes)
+
 	encoder := bgv.NewEncoder(params) // TODO pass encoder in ip ?
 
 	app := node.App{
 		Circuits: map[string]compute.Circuit{
 			"mul4-dec": mul4Dec,
 		},
-		InputProvider: getInputProvider(params, encoder),
+		InputProvider: getInputProvider(conf.nc.ID, nParty, params, encoder),
 	}
 
 	node, err := node.NewNode(conf.nc, conf.nl)
@@ -123,23 +128,38 @@ func main() {
 		panic(err)
 	}
 
+	start := time.Now()
+	var nSig int
 	if conf.nc.ID == "cloud" {
-		sigs <- circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-1"}
-		//close(sigs)
+		go func() {
+			for i := 0; time.Since(start) < *expDuration; i++ {
+				sigs <- circuits.Signature{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID(fmt.Sprintf("test-circuit-%d", i))}
+				nSig++
+			}
+			close(sigs)
+		}()
 	}
 
-	out, has := <-outs
-	if has {
+	var nRes int
+	for out := range outs {
 		res := make([]uint64, params.PlaintextSlots())
 		encoder.Decode(out.Pt, res)
-		fmt.Println(res[:6])
+		res = res[:nParty]
+		checkResultCorrect(out.OperandLabel, res)
+		node.Logf("got correct result for %s: %v", out.OperandLabel, res)
+		nRes++
 	}
 
-	log.Printf("%s | exiting.", conf.nc.ID)
+	if conf.nc.ID == "cloud" {
+		node.Logf("Processed %d/%d signatures in %s", nSig, nRes, time.Since(start))
+	}
+	node.Logf("exiting.")
 }
 
-func getInputProvider(params bgv.Parameters, encoder *bgv.Encoder) *compute.InputProvider {
+func getInputProvider(nodeId pkg.NodeID, nParty int, params bgv.Parameters, encoder *bgv.Encoder) *compute.InputProvider {
+
 	ip := func(ctx context.Context, ol pkg.OperandLabel) (*rlwe.Plaintext, error) {
+		encoder := encoder.ShallowCopy()
 		url, err := pkg.ParseURL(string(ol))
 		if err != nil {
 			return nil, err
@@ -149,15 +169,28 @@ func getInputProvider(params bgv.Parameters, encoder *bgv.Encoder) *compute.Inpu
 			return nil, nil
 		}
 
-		var pt *rlwe.Plaintext
-		switch url.CircuitID() {
-		case "test-circuit-1":
-			data := []uint64{1, 1, 1, 1, 1, 1}
-			pt = bgv.NewPlaintext(params, params.MaxLevelQ())
-			err = encoder.Encode(data, pt)
-		default:
-			err = fmt.Errorf("unexpected input: %s", ol)
+		nodeNum, err := strconv.Atoi(strings.TrimPrefix(string(nodeId), "node-"))
+		if err != nil {
+			panic(err)
 		}
+
+		val, err := strconv.Atoi(strings.TrimPrefix(string(url.CircuitID()), "test-circuit-"))
+		if err != nil {
+			return nil, err
+		}
+
+		var pt *rlwe.Plaintext
+		data := make([]uint64, nParty, nParty)
+		for i := range data {
+			if i == nodeNum {
+				data[i] = uint64(val)
+			} else {
+				data[i] = 1
+			}
+		}
+
+		pt = bgv.NewPlaintext(params, params.MaxLevelQ())
+		err = encoder.Encode(data, pt)
 
 		if err != nil {
 			return nil, err
@@ -206,7 +239,7 @@ func mul4Dec(e compute.EvaluationContext) error {
 	params := e.Parameters().Parameters
 	opres := pkg.Operand{OperandLabel: "//cloud/res-0", Ciphertext: res}
 	opout, err := e.DEC(opres, map[string]string{
-		"target":   "node-0",
+		"target":   "cloud",
 		"lvl":      strconv.Itoa(params.MaxLevel()),
 		"smudging": "1.0",
 	})
@@ -214,7 +247,24 @@ func mul4Dec(e compute.EvaluationContext) error {
 		return err
 	}
 
-	e.Output(opout, "node-0")
+	e.Output(opout, "cloud")
 
 	return nil
+}
+
+func checkResultCorrect(opl pkg.OperandLabel, res []uint64) {
+	url, err := pkg.ParseURL(string(opl))
+	if err != nil {
+		panic(err)
+	}
+	val, err := strconv.Atoi(strings.TrimPrefix(string(url.CircuitID()), "test-circuit-"))
+	if err != nil {
+		panic(err)
+	}
+
+	for _, v := range res {
+		if v != uint64(val) {
+			panic(fmt.Errorf("incorrect result for %s: %s", opl, res))
+		}
+	}
 }

@@ -56,12 +56,12 @@ func TestHelium(t *testing.T) {
 		InputProvider: &compute.NoInput,
 		Circuits:      TestCircuits,
 	}
-	sigs, _, err := cloud.Run(ctx, app)
+	sigs, outs, err := cloud.Run(ctx, app)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	outs := make(chan compute.CircuitOutput)
+	//outs := make(chan compute.CircuitOutput)
 	wg := new(sync.WaitGroup)
 	wg.Add(len(clients))
 	for i, node := range clients {
@@ -106,7 +106,6 @@ func TestHelium(t *testing.T) {
 		}
 		close(sigs)
 		wg.Wait()
-		close(outs)
 	}()
 
 	encoder := bgv.NewEncoder(params)

@@ -112,7 +112,7 @@ var TestCircuits = map[string]compute.Circuit{
 		params := e.Parameters().Parameters
 		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: res}
 		opout, err := e.DEC(opres, map[string]string{
-			"target":   "light-0",
+			"target":   "helper-0",
 			"lvl":      strconv.Itoa(params.MaxLevel()),
 			"smudging": "1.0",
 		})
@@ -120,7 +120,7 @@ var TestCircuits = map[string]compute.Circuit{
 			return err
 		}
 
-		e.Output(opout, "light-0")
+		e.Output(opout, "helper-0")
 
 		return nil
 	},

@@ -248,7 +248,7 @@ func (t *computeTransport) RegisterForComputeAt(ctx context.Context, peerID pkg.
 			if errRcv != nil {
 				close(descStream)
 				if !errors.Is(errRcv, io.EOF) {
-					panic(errRcv)
+					fmt.Printf("error on server connection: %+v\n", errRcv) // TODO: transport logging
 				}
 				return
 			}

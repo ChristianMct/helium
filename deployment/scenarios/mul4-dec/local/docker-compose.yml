@@ -2,6 +2,7 @@ version: '3.0'
 services:
   cloud:
     image: heliummpc/helium:latest
+    command: -expDuration 20s
     container_name: cloud
     volumes:
       - ../cloud.json:/helium/config/node.json

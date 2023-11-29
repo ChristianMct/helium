@@ -274,9 +274,8 @@ func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in 
 		}})
 
 	outCt := (<-ksInt.Output(agg)).Result.(*rlwe.Ciphertext)
-	if protoDesc.Signature.Type == protocols.DEC && sess.T < len(sess.Nodes) {
-
-		target := pkg.NodeID(protoDesc.Signature.Args["target"])
+	target := pkg.NodeID(protoDesc.Signature.Args["target"])
+	if protoDesc.Signature.Type == protocols.DEC && sess.T < len(sess.Nodes) && sess.Contains(target) {
 
 		lagrangeCoeff := s.getLagrangeCoeff(sess, target, protoDesc.Participants)
 		ringQP := &ringqp.Ring{RingQ: sess.Params.RingQ()}
@@ -471,9 +470,16 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 
 				for op := range c.LocalOutputs() {
 					if len(c.CircuitDescription().OutputsFor[s.id]) > 0 {
-						s.Logf("decrypting output operand %s", op.OperandLabel)
-						ptdec := decryptor.DecryptNew(op.Ciphertext)
-						outs <- CircuitOutput{OperandLabel: op.OperandLabel, Pt: ptdec, Error: nil}
+						if sess.Contains(s.id) {
+							s.Logf("decrypting output operand %s", op.OperandLabel)
+							ptdec := decryptor.DecryptNew(op.Ciphertext)
+							outs <- CircuitOutput{OperandLabel: op.OperandLabel, Pt: ptdec, Error: nil}
+						} else {
+							s.Logf("got output operand %s", op.OperandLabel)
+							pt := &rlwe.Plaintext{Operand: op.Operand, Value: op.Operand.Value[0]}
+							outs <- CircuitOutput{OperandLabel: op.OperandLabel, Pt: pt, Error: nil}
+						}
+
 					}
 				}
 			}
@@ -481,6 +487,8 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 	}
 
 	wg.Wait()
+
+	close(outs)
 
 	s.transport.Close()
 
