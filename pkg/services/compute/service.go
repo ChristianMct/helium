@@ -52,40 +52,6 @@ type Service struct {
 	incomingPdesc   map[string]chan protocols.Descriptor
 }
 
-type PublicKeyBackend interface {
-	GetCollectivePublicKey() (*rlwe.PublicKey, error)
-	GetGaloisKey(galEl uint64) (*rlwe.GaloisKey, error)
-	GetRelinearizationKey() (*rlwe.RelinearizationKey, error)
-}
-
-type MemoryKeyBackend struct {
-	*rlwe.PublicKey
-	GaloisKeys map[uint64]*rlwe.GaloisKey
-	*rlwe.RelinearizationKey
-}
-
-func (pkb *MemoryKeyBackend) GetCollectivePublicKey() (cpk *rlwe.PublicKey, err error) {
-	if pkb.PublicKey == nil {
-		err = fmt.Errorf("no collective public key registered in this backend")
-	}
-	return pkb.PublicKey, err
-}
-
-func (pkb *MemoryKeyBackend) GetGaloisKey(galEl uint64) (gk *rlwe.GaloisKey, err error) {
-	var has bool
-	if gk, has = pkb.GaloisKeys[galEl]; !has {
-		err = fmt.Errorf("no public galois key registered in this backend")
-	}
-	return gk, err
-}
-
-func (pkb *MemoryKeyBackend) GetRelinearizationKey() (rlk *rlwe.RelinearizationKey, err error) {
-	if pkb.RelinearizationKey == nil {
-		err = fmt.Errorf("no public relinearization key registered in this backend")
-	}
-	return pkb.RelinearizationKey, err
-}
-
 func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport, pkBackend PublicKeyBackend) (s *Service, err error) {
 	s = new(Service)
 
@@ -95,7 +61,8 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 
 	s.sessions = sessions
 	s.transport = trans
-	s.pkBackend = pkBackend
+
+	s.pkBackend = NewCachedPublicKeyBackend(pkBackend)
 
 	s.peers = pkg.NewPartySet()
 
