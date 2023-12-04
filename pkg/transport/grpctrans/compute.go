@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+const peerCircuitUpdateQueueSize = 100
+
 type computeTransport struct {
 	*Transport
 	*ShareTransport
@@ -139,6 +141,16 @@ func (env *computeTransport) PutCiphertext(ctx context.Context, nodeID pkg.NodeI
 	return nil
 }
 
+func SendUpdate(cu circuits.Update, stream api.ComputeService_RegisterForComputeServer) error {
+
+	apiCU := &api.ComputeUpdate{ComputeSignature: &api.ComputeSignature{CircuitName: cu.CircuitName, CircuitID: string(cu.CircuitID)}, ComputeStatus: api.ComputeStatus(cu.Status)}
+	if cu.StatusUpdate != nil {
+		apiDesc := getAPIProtocolDesc(&cu.StatusUpdate.Descriptor)
+		apiCU.ProtocolUpdate = &api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(cu.StatusUpdate.Status)}
+	}
+	return stream.Send(apiCU)
+}
+
 func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeService_RegisterForComputeServer) error {
 	peerID := pkg.SenderIDFromIncomingContext(stream.Context())
 	if peerID == "" {
@@ -152,34 +164,38 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 
 	peer := t.peers[peerID]
 
+	peerCircuitUpdateQueue := make(chan circuits.Update, peerCircuitUpdateQueueSize)
+
 	t.mCircuitUpdates.RLock() // locks the updates while populating the past message queue
 	present := len(t.circuitUpdates)
-	peer.circuitUpdateQueue = make(chan circuits.Update, present)
+	peer.circuitUpdateQueue = peerCircuitUpdateQueue
 	for _, cu := range t.circuitUpdates {
-		peer.circuitUpdateQueue <- cu
+		peerCircuitUpdateQueue <- cu
 	}
 	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 	t.mPeers.Lock() // updates the peer status to online, peer will recieve subsequent updates on its queue
 	peer.connected = true
-	peer.circuitUpdateStream = stream
 	t.mPeers.Unlock()
 	t.mCircuitUpdates.RUnlock()
 
 	var done bool
 	for !done {
 		select {
-		case cu, more := <-peer.circuitUpdateQueue:
+		case cu, more := <-peerCircuitUpdateQueue:
 			if more {
-				peer.SendUpdate(cu)
+				err := SendUpdate(cu, stream)
+				if err != nil {
+					close(peerCircuitUpdateQueue)
+				}
 			} else {
 				done = true
 			}
 		case <-t.transportDone:
 			done = true
-			close(peer.circuitUpdateQueue)
+			close(peerCircuitUpdateQueue)
 		case <-stream.Context().Done():
 			done = true
-			close(peer.circuitUpdateQueue)
+			close(peerCircuitUpdateQueue)
 		}
 	}
 	err = t.srvHandler.Unregister(peerID)
@@ -188,7 +204,6 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 	}
 	t.mPeers.Lock()
 	peer.connected = false
-	peer.circuitUpdateStream = nil
 	t.mPeers.Unlock()
 	return nil
 }

@@ -256,30 +256,14 @@ func (p *SetupPeer) ID() pkg.NodeID {
 // }
 
 type ComputePeer struct {
-	id                  pkg.NodeID
-	circuitUpdateStream api.ComputeService_RegisterForComputeServer
-	circuitUpdateQueue  chan circuits.Update
-	cli                 api.ComputeServiceClient
-	connected           bool
+	id                 pkg.NodeID
+	circuitUpdateQueue chan circuits.Update
+	cli                api.ComputeServiceClient
+	connected          bool
 }
 
 func (p *ComputePeer) ID() pkg.NodeID {
 	return p.id
-}
-
-func (p *ComputePeer) SendUpdate(cu circuits.Update) {
-
-	apiCU := &api.ComputeUpdate{ComputeSignature: &api.ComputeSignature{CircuitName: cu.CircuitName, CircuitID: string(cu.CircuitID)}, ComputeStatus: api.ComputeStatus(cu.Status)}
-	if cu.StatusUpdate != nil {
-		apiDesc := getAPIProtocolDesc(&cu.StatusUpdate.Descriptor)
-		apiCU.ProtocolUpdate = &api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(cu.StatusUpdate.Status)}
-	}
-	err := p.circuitUpdateStream.Send(apiCU)
-	//log.Printf("sent cu to %s", p.id)
-	if err != nil {
-		log.Println(err)
-		close(p.circuitUpdateQueue)
-	}
 }
 
 type SignatureScheme struct {
