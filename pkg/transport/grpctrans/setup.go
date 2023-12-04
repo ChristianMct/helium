@@ -184,6 +184,8 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 		return fmt.Errorf("client must specify node id for stream")
 	}
 
+	peerUpdateQueue := make(chan protocols.StatusUpdate, peerProtocolUpdateQueueSize)
+
 	t.protocolUpdatesMu.Lock()
 	present := len(t.protocolUpdates)
 
@@ -194,12 +196,12 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 		return fmt.Errorf("unexpected peer id: %s", peerID)
 	}
 	peer.connected = true
-	peer.protocolUpdateQueue = make(chan protocols.StatusUpdate, peerProtocolUpdateQueueSize)
-	peer.protoUpdateStream = stream
+	peer.protocolUpdateQueue = peerUpdateQueue
+	//peer.protoUpdateStream = stream
 	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 
 	for _, pu := range t.protocolUpdates {
-		peer.protocolUpdateQueue <- pu
+		peerUpdateQueue <- pu
 	}
 
 	t.mPeers.Unlock()
@@ -213,9 +215,13 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 	var done bool
 	for !done {
 		select {
-		case pu, more := <-peer.protocolUpdateQueue:
+		case pu, more := <-peerUpdateQueue:
 			if more {
-				peer.SendUpdate(pu)
+				apiDesc := getAPIProtocolDesc(&pu.Descriptor)
+				err := stream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(pu.Status)})
+				if err != nil {
+					close(peerUpdateQueue)
+				}
 			} else {
 				done = true
 			}
@@ -224,22 +230,25 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 			// empties the queue
 			for !done {
 				select {
-				case pu := <-peer.protocolUpdateQueue:
-					peer.SendUpdate(pu)
+				case pu := <-peerUpdateQueue:
+					apiDesc := getAPIProtocolDesc(&pu.Descriptor)
+					err := stream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(pu.Status)})
+					if err != nil {
+						done = true
+					}
 				default:
 					done = true
 				}
 			}
-			close(peer.protocolUpdateQueue)
+			close(peerUpdateQueue)
 		case <-stream.Context().Done():
 			done = true
-			close(peer.protocolUpdateQueue)
+			close(peerUpdateQueue)
 		}
 	}
 
 	t.mPeers.Lock()
 	peer.connected = false
-	peer.protoUpdateStream = nil
 	t.mPeers.Unlock()
 	return t.srvHandler.Unregister(peerID)
 }

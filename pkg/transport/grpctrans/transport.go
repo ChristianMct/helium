@@ -237,7 +237,7 @@ func (t *Transport) dialers() map[pkg.NodeID]transport.Dialer {
 type SetupPeer struct {
 	id                  pkg.NodeID
 	protocolUpdateQueue chan protocols.StatusUpdate
-	protoUpdateStream   api.SetupService_RegisterForSetupServer
+	//protoUpdateStream   api.SetupService_RegisterForSetupServer
 	//protoUpdateStreamDone chan bool
 	cli       api.SetupServiceClient
 	connected bool
@@ -247,13 +247,13 @@ func (p *SetupPeer) ID() pkg.NodeID {
 	return p.id
 }
 
-func (p *SetupPeer) SendUpdate(psu protocols.StatusUpdate) {
-	apiDesc := getAPIProtocolDesc(&psu.Descriptor)
-	err := p.protoUpdateStream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(psu.Status)})
-	if err != nil {
-		close(p.protocolUpdateQueue)
-	}
-}
+// func (p *SetupPeer) SendUpdate(psu protocols.StatusUpdate) {
+// 	apiDesc := getAPIProtocolDesc(&psu.Descriptor)
+// 	err := p.protoUpdateStream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(psu.Status)})
+// 	if err != nil {
+// 		close(p.protocolUpdateQueue)
+// 	}
+// }
 
 type ComputePeer struct {
 	id                  pkg.NodeID
