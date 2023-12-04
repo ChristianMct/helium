@@ -279,15 +279,23 @@ func (fop *FutureOperand) Await() <-chan pkg.Operand {
 	return c
 }
 
+// Done sets the future operand to op. Only the first
+// call has an effect.
 func (fop *FutureOperand) Done(op pkg.Operand) {
 	fop.m.Lock()
 	defer fop.m.Unlock()
 	if fop.op != nil {
-		panic("Done called multiple times")
+		return
 	}
 	fop.op = &op
 	for _, aw := range fop.awaiters {
 		aw <- op // TODO copy ?
 		close(aw)
 	}
+}
+
+func (fop *FutureOperand) IsSet() bool {
+	fop.m.Lock()
+	defer fop.m.Unlock()
+	return fop.op == nil
 }
