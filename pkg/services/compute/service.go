@@ -154,7 +154,7 @@ func (s *Service) IsEvaluator() bool {
 	return s.id == s.evaluatorID
 }
 
-func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (outOp pkg.Operand, err error) {
+func (s *Service) RunKeySwitch(ctx context.Context, cid pkg.CircuitID, sig protocols.Signature, in pkg.Operand) (outOp pkg.Operand, err error) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
 		return pkg.Operand{}, fmt.Errorf("no such session")
@@ -219,7 +219,7 @@ func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in 
 	ksInt.Input(in.Ciphertext)
 
 	s.transport.PutCircuitUpdates(circuits.Update{
-		Signature: circuits.Signature{}, // TODO
+		Signature: circuits.Signature{CircuitID: cid}, // TODO
 		Status:    circuits.Executing,
 		StatusUpdate: &protocols.StatusUpdate{
 			Descriptor: protoDesc,
@@ -238,7 +238,7 @@ func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in 
 	s.runningProtosMu.Unlock()
 
 	s.transport.PutCircuitUpdates(circuits.Update{
-		Signature: circuits.Signature{}, // TODO
+		Signature: circuits.Signature{CircuitID: cid}, // TODO
 		Status:    circuits.Executing,
 		StatusUpdate: &protocols.StatusUpdate{
 			Descriptor: protoDesc,
@@ -325,10 +325,12 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 			}
 
 			for cu := range cus {
-				if cu.StatusUpdate == nil { // TODO cleaner status/actions + closing channels
+
+				switch cu.Status {
+				case circuits.Created:
 					sigs <- cu.Signature
 					s.Logf("new circuit update: created %s", cu.Signature)
-				} else {
+				case circuits.Executing:
 					if cu.StatusUpdate.Status == protocols.OK {
 						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
 						continue
@@ -342,6 +344,11 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 					s.incomingPdescMu.Unlock()
 					pdc <- cu.StatusUpdate.Descriptor
 					s.Logf("new circuit update: got protocol descriptor for %s", cu.StatusUpdate.Signature)
+				case circuits.Completed:
+					s.Logf("new circuit update: circuit completed: %s", cu.CircuitID)
+					continue
+				default:
+					panic("invalid circuit update status")
 				}
 
 			}
@@ -408,7 +415,7 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 				}
 
 				if s.IsEvaluator() {
-					s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Executing})
+					s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Created})
 				}
 
 				// extracts own input labels TODO: put in circuitDesc ?
@@ -636,7 +643,7 @@ func (s *Service) catchUp(cus <-chan circuits.Update, present int, sigs chan cir
 				prot[cu.StatusUpdate.Signature.String()] = *cu.StatusUpdate
 			case protocols.OK:
 				if _, has := prot[cu.StatusUpdate.Signature.String()]; !has {
-					fmt.Errorf("Protocol OK before creation")
+					return fmt.Errorf("Protocol OK before creation")
 				}
 				delete(prot, cu.StatusUpdate.Signature.String())
 			}

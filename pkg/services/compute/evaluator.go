@@ -200,7 +200,7 @@ func (se *fullEvaluatorContext) PCKS(in pkg.Operand, params map[string]string) (
 func (se *fullEvaluatorContext) runKeySwitch(sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
 	se.Set(in)
 	ctx := pkg.NewContext(&se.sess.ID, &se.cid)
-	return se.service.RunKeySwitch(ctx, sig, in)
+	return se.service.RunKeySwitch(ctx, se.cid, sig, in)
 }
 
 func (se *fullEvaluatorContext) Parameters() bgv.Parameters {
