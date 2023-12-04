@@ -56,11 +56,13 @@ func main() {
 		FullNodes:  n,
 		LightNodes: 0,
 		Session: &pkg.SessionParameters{
+			// Poseidon
 			RLWEParams: rlwe.ParametersLiteral{
 				LogN: 14,
 				LogQ: []int{52, 47, 47, 47, 47, 47, 47},
 				LogP: []int{52, 52},
 			},
+			// Bootstrapping:
 			// RLWEParams: rlwe.ParametersLiteral{
 			// 	LogN:  15,
 			// 	Sigma: rlwe.DefaultSigma,
