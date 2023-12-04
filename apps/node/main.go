@@ -264,7 +264,7 @@ func checkResultCorrect(opl pkg.OperandLabel, res []uint64) {
 
 	for _, v := range res {
 		if v != uint64(val) {
-			panic(fmt.Errorf("incorrect result for %s: %s", opl, res))
+			panic(fmt.Errorf("incorrect result for %s: %v", opl, res))
 		}
 	}
 }
