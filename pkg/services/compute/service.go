@@ -442,6 +442,9 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 					if errExec := c.Execute(ctx); errExec != nil {
 						panic(errExec)
 					}
+					if s.IsEvaluator() {
+						s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Completed})
+					}
 				}()
 
 				for op := range c.LocalOutputs() {
