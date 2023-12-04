@@ -15,8 +15,9 @@ type Signature struct {
 type Status int32
 
 const (
-	OK Status = iota
-	Running
+	Completed Status = iota
+	Created
+	Executing
 )
 
 type Update struct {

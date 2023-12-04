@@ -43,26 +43,24 @@ type SetupServiceTransport interface {
 
 	// RegisterForSetupAt register the caller as a node ready to perform the setup. It returns
 	// a stream of protocol status updates on which it can synchronize.
-	RegisterForSetupAt(context.Context, pkg.NodeID) (<-chan protocols.StatusUpdate, error)
+	RegisterForSetupAt(context.Context, pkg.NodeID) (<-chan protocols.StatusUpdate, int, error)
 
-	// OutgoingProtocolUpdates returns a channel on which the caller can write status updates for
-	// the protocols it is the designated aggregators.
-	OutgoingProtocolUpdates() chan<- protocols.StatusUpdate
+	PutProtocolUpdate(protocols.StatusUpdate) (seq int, err error)
 
 	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
 	// aggregated share of the designated protocol.
 	GetAggregationFrom(context.Context, pkg.NodeID, protocols.Descriptor) (*protocols.AggregationOutput, error)
 
 	ShareTransport
+
+	Close() // TODO: there should be a common interface for transports
 }
 
 // ComputeServiceTransport is an interface for the transport layer supporting the compute service.
 type ComputeServiceTransport interface {
-	RegisterForComputeAt(context.Context, pkg.NodeID) (<-chan circuits.Update, error)
+	RegisterForComputeAt(context.Context, pkg.NodeID) (<-chan circuits.Update, int, error)
 
 	PutCircuitUpdates(circuits.Update) (seq int, err error)
-
-	Close()
 
 	// GetCiphertext queries the transport for the designated ciphertext
 	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
@@ -71,6 +69,8 @@ type ComputeServiceTransport interface {
 	PutCiphertext(context.Context, pkg.NodeID, pkg.Ciphertext) error
 
 	ShareTransport
+
+	Close() // TODO: there should be a common interface for transports
 }
 
 // ShareTransport is an interface for the transport of protocol shares.

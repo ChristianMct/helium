@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -234,11 +235,12 @@ func (t *Transport) dialers() map[pkg.NodeID]transport.Dialer {
 }
 
 type SetupPeer struct {
-	id                    pkg.NodeID
-	protoUpdateStream     api.SetupService_RegisterForSetupServer
-	protoUpdateStreamDone chan bool
-	cli                   api.SetupServiceClient
-	connected             bool
+	id                  pkg.NodeID
+	protocolUpdateQueue chan protocols.StatusUpdate
+	protoUpdateStream   api.SetupService_RegisterForSetupServer
+	//protoUpdateStreamDone chan bool
+	cli       api.SetupServiceClient
+	connected bool
 }
 
 func (p *SetupPeer) ID() pkg.NodeID {
@@ -249,7 +251,7 @@ func (p *SetupPeer) SendUpdate(psu protocols.StatusUpdate) {
 	apiDesc := getAPIProtocolDesc(&psu.Descriptor)
 	err := p.protoUpdateStream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(psu.Status)})
 	if err != nil {
-		p.protoUpdateStreamDone <- true
+		close(p.protocolUpdateQueue)
 	}
 }
 
@@ -267,7 +269,7 @@ func (p *ComputePeer) ID() pkg.NodeID {
 
 func (p *ComputePeer) SendUpdate(cu circuits.Update) {
 
-	apiCU := &api.ComputeUpdate{ComputeSignature: &api.ComputeSignature{CircuitName: cu.CircuitName, CircuitID: string(cu.CircuitID)}}
+	apiCU := &api.ComputeUpdate{ComputeSignature: &api.ComputeSignature{CircuitName: cu.CircuitName, CircuitID: string(cu.CircuitID)}, ComputeStatus: api.ComputeStatus(cu.Status)}
 	if cu.StatusUpdate != nil {
 		apiDesc := getAPIProtocolDesc(&cu.StatusUpdate.Descriptor)
 		apiCU.ProtocolUpdate = &api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(cu.StatusUpdate.Status)}
@@ -283,4 +285,21 @@ func (p *ComputePeer) SendUpdate(cu circuits.Update) {
 type SignatureScheme struct {
 	Type api.SignatureType
 	sk   []byte // as generic as possible
+}
+
+func readPresentFromStream(stream grpc.ClientStream) (int, error) {
+	md, err := stream.Header()
+	if err != nil {
+		return 0, err
+	}
+	vals := md.Get("present")
+	if len(vals) != 1 {
+		return 0, fmt.Errorf("invalid stream header: present field not found")
+	}
+
+	present, err := strconv.Atoi(vals[0])
+	if err != nil {
+		return 0, fmt.Errorf("invalid stream header: bad value in present field: %s", vals[0])
+	}
+	return present, nil
 }

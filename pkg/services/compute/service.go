@@ -220,7 +220,7 @@ func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in 
 
 	s.transport.PutCircuitUpdates(circuits.Update{
 		Signature: circuits.Signature{}, // TODO
-		Status:    circuits.Running,
+		Status:    circuits.Executing,
 		StatusUpdate: &protocols.StatusUpdate{
 			Descriptor: protoDesc,
 			Status:     protocols.Running,
@@ -239,7 +239,7 @@ func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in 
 
 	s.transport.PutCircuitUpdates(circuits.Update{
 		Signature: circuits.Signature{}, // TODO
-		Status:    circuits.Running,
+		Status:    circuits.Executing,
 		StatusUpdate: &protocols.StatusUpdate{
 			Descriptor: protoDesc,
 			Status:     protocols.OK,
@@ -315,11 +315,15 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 
 		sigs = make(chan circuits.Signature)
 		outCtx := pkg.GetOutgoingContext(ctx, s.id)
-		cus, err := s.transport.RegisterForComputeAt(outCtx, s.evaluatorID)
+		cus, present, err := s.transport.RegisterForComputeAt(outCtx, s.evaluatorID)
 		if err != nil {
 			return err
 		}
 		go func() {
+			if err := s.catchUp(cus, present, sigs); err != nil {
+				panic(err)
+			}
+
 			for cu := range cus {
 				if cu.StatusUpdate == nil { // TODO cleaner status/actions + closing channels
 					sigs <- cu.Signature
@@ -404,7 +408,7 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 				}
 
 				if s.IsEvaluator() {
-					s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Running})
+					s.transport.PutCircuitUpdates(circuits.Update{Signature: sig, Status: circuits.Executing})
 				}
 
 				// extracts own input labels TODO: put in circuitDesc ?
@@ -577,7 +581,7 @@ func (s *Service) Register(peer pkg.NodeID) error {
 		s.Logf("error when registering peer %s for compute: %s", peer, err)
 		return err
 	}
-	s.Logf("compute registered peer %v", peer)
+	s.Logf("compute service registered peer %v", peer)
 	return nil // TODO: Implement
 }
 
@@ -593,6 +597,62 @@ func (s *Service) Unregister(peer pkg.NodeID) error {
 
 func (s *Service) Logf(msg string, v ...any) {
 	log.Printf("%s | %s\n", s.id, fmt.Sprintf(msg, v...))
+}
+
+func (s *Service) catchUp(cus <-chan circuits.Update, present int, sigs chan circuits.Signature) error {
+	if present == 0 {
+		return nil
+	}
+	var current int
+	circ := make(map[pkg.CircuitID][]circuits.Update)
+	for cu := range cus {
+		switch cu.Status {
+		case circuits.Completed:
+			if _, has := circ[cu.CircuitID]; !has {
+				return fmt.Errorf("Circuit OK before creation")
+			}
+			delete(circ, cu.CircuitID)
+		case circuits.Created:
+			circ[cu.CircuitID] = []circuits.Update{cu}
+		case circuits.Executing:
+			circ[cu.CircuitID] = append(circ[cu.CircuitID], cu)
+		}
+		current++
+		if current == present {
+			break
+		}
+	}
+
+	prot := make(map[string]protocols.StatusUpdate)
+	for cid, cus := range circ {
+		s.Logf("will catch up on circuit %s", cid)
+		sigs <- cus[0].Signature
+		for _, cu := range cus[1:] {
+			switch cu.StatusUpdate.Status {
+			case protocols.Running:
+				prot[cu.StatusUpdate.Signature.String()] = *cu.StatusUpdate
+			case protocols.OK:
+				if _, has := prot[cu.StatusUpdate.Signature.String()]; !has {
+					fmt.Errorf("Protocol OK before creation")
+				}
+				delete(prot, cu.StatusUpdate.Signature.String())
+			}
+		}
+	}
+
+	for psig, pu := range prot {
+		s.Logf("will catch up on protocol %s", psig)
+		s.incomingPdescMu.Lock()
+		pdc, has := s.incomingPdesc[pu.Signature.String()]
+		if !has {
+			pdc = make(chan protocols.Descriptor, 1)
+			s.incomingPdesc[pu.Signature.String()] = pdc
+		}
+		s.incomingPdescMu.Unlock()
+		pdc <- pu.Descriptor
+	}
+
+	return nil
 }
 
 // getLagrangeCoeff computes the Lagrange coefficient for party target in the sk reconstruction from T<N shares by

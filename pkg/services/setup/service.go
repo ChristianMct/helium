@@ -164,9 +164,15 @@ func (s *Service) Execute(ctx context.Context, sd Description) error {
 	// 5. STORE OUTPUT: store output after receiving it from the aggregator
 	s.storeProtocolOutput(outputs, sess)
 
+	s.transport.Close()
+
 	s.Logf("execute returned")
 	return nil
 }
+
+// func (s *Service) Shutdown() {
+// 	s.transport.Close()
+// }
 
 // filterSignatureList splits a SignatureList into two lists based on the presence of the protocol's output in the ObjectStore.
 func (s *Service) filterSignatureList(sl SignatureList) (noResult, hasResult SignatureList) {
@@ -201,12 +207,18 @@ func (s *Service) registerToAggregatorsForSetup(aggregators utils.Set[pkg.NodeID
 		go func() {
 			s.Logf("[Register] registering to aggregator %s", agg)
 			// register aggregator to the transport for the setup protocol.
-			protoUpdateChannel, err := s.transport.RegisterForSetupAt(outCtx, agg)
+			protoUpdateChannel, present, err := s.transport.RegisterForSetupAt(outCtx, agg)
 			if err != nil {
 				s.Logf("could not register to aggregator %s: %s", agg, err)
 				aggDone.Done()
 				return
 			}
+
+			err = s.catchUp(protoUpdateChannel, present, protosUpdatesChan)
+			if err != nil {
+				panic(fmt.Errorf("error while catching up: %w", err))
+			}
+
 			// for each update of this protocol from the aggregator.
 			for protoStatusUpdate := range protoUpdateChannel {
 				// put the update in the update channel for ALL protocols.
@@ -404,7 +416,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				s.runningProtosMu.Unlock()
 
 				// sending pd to list of chosen parties.
-				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running}
+				s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running})
 
 				// blocking, returns the result of the aggregation.
 				s.Logf("[Aggregate] Waiting to finish aggregation for pd: %v", pd)
@@ -458,7 +470,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				s.completedProtos = append(s.completedProtos, pd)
 				s.completedProtoMu.Unlock()
 
-				s.transport.OutgoingProtocolUpdates() <- protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)}
+				s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)})
 
 				if pd.Signature.Type == protocols.RKG_1 {
 					currRlkShare = aggOut.Share
@@ -475,7 +487,6 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 	allAggsDone := make(chan bool, 1)
 	go func() {
 		wg.Wait()
-		close(s.transport.OutgoingProtocolUpdates())
 		allAggsDone <- true
 	}()
 
@@ -498,21 +509,21 @@ func (s *Service) queryForOutput(ctx context.Context, sigListNoResult SignatureL
 
 			// this node is not in the set of receivers for this output
 			if !sigToReceiverSet[pd.Signature.String()].Contains(s.self) {
-				s.Logf("[QueryForOutput] not querying unneeded output for protocol %s", pid)
+				//s.Logf("[QueryForOutput] not querying unneeded output for protocol %s", pid)
 				continue
 			}
-
-			s.Logf("[QueryForOutput] [%s] received aggregated completed", pid)
 
 			if !sigListNoResult.Contains(pd.Signature) {
-				s.Logf("[QueryForOutput] not querying known output for protocol %s", pid)
+				//s.Logf("[QueryForOutput] not querying known output for protocol %s", pid)
 				continue
 			}
+
+			//s.Logf("[QueryForOutput] [%s] received aggregated completed", pid)
 
 			// requests output to aggregator.
 			aggregatedOutput, err := s.transport.GetAggregationFrom(pkg.NewOutgoingContext(&s.self, &sess.ID, nil), pd.Aggregator, pd)
 			if err != nil {
-				s.Logf("[QueryForOutput] [%s] got error on output query: %s", pid, err)
+				//s.Logf("[QueryForOutput] [%s] got error on output query: %s", pid, err)
 				panic(err)
 			}
 
@@ -606,7 +617,7 @@ func (s *Service) Register(peer pkg.NodeID) error {
 		s.Logf("error when registering peer %s for compute: %s", peer, err)
 		return err
 	}
-	s.Logf("compute registered peer %v", peer)
+	s.Logf("setup service registered peer %v", peer)
 	return nil // TODO: Implement
 }
 
@@ -622,6 +633,49 @@ func (s *Service) Unregister(peer pkg.NodeID) error {
 
 func (s *Service) Logf(msg string, v ...any) {
 	log.Printf("%s | %s\n", s.self, fmt.Sprintf(msg, v...))
+}
+
+func (s *Service) catchUp(puChan <-chan protocols.StatusUpdate, present int, pus chan protocols.StatusUpdate) error {
+	if present == 0 {
+		return nil
+	}
+
+	var current int
+	runningProtos := make(map[pkg.ProtocolID]protocols.StatusUpdate)
+	completedProtos := make([]protocols.StatusUpdate, 0)
+	for pu := range puChan {
+
+		switch pu.Status {
+		case protocols.Running:
+			runningProtos[pu.ID()] = pu
+		case protocols.OK, protocols.Failed:
+			if _, has := runningProtos[pu.ID()]; !has {
+				return fmt.Errorf("protocol OK before creation")
+			}
+			delete(runningProtos, pu.ID())
+			if pu.Status == protocols.OK {
+				completedProtos = append(completedProtos, pu)
+			}
+		}
+
+		current++
+		if current == present {
+			break
+		}
+	}
+
+	// puts the currently running protocols first in the queue
+	for pid, pu := range runningProtos {
+		s.Logf("is catching up on protocol %s", pid)
+		pus <- pu
+	}
+
+	// puts the completed protocols
+	for _, pu := range completedProtos {
+		pus <- pu
+	}
+
+	return nil
 }
 
 type ProtocolTransport struct {

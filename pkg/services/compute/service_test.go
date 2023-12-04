@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/node"
@@ -116,10 +117,10 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 				var cSigns = []circuits.Signature{
 					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-0")},
-					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-1")},
-					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-2")},
-					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-3")},
-					// {CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-4")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-1")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-2")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-3")},
+					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-4")},
 				}
 
 				cDescs := make([]*CircuitDescription, len(cSigns))
@@ -154,6 +155,10 @@ func TestCloudEvalCircuit(t *testing.T) {
 					client := client
 					i := i
 					g.Go(func() error {
+
+						if i == 0 {
+							<-time.After(time.Second)
+						}
 
 						var ip InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
 							encoder := decoder.ShallowCopy()

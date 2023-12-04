@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -14,6 +15,7 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/transport"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 type computeTransport struct {
@@ -27,10 +29,9 @@ type computeTransport struct {
 	circuitUpdates  []circuits.Update
 	mCircuitUpdates sync.RWMutex
 
-	outgoingCircuitUpdates     chan circuits.Update
-	outgoingCircuitUpdatesDone chan struct{}
-	mPeers                     sync.RWMutex
-	peers                      map[pkg.NodeID]*ComputePeer
+	transportDone chan struct{}
+	mPeers        sync.RWMutex
+	peers         map[pkg.NodeID]*ComputePeer
 }
 
 func (t *Transport) newComputeTransport() *computeTransport {
@@ -40,8 +41,7 @@ func (t *Transport) newComputeTransport() *computeTransport {
 
 	pc.circuitUpdates = make([]circuits.Update, 0)
 
-	pc.outgoingCircuitUpdates = make(chan circuits.Update)
-	pc.outgoingCircuitUpdatesDone = make(chan struct{})
+	pc.transportDone = make(chan struct{})
 	pc.peers = make(map[pkg.NodeID]*ComputePeer)
 	for _, nid := range pc.nodeList {
 		pc.peers[nid.NodeID] = &ComputePeer{
@@ -74,7 +74,6 @@ func (env *computeTransport) PutCircuitUpdates(cu circuits.Update) (seq int, err
 	env.mCircuitUpdates.Lock()
 	seq = len(env.circuitUpdates)
 	env.circuitUpdates = append(env.circuitUpdates, cu)
-	env.mCircuitUpdates.Unlock()
 
 	env.mPeers.RLock()
 	for _, peer := range env.peers {
@@ -84,12 +83,13 @@ func (env *computeTransport) PutCircuitUpdates(cu circuits.Update) (seq int, err
 		}
 	}
 	env.mPeers.RUnlock()
+	env.mCircuitUpdates.Unlock()
 
 	return seq, nil
 }
 
 func (env *computeTransport) Close() {
-	close(env.outgoingCircuitUpdatesDone)
+	close(env.transportDone)
 }
 
 func (env *computeTransport) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
@@ -153,11 +153,12 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 	peer := t.peers[peerID]
 
 	t.mCircuitUpdates.RLock() // locks the updates while populating the past message queue
-	peer.circuitUpdateQueue = make(chan circuits.Update, len(t.circuitUpdates))
+	present := len(t.circuitUpdates)
+	peer.circuitUpdateQueue = make(chan circuits.Update, present)
 	for _, cu := range t.circuitUpdates {
 		peer.circuitUpdateQueue <- cu
 	}
-
+	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 	t.mPeers.Lock() // updates the peer status to online, peer will recieve subsequent updates on its queue
 	peer.connected = true
 	peer.circuitUpdateStream = stream
@@ -173,7 +174,7 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 			} else {
 				done = true
 			}
-		case <-t.outgoingCircuitUpdatesDone:
+		case <-t.transportDone:
 			done = true
 			close(peer.circuitUpdateQueue)
 		case <-stream.Context().Done():
@@ -224,20 +225,25 @@ func (env *computeTransport) StreamShares(stream api.ComputeService_StreamShares
 	return env.ShareTransport.StreamShares(stream)
 }
 
-func (t *computeTransport) RegisterForComputeAt(ctx context.Context, peerID pkg.NodeID) (<-chan circuits.Update, error) {
+func (t *computeTransport) RegisterForComputeAt(ctx context.Context, peerID pkg.NodeID) (<-chan circuits.Update, int, error) {
 
 	peer, exists := t.peers[peerID]
 	if !exists {
-		return nil, fmt.Errorf("peer does not exists: %s", peerID)
+		return nil, 0, fmt.Errorf("peer does not exists: %s", peerID)
 	}
 
 	if peer.cli == nil {
-		return nil, fmt.Errorf("peer is not connected: %s", peerID)
+		return nil, 0, fmt.Errorf("peer is not connected: %s", peerID)
 	}
 
 	stream, err := peer.cli.RegisterForCompute(ctx, &api.Void{})
 	if err != nil {
 		panic(err)
+	}
+
+	present, err := readPresentFromStream(stream)
+	if err != nil {
+		return nil, present, err
 	}
 
 	descStream := make(chan circuits.Update)
@@ -265,7 +271,7 @@ func (t *computeTransport) RegisterForComputeAt(ctx context.Context, peerID pkg.
 
 	}()
 
-	return descStream, nil
+	return descStream, present, nil
 }
 
 type computeServiceClientWrapper struct {

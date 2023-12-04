@@ -39,7 +39,8 @@ message ComputeSignature {
 
 enum ComputeStatus {
     COMPLETED = 0;
-    EVALUATING = 1;
+    CREATED = 1;
+    EXECUTING = 2;
 }
 
 message ComputeUpdate {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strconv"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -14,8 +15,11 @@ import (
 	"github.com/ldsec/helium/pkg/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+const peerProtocolUpdateQueueSize = 100
 
 type setupTransport struct {
 	*Transport
@@ -25,10 +29,12 @@ type setupTransport struct {
 
 	srvHandler transport.SetupServiceHandler
 
-	outgoingProtocolUpdates     chan protocols.StatusUpdate
-	outgoingProtocolUpdatesDone chan struct{}
-	mPeers                      sync.RWMutex
-	peers                       map[pkg.NodeID]*SetupPeer
+	protocolUpdates   []protocols.StatusUpdate
+	protocolUpdatesMu sync.RWMutex
+
+	transportDone chan struct{}
+	mPeers        sync.RWMutex
+	peers         map[pkg.NodeID]*SetupPeer
 }
 
 func (t *Transport) newSetupTransport() *setupTransport {
@@ -36,47 +42,15 @@ func (t *Transport) newSetupTransport() *setupTransport {
 	pc.Transport = t
 	pc.ShareTransport = t.NewShareTransport()
 
-	pc.outgoingProtocolUpdates = make(chan protocols.StatusUpdate)
-	pc.outgoingProtocolUpdatesDone = make(chan struct{})
+	pc.protocolUpdates = make([]protocols.StatusUpdate, 0)
+
+	pc.transportDone = make(chan struct{})
 	pc.peers = make(map[pkg.NodeID]*SetupPeer)
 	for _, nid := range pc.nodeList {
 		pc.peers[nid.NodeID] = &SetupPeer{
 			id: nid.NodeID,
 		}
 	}
-	go func() {
-
-		for pd := range pc.outgoingProtocolUpdates {
-
-			subscribed := make([]*SetupPeer, 0, len(pc.peers))
-			pc.mPeers.RLock()
-			for _, peer := range pc.peers {
-				if peer.connected {
-					subscribed = append(subscribed, peer)
-				}
-			}
-			pc.mPeers.RUnlock()
-
-			for _, sub := range subscribed {
-				sub.SendUpdate(pd)
-			}
-		}
-
-		subscribed := make([]*SetupPeer, 0, len(pc.peers))
-		pc.mPeers.RLock()
-		for _, peer := range pc.peers {
-			if peer.connected {
-				subscribed = append(subscribed, peer)
-			}
-		}
-		pc.mPeers.RUnlock()
-
-		close(pc.outgoingProtocolUpdatesDone)
-		for _, sub := range subscribed {
-			sub.protoUpdateStreamDone <- true
-		}
-	}()
-
 	return pc
 }
 
@@ -97,20 +71,41 @@ func (t *setupTransport) connect() {
 	}
 }
 
-func (t *setupTransport) RegisterForSetupAt(ctx context.Context, peerID pkg.NodeID) (<-chan protocols.StatusUpdate, error) {
+func (t *setupTransport) PutProtocolUpdate(pu protocols.StatusUpdate) (seq int, err error) {
+	t.protocolUpdatesMu.Lock()
+	seq = len(t.protocolUpdates)
+	t.protocolUpdates = append(t.protocolUpdates, pu)
+
+	t.mPeers.RLock()
+	for _, peer := range t.peers {
+		if peer.connected {
+			peer.protocolUpdateQueue <- pu
+		}
+	}
+	t.mPeers.RUnlock()
+	t.protocolUpdatesMu.Unlock()
+	return seq, nil
+}
+
+func (t *setupTransport) RegisterForSetupAt(ctx context.Context, peerID pkg.NodeID) (<-chan protocols.StatusUpdate, int, error) {
 
 	peer, exists := t.peers[peerID]
 	if !exists {
-		return nil, fmt.Errorf("peer does not exists: %s", peerID)
+		return nil, 0, fmt.Errorf("peer does not exists: %s", peerID)
 	}
 
 	if peer.cli == nil {
-		return nil, fmt.Errorf("peer is not connected: %s", peerID)
+		return nil, 0, fmt.Errorf("peer is not connected: %s", peerID)
 	}
 
 	stream, err := peer.cli.RegisterForSetup(ctx, &api.Void{})
 	if err != nil {
-		panic(err)
+		return nil, 0, err
+	}
+
+	present, err := readPresentFromStream(stream)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	descStream := make(chan protocols.StatusUpdate)
@@ -131,7 +126,7 @@ func (t *setupTransport) RegisterForSetupAt(ctx context.Context, peerID pkg.Node
 
 	}()
 
-	return descStream, nil
+	return descStream, present, nil
 }
 
 func getAPIProtocolDesc(pd *protocols.Descriptor) *api.ProtocolDescriptor {
@@ -183,15 +178,15 @@ func (t *setupTransport) GetAggregationFrom(ctx context.Context, nid pkg.NodeID,
 	return &protocols.AggregationOutput{Share: s}, nil
 }
 
-func (t *setupTransport) OutgoingProtocolUpdates() chan<- protocols.StatusUpdate {
-	return t.outgoingProtocolUpdates
-}
-
 func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_RegisterForSetupServer) error {
 	peerID := pkg.SenderIDFromIncomingContext(stream.Context())
 	if peerID == "" {
 		return fmt.Errorf("client must specify node id for stream")
 	}
+
+	t.protocolUpdatesMu.Lock()
+	present := len(t.protocolUpdates)
+
 	t.mPeers.Lock()
 	peer, has := t.peers[peerID]
 	if !has {
@@ -199,23 +194,47 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 		return fmt.Errorf("unexpected peer id: %s", peerID)
 	}
 	peer.connected = true
+	peer.protocolUpdateQueue = make(chan protocols.StatusUpdate, peerProtocolUpdateQueueSize)
 	peer.protoUpdateStream = stream
-	peer.protoUpdateStreamDone = make(chan bool)
+	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
+
+	for _, pu := range t.protocolUpdates {
+		peer.protocolUpdateQueue <- pu
+	}
+
 	t.mPeers.Unlock()
+	t.protocolUpdatesMu.Unlock()
 
 	err := t.srvHandler.Register(peerID)
 	if err != nil {
 		return err
 	}
 
-	for _, psu := range t.srvHandler.GetProtocolStatus() {
-		peer.SendUpdate(psu)
-	}
-
-	select {
-	case <-t.outgoingProtocolUpdatesDone:
-	case <-peer.protoUpdateStreamDone:
-	case <-stream.Context().Done():
+	var done bool
+	for !done {
+		select {
+		case pu, more := <-peer.protocolUpdateQueue:
+			if more {
+				peer.SendUpdate(pu)
+			} else {
+				done = true
+			}
+		case <-t.transportDone:
+			//done = true
+			// empties the queue
+			for !done {
+				select {
+				case pu := <-peer.protocolUpdateQueue:
+					peer.SendUpdate(pu)
+				default:
+					done = true
+				}
+			}
+			close(peer.protocolUpdateQueue)
+		case <-stream.Context().Done():
+			done = true
+			close(peer.protocolUpdateQueue)
+		}
 	}
 
 	t.mPeers.Lock()
@@ -250,6 +269,10 @@ func (t *setupTransport) PutShare(ctx context.Context, share *api.Share) (*api.V
 
 func (t *setupTransport) StreamShares(stream api.SetupService_StreamSharesServer) error {
 	return t.ShareTransport.StreamShares(stream)
+}
+
+func (t *setupTransport) Close() {
+	close(t.transportDone)
 }
 
 type setupServiceClientWrapper struct {
