@@ -23,10 +23,10 @@ func NewPartySet() *PartySet {
 
 func (s *PartySet) Register(peer NodeID) error {
 	s.cPeers.L.Lock()
-	if _, exists := s.peers[peer]; exists {
-		return fmt.Errorf("peer with id %s already registered", peer)
-		//s.Logf("peer %s was already registered", peer)
-	}
+	// if _, exists := s.peers[peer]; exists {
+	// 	return fmt.Errorf("peer with id %s already registered", peer)
+	// 	//s.Logf("peer %s was already registered", peer)
+	// }
 	s.peers.Add(peer)
 	s.cPeers.L.Unlock()
 	s.cPeers.Broadcast()
