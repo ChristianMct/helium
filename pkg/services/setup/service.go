@@ -205,7 +205,6 @@ func (s *Service) registerToAggregatorsForSetup(aggregators utils.Set[pkg.NodeID
 		}
 		aggDone.Add(1)
 		go func() {
-			s.Logf("[Register] registering to aggregator %s", agg)
 			// register aggregator to the transport for the setup protocol.
 			protoUpdateChannel, present, err := s.transport.RegisterForSetupAt(outCtx, agg)
 			if err != nil {
@@ -213,6 +212,7 @@ func (s *Service) registerToAggregatorsForSetup(aggregators utils.Set[pkg.NodeID
 				aggDone.Done()
 				return
 			}
+			s.Logf("[Register] registered to aggregator %s", agg)
 
 			err = s.catchUp(protoUpdateChannel, present, protosUpdatesChan)
 			if err != nil {
