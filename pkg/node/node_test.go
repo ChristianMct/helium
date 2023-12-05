@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
+	"gonum.org/v1/gonum/mat"
 )
 
 func failIfNonNil(t *testing.T, err error) {
@@ -21,11 +23,12 @@ func failIfNonNil(t *testing.T, err error) {
 
 func TestHelium(t *testing.T) {
 
-	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 65537, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}})
+	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 65537, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}})         // vecmul
+	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 1099511678977, LogN: 13, LogQ: []int{45, 45, 45}, LogP: []int{45}}) // matmul
 	failIfNonNil(t, err)
 	sessParams := pkg.SessionParameters{
 		ID:         "test-session",
-		RLWEParams: params.ParametersLiteral().RLWEParametersLiteral(),
+		RLWEParams: params.ParametersLiteral(),
 		//T:          3,
 	}
 
@@ -42,12 +45,12 @@ func TestHelium(t *testing.T) {
 	clients := lt.LightNodes
 
 	cDesc := compute.Description{
-		circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-0"},
-		circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-1"},
-		circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-2"},
-		circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-3"},
-		circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-4"},
-		circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-5"},
+		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-0"},
+		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-1"},
+		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-2"},
+		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-3"},
+		// circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-4"},
+		// circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-5"},
 	}
 
 	ctx := pkg.NewContext(&sessParams.ID, nil)
@@ -56,9 +59,68 @@ func TestHelium(t *testing.T) {
 		InputProvider: &compute.NoInput,
 		Circuits:      TestCircuits,
 	}
+
+	m := params.PlaintextDimensions().Cols
+
+	a := mat.NewDense(m, m, nil)
+	a.Apply(func(i, j int, v float64) float64 {
+		return float64(i) + float64(2*j)
+	}, a)
+
+	cloud.RegisterPrecomputeHandler(func(ss *pkg.SessionStore, pkb compute.PublicKeyBackend) error {
+
+		encoder := bgv.NewEncoder(params)
+
+		cpk, err := pkb.GetCollectivePublicKey()
+		if err != nil {
+			return err
+		}
+		encryptor, err := bgv.NewEncryptor(params, cpk)
+		if err != nil {
+			return err
+		}
+
+		pta := make(map[int]*rlwe.Plaintext)
+		cta := make(map[int]*rlwe.Ciphertext)
+		sess, _ := ss.GetSessionFromID("test-session")
+
+		diag := make(map[int][]uint64, m)
+		for k := 0; k < m; k++ {
+			diag[k] = make([]uint64, m)
+			for i := 0; i < m; i++ {
+				j := (i + k) % m
+				diag[k][i] = uint64(a.At(i, j))
+			}
+		}
+
+		cloud.Logf("generating encrypted matrix...")
+		for di, d := range diag {
+			pta[di] = rlwe.NewPlaintext(params, params.MaxLevel())
+			encoder.Encode(d, pta[di])
+			cta[di], err = encryptor.EncryptNew(pta[di])
+			if err != nil {
+				return err
+			}
+			sess.CiphertextStore.Store(pkg.Ciphertext{Ciphertext: *cta[di], CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(fmt.Sprintf("//helper-0/mat-diag-%d", di))}})
+		}
+		cloud.Logf("done")
+
+		return nil
+	})
+
 	sigs, outs, err := cloud.Run(ctx, app)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	b := mat.NewVecDense(m, nil)
+	b.SetVec(1, 1)
+	r := mat.NewVecDense(m, nil)
+
+	r.MulVec(a, b)
+	dataWant := make([]uint64, len(r.RawVector().Data))
+	for i, v := range r.RawVector().Data {
+		dataWant[i] = uint64(v)
 	}
 
 	//outs := make(chan compute.CircuitOutput)
@@ -69,8 +131,11 @@ func TestHelium(t *testing.T) {
 		node := node
 		var ip compute.InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
 			encoder := bgv.NewEncoder(params)
-			data := []uint64{1, 1, 1, 1, 1, 1}
-			data[i] = uint64(i + 1)
+			_ = i
+			data := make([]uint64, len(b.RawVector().Data))
+			for i, v := range b.RawVector().Data {
+				data[i] = uint64(v)
+			}
 			pt := bgv.NewPlaintext(params, params.MaxLevelQ())
 			err := encoder.Encode(data, pt)
 			if err != nil {
@@ -115,7 +180,7 @@ func TestHelium(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		require.Equal(t, []uint64{1, 2, 3, 4, 1, 1}, res[:6])
+		require.Equal(t, dataWant, res[:m])
 	}
 
 }

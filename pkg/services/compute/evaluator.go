@@ -39,7 +39,7 @@ type CircuitInstance interface {
 // It resolve the remote inputs from the full nodes and waits for inputs from the light nodes.
 // It evaluates the homomorphic operations and compute the outputs of the circuit.
 type fullEvaluatorContext struct {
-	*bgv.Evaluator
+	*EvaluatorWrapper
 
 	service *Service
 	sess    *pkg.Session
@@ -63,12 +63,7 @@ func (s *Service) newFullEvaluationContext(sess *pkg.Session, pkbk PublicKeyBack
 	se.pkbk = pkbk
 	se.service = s
 
-	var err error
-	se.params, err = bgv.NewParameters(*sess.Params, 65537)
-	if err != nil {
-		panic(err)
-	}
-
+	se.params = *sess.Params
 	dummyCtx := newCircuitParserCtx(id, se.params, nodeMapping)
 	if err := cDef(dummyCtx); err != nil {
 		panic(err)
@@ -117,7 +112,7 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 	gks := make([]*rlwe.GaloisKey, 0, len(se.cDesc.GaloisKeys))
 	for galEl := range se.cDesc.GaloisKeys {
 		var err error
-		gk, err := se.GetGaloisKey(galEl)
+		gk, err := se.pkbk.GetGaloisKey(galEl)
 		if err != nil {
 			panic(fmt.Errorf("%s | %s", se.sess.NodeID, err))
 		}
@@ -127,7 +122,7 @@ func (se *fullEvaluatorContext) Execute(ctx context.Context) error {
 	//rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
 	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
 	eval := bgv.NewEvaluator(se.params, evk)
-	se.Evaluator = eval
+	se.EvaluatorWrapper = &EvaluatorWrapper{Evaluator: eval}
 
 	eval.ShallowCopy()
 
@@ -165,6 +160,17 @@ func (se *fullEvaluatorContext) Input(opl pkg.OperandLabel) pkg.Operand {
 	op := <-fop.Await()
 	log.Printf("%s | got input %s\n", se.sess.NodeID, op.OperandLabel)
 	return op
+}
+
+func (se *fullEvaluatorContext) Load(opl pkg.OperandLabel) pkg.Operand {
+	ct, exists := se.sess.CiphertextStore.Load(pkg.CiphertextID(opl))
+	if !exists {
+		panic(fmt.Errorf("cannot load ciphertext: %s does not exist", opl))
+	}
+	return pkg.Operand{
+		OperandLabel: opl,
+		Ciphertext:   &ct.Ciphertext,
+	}
 }
 
 func (se *fullEvaluatorContext) Set(op pkg.Operand) {
@@ -208,12 +214,12 @@ func (se *fullEvaluatorContext) Parameters() bgv.Parameters {
 }
 
 func (se *fullEvaluatorContext) NewEvaluator() Evaluator {
-	return se.Evaluator.ShallowCopy()
+	return &EvaluatorWrapper{se.Evaluator.ShallowCopy()}
 }
 
-func (se *fullEvaluatorContext) EvalWithKey(evk rlwe.EvaluationKeySet) Evaluator {
-	return se.Evaluator.WithKey(evk)
-}
+// func (se *fullEvaluatorContext) EvalWithKey(evk rlwe.EvaluationKeySet) Evaluator {
+// 	return se.Evaluator.WithKey(evk)
+// }
 
 func (se *fullEvaluatorContext) CircuitDescription() CircuitDescription {
 	return se.cDesc

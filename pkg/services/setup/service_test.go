@@ -14,18 +14,20 @@ import (
 	"github.com/ldsec/helium/pkg/services/setup"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
 
-var TestPN12QP109 = rlwe.ParametersLiteral{
+var TestPN12QP109 = bgv.ParametersLiteral{
 	LogN: 12,
 	Q:    []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
 	P:    []uint64{0xa001},                         // 15 bits
+	T:    65537,
 }
 
-var rangeParam = []rlwe.ParametersLiteral{TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
+var rangeParam = []bgv.ParametersLiteral{TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
 
 type testSetting struct {
 	N int // N - total parties
@@ -552,7 +554,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
 
-		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
+		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params.Parameters), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
 	}
 
 	// check RTG
@@ -564,8 +566,8 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			}
 
 			decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
-			noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
-			require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params), noiseBound, "rtk for galEl %d should be correct", key.GaloisEl)
+			noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
+			require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params.Parameters), noiseBound, "rtk for galEl %d should be correct", key.GaloisEl)
 		}
 	}
 
@@ -577,9 +579,9 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 		}
 
 		BaseRNSDecompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
-		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
 
-		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
 	}
 
 	// check shared PK
@@ -592,7 +594,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 			if externalSk == nil || len(externalSk) == 0 {
 				t.Fatalf("%s | cannot check correctness of public key of %s", sess.NodeID, key.Sender)
 			}
-			require.Less(t, rlwe.NoisePublicKey(pk, externalSk[0], params), params.NoiseFreshSK())
+			require.Less(t, rlwe.NoisePublicKey(pk, externalSk[0], params.Parameters), params.NoiseFreshSK())
 		}
 	}
 }

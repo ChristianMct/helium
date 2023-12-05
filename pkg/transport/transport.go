@@ -36,6 +36,9 @@ type Transport interface {
 
 	// GetNetworkStats returns the basic network-usage statistics for the transport.
 	GetNetworkStats() NetStats
+
+	// ResetNetworkStats resets the network stats
+	ResetNetworkStats()
 }
 
 // SetupServiceTransport is an interface for the transport layer supporting the setup service.

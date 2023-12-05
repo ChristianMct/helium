@@ -20,14 +20,14 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var testPN13QP218 = rlwe.ParametersLiteral{
-	LogN:    13,
-	Q:       []uint64{0x3fffffffef8001, 0x4000000011c001, 0x40000000120001}, // 54 + 54 + 54 bits
-	P:       []uint64{0x7ffffffffb4001},                                     // 55 bits
-	NTTFlag: true,                                                           // TODO should not have to specify this in bgv.NewParameters
+var testPN13QP218 = bgv.ParametersLiteral{
+	LogN: 13,
+	Q:    []uint64{0x3fffffffef8001, 0x4000000011c001, 0x40000000120001}, // 54 + 54 + 54 bits
+	P:    []uint64{0x7ffffffffb4001},                                     // 55 bits
+	T:    65537,                                                          // TODO should not have to specify this in bgv.NewParameters
 }
 
-var rangeParam = []rlwe.ParametersLiteral{ /*rlwe.TestPN12QP109 , */ testPN13QP218 /* rlwe.TestPN14QP438, rlwe.TestPN15QP880 */}
+var rangeParam = []bgv.ParametersLiteral{ /*rlwe.TestPN12QP109 , */ testPN13QP218 /* rlwe.TestPN14QP438, rlwe.TestPN15QP880 */}
 
 type testSetting struct {
 	N, T int
@@ -106,10 +106,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 				}
 
 				params := localtest.Params
-				bgvParams, err := bgv.NewParameters(params, 65537)
-				if err != nil {
-					t.Fatal(err)
-				}
+				bgvParams := params
 
 				localtest.Start()
 
@@ -123,6 +120,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 					{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID("test-circuit-4")},
 				}
 
+				var err error
 				cDescs := make([]*CircuitDescription, len(cSigns))
 				for i, cSign := range cSigns {
 					c := node.TestCircuits[cSign.CircuitName]

@@ -11,6 +11,7 @@ import (
 	. "github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
@@ -29,10 +30,11 @@ var testSettings = []testSetting{
 	{N: 3, T: 2, Helper: true},
 }
 
-var TestPN12QP109 = rlwe.ParametersLiteral{
+var TestPN12QP109 = bgv.ParametersLiteral{
 	LogN: 12,
 	Q:    []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
 	P:    []uint64{0xa001},                         // 15 bits
+	T:    65537,
 }
 
 func TestProtocols(t *testing.T) {
@@ -84,7 +86,7 @@ type testEnvironment struct {
 	aggShareRkg1      AggregationOutput
 }
 
-func newTestEnvironment(ts testSetting, params rlwe.ParametersLiteral) *testEnvironment {
+func newTestEnvironment(ts testSetting, params bgv.ParametersLiteral) *testEnvironment {
 	te := new(testEnvironment)
 	te.N = ts.N
 	if ts.T == 0 {
@@ -182,20 +184,20 @@ func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
 					pk, isPk := out.Result.(*rlwe.PublicKey)
 					require.True(t, isPk)
 
-					require.Less(t, rlwe.NoisePublicKey(pk, sk, te.Params), math.Log2(math.Sqrt(float64(nParties))*te.Params.NoiseFreshSK())+1)
+					require.Less(t, rlwe.NoisePublicKey(pk, sk, te.Params.Parameters), math.Log2(math.Sqrt(float64(nParties))*te.Params.NoiseFreshSK())+1)
 				case RTG:
 					swk, isSwk := out.Result.(*rlwe.GaloisKey)
 					require.True(t, isSwk)
 
-					noise := rlwe.NoiseGaloisKey(swk, sk, params)
-					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+					noise := rlwe.NoiseGaloisKey(swk, sk, params.Parameters)
+					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
 					require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
 				case RKG_2:
 					rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
 					require.True(t, isRlk)
 
-					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
-					require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
+					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
+					require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
 				default:
 					t.Fatalf("invalid protocol type")
 				}

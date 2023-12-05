@@ -16,7 +16,6 @@ import (
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
-	"github.com/tuneinsight/lattigo/v4/bgv"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -38,6 +37,8 @@ type Node struct {
 	transport transport.Transport
 
 	objectstore.ObjectStore
+
+	precomputeHandler func(*pkg.SessionStore, compute.PublicKeyBackend) error
 }
 
 type Config struct {
@@ -102,6 +103,8 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	node.transport.RegisterSetupService(node.setup)
 	node.transport.RegisterComputeService(node.compute)
 
+	node.precomputeHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
+
 	return node, nil
 }
 
@@ -114,11 +117,6 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 	N := len(sess.Nodes)
 	T := sess.T
 
-	params, err := bgv.NewParameters(*sess.Params, 65537)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot instantiate cryptographic parameters: %w", err)
-	}
-
 	for cName, circuit := range app.Circuits {
 		compute.RegisterCircuit(cName, circuit)
 	}
@@ -130,7 +128,7 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 	}
 	for _, cs := range app.Circuits {
 		// infer setup description
-		compSd, err := setup.CircuitToSetupDescription(cs, params)
+		compSd, err := setup.CircuitToSetupDescription(cs, *sess.Params)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error while converting circuit to setup description: %w", err)
 		}
@@ -150,6 +148,7 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 		}
 		elapsed := time.Since(start)
 		node.OutputStats("setup", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+		node.ResetNetworkStats()
 		close(setupDone)
 	}()
 
@@ -158,6 +157,9 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 
 	go func() {
 		<-setupDone
+		if err := node.precomputeHandler(node.sessions, setupSrv); err != nil {
+			panic(fmt.Errorf("precomputeHandler returned an error: %w", err))
+		}
 		start := time.Now()
 		err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outs)
 		if err != nil {
@@ -313,6 +315,14 @@ func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, m
 			log.Println(errWrite)
 		}
 	}
+}
+
+func (node *Node) ResetNetworkStats() {
+	node.transport.ResetNetworkStats()
+}
+
+func (node *Node) RegisterPrecomputeHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
+	node.precomputeHandler = h
 }
 
 type Context struct {

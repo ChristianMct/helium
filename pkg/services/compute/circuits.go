@@ -10,7 +10,9 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
+	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
 )
 
 type Evaluator interface {
@@ -24,6 +26,10 @@ type Evaluator interface {
 	Relinearize(op0, op1 *rlwe.Ciphertext) (err error)
 	Rescale(op0, op1 *rlwe.Ciphertext) (err error)
 	InnerSum(ctIn *rlwe.Ciphertext, batchSize, n int, opOut *rlwe.Ciphertext) (err error)
+	AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error)
+
+	DecomposeNTT(levelQ, levelP, nbPi int, c2 ring.Poly, c2IsNTT bool, decompQP []ringqp.Poly)
+	NewDecompQPBuffer() []ringqp.Poly
 }
 
 // EvaluationContext defines the interface that is available to circuits to access
@@ -31,6 +37,9 @@ type Evaluator interface {
 type EvaluationContext interface {
 	// Input reads an input operand with the given label from the context.
 	Input(pkg.OperandLabel) pkg.Operand
+
+	// Load reads an existing ciphertext in the session
+	Load(pkg.OperandLabel) pkg.Operand
 
 	// Set registers the given operand to the context.
 	Set(pkg.Operand)
@@ -52,7 +61,7 @@ type EvaluationContext interface {
 
 	NewEvaluator() Evaluator
 
-	EvalWithKey(evk rlwe.EvaluationKeySet) Evaluator
+	//EvalWithKey(evk rlwe.EvaluationKeySet) Evaluator
 
 	Evaluator
 }
@@ -137,6 +146,10 @@ func (e *circuitParserContext) Input(in pkg.OperandLabel) pkg.Operand {
 	defer e.l.Unlock()
 	e.cDesc.InputSet.Add(in.ForCircuit(e.circID).ForMapping(e.nodeMapping))
 	return pkg.Operand{OperandLabel: in}
+}
+
+func (e *circuitParserContext) Load(in pkg.OperandLabel) pkg.Operand {
+	return pkg.Operand{OperandLabel: in} // TODO: collect ciphertext dependencies
 }
 
 func (e *circuitParserContext) Set(op pkg.Operand) {
@@ -261,6 +274,13 @@ func (e *circuitParserContext) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n 
 	return nil
 }
 
+func (e *circuitParserContext) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
+	e.l.Lock()
+	defer e.l.Unlock()
+	e.ctx.cDesc.GaloisKeys.Add(galEl)
+	return nil
+}
+
 type dummyEvaluator struct{ ctx *circuitParserContext }
 
 func (de *dummyEvaluator) Add(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
@@ -309,4 +329,16 @@ func (de *dummyEvaluator) NewEvaluator() Evaluator {
 
 func (de *dummyEvaluator) EvalWithKey(_ rlwe.EvaluationKeySet) Evaluator {
 	return de
+}
+
+func (de *dummyEvaluator) NewDecompQPBuffer() []ringqp.Poly {
+	return nil
+}
+
+func (de *dummyEvaluator) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
+	return nil
+}
+
+func (de *dummyEvaluator) DecomposeNTT(levelQ, levelP, nbPi int, c2 ring.Poly, c2IsNTT bool, decompQP []ringqp.Poly) {
+
 }

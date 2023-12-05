@@ -7,6 +7,7 @@ import (
 
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"google.golang.org/grpc/metadata"
 
@@ -143,7 +144,7 @@ type Session struct {
 	rlkEphSk *rlwe.SecretKey
 
 	PublicSeed []byte
-	Params     *rlwe.Parameters
+	Params     *bgv.Parameters
 
 	*CiphertextStore
 	objectstore.ObjectStore
@@ -155,7 +156,7 @@ type Session struct {
 type SessionParameters struct {
 	ID                      SessionID
 	Nodes                   []NodeID
-	RLWEParams              rlwe.ParametersLiteral
+	RLWEParams              bgv.ParametersLiteral
 	T                       int
 	ShamirPks               map[NodeID]drlwe.ShamirPublicPoint
 	PublicSeed, PrivateSeed []byte
@@ -178,7 +179,7 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 		sess.SPKS[id] = spk
 	}
 
-	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams)
+	params, err := bgv.NewParametersFromLiteral(sessParams.RLWEParams)
 	sess.Params = &params
 
 	if sessParams.T == 0 {
@@ -340,7 +341,7 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 		if err != nil {
 			return nil, err
 		}
-		drlwe.NewCombiner(*sess.Params,
+		drlwe.NewCombiner(*&sess.Params.Parameters,
 			sess.GetShamirPublicPoints()[sess.NodeID],
 			sess.GetShamirPublicPointsList(),
 			sess.T).GenAdditiveShare(spks, sess.SPKS[sess.NodeID], *tsk, sk)

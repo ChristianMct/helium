@@ -8,7 +8,7 @@ import (
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/setup"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 )
 
 func main() {
@@ -57,10 +57,11 @@ func main() {
 		LightNodes: 0,
 		Session: &pkg.SessionParameters{
 			// Poseidon
-			RLWEParams: rlwe.ParametersLiteral{
+			RLWEParams: bgv.ParametersLiteral{
 				LogN: 14,
 				LogQ: []int{52, 47, 47, 47, 47, 47, 47},
 				LogP: []int{52, 52},
+				T:    65537,
 			},
 			// Bootstrapping:
 			// RLWEParams: rlwe.ParametersLiteral{

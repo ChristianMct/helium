@@ -209,6 +209,12 @@ func (t *Transport) GetComputeTransport() transport.ComputeServiceTransport {
 	return t.compute
 }
 
+func (t *Transport) ResetNetworkStats() {
+	t.statsHandler.mu.Lock()
+	defer t.statsHandler.mu.Unlock()
+	t.statsHandler.stats = transport.NetStats{}
+}
+
 func (t *Transport) GetNetworkStats() transport.NetStats {
 	t.statsHandler.mu.Lock()
 	defer t.statsHandler.mu.Unlock()

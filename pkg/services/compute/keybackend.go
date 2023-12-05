@@ -48,6 +48,7 @@ type CachedKeyBackend struct {
 func NewCachedPublicKeyBackend(kb PublicKeyBackend) (ckb *CachedKeyBackend) {
 	ckb = new(CachedKeyBackend)
 	ckb.PublicKeyBackend = kb
+	ckb.GaloisKeys = make(map[uint64]*rlwe.GaloisKey)
 	return ckb
 }
 

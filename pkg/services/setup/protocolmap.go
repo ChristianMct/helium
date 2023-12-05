@@ -3,6 +3,7 @@ package setup
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 
 	"github.com/ldsec/helium/pkg/pkg"
@@ -54,10 +55,19 @@ func MergeSetupDescriptions(sd1, sd2 Description) (sdOut Description) {
 func mergeReceivers(r1, r2 []pkg.NodeID) (rOut []pkg.NodeID) {
 	s1 := utils.NewSet(r1)
 	s1.AddAll(utils.NewSet(r2))
-	if els := s1.Elements(); len(els) != 0 {
-		return els
+	els := s1.Elements()
+	if len(els) == 0 {
+		return nil
 	}
-	return nil
+	elsString := make([]string, len(els))
+	for i, el := range els {
+		elsString[i] = string(el)
+	}
+	sort.Strings(elsString)
+	for i, el := range elsString {
+		els[i] = pkg.NodeID(el)
+	}
+	return els
 }
 
 // CircuitToSetupDescription converts a CircuitDescription into a setup.Description by

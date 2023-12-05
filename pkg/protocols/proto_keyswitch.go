@@ -45,10 +45,10 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session) (KeySwitchInstance, 
 	case CKS:
 		return nil, fmt.Errorf("generic standalone CKS protocol not supported yet") // TODO
 	case DEC:
-		ks.proto, err = NewCKSProtocol(params, pd.Signature.Args)
+		ks.proto, err = NewCKSProtocol(params.Parameters, pd.Signature.Args)
 		ks.outputKey = rlwe.NewSecretKey(params) // target key is zero for decryption
 	case PCKS:
-		ks.proto, err = NewPCKSProtocol(params, pd.Signature.Args)
+		ks.proto, err = NewPCKSProtocol(params.Parameters, pd.Signature.Args)
 		pk, err := sess.GetOutputPkForNode(pkg.NodeID(target))
 		if err != nil {
 			return nil, err

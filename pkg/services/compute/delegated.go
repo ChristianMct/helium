@@ -49,11 +49,7 @@ func (s *Service) newDelegatedEvaluatorContext(delegateID pkg.NodeID, sess *pkg.
 	de.f = cDef
 	de.cid = cid
 
-	var err error
-	de.params, err = bgv.NewParameters(*sess.Params, 65537)
-	if err != nil {
-		panic(err)
-	}
+	de.params = *sess.Params
 
 	dummyCtx := newCircuitParserCtx(cid, de.params, nil)
 	if err := cDef(dummyCtx); err != nil {
@@ -111,6 +107,10 @@ func (de *delegatedEvaluatorContext) LocalOutputs() chan pkg.Operand {
 }
 
 func (de *delegatedEvaluatorContext) Input(opl pkg.OperandLabel) pkg.Operand {
+	return pkg.Operand{OperandLabel: opl}
+}
+
+func (de *delegatedEvaluatorContext) Load(opl pkg.OperandLabel) pkg.Operand {
 	return pkg.Operand{OperandLabel: opl}
 }
 

@@ -23,6 +23,7 @@ import (
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/transport/grpctrans"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
@@ -51,7 +52,7 @@ type LocalTest struct {
 	LightNodes    []*Node
 	HelperNodes   []*Node
 	ExternalNodes []*Node
-	Params        rlwe.Parameters
+	Params        bgv.Parameters
 
 	SkIdeal     *rlwe.SecretKey
 	NodeConfigs []Config
@@ -81,7 +82,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 	// initialize the session-related fields if session parameters are given
 	if config.Session != nil {
 		var err error
-		test.Params, err = rlwe.NewParametersFromLiteral(config.Session.RLWEParams)
+		test.Params, err = bgv.NewParametersFromLiteral(config.Session.RLWEParams)
 		if err != nil {
 			panic(err)
 		}

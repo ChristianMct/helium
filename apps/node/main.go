@@ -81,12 +81,8 @@ func main() {
 	}
 
 	fmt.Printf("%+v\n", conf.nc)
-	conf.nc.SessionParameters[0].RLWEParams.NTTFlag = true
-	rlweParams, err := rlwe.NewParametersFromLiteral(conf.nc.SessionParameters[0].RLWEParams)
-	if err != nil {
-		panic(err)
-	}
-	params, err := bgv.NewParameters(rlweParams, 65537)
+	//conf.nc.SessionParameters[0].RLWEParams.NTTFlag = true
+	params, err := bgv.NewParametersFromLiteral(conf.nc.SessionParameters[0].RLWEParams)
 	if err != nil {
 		panic(err)
 	}
@@ -198,6 +194,49 @@ func getInputProvider(nodeId pkg.NodeID, nParty int, params bgv.Parameters, enco
 		return pt, nil
 	}
 	return (*compute.InputProvider)(&ip)
+}
+
+func matmul4dec(e compute.EvaluationContext) error {
+
+	params := e.Parameters().Parameters
+
+	m := params.PlaintextDimensions().Cols
+
+	vecOp := e.Input(pkg.OperandLabel("//node-0/vec"))
+
+	matOps := make(map[int]rlwe.Ciphertext)
+	diagGalEl := make(map[int]uint64)
+	for k := 0; k < m; k++ {
+		matOps[k] = *e.Load(pkg.OperandLabel(fmt.Sprintf("//helper-0//mat-diag-%d", k))).Ciphertext
+		diagGalEl[k] = params.GaloisElement(k)
+	}
+
+	vecDecom := e.NewDecompQPBuffer()
+	vecRotated := bgv.NewCiphertext(params, 1, params.MaxLevelQ())
+	e.DecomposeNTT(vecOp.Level(), params.MaxLevelP(), params.PCount(), vecOp.Value[1], true, vecDecom)
+	ctres := rlwe.NewCiphertext(params, 2, params.MaxLevel())
+	for di, d := range matOps {
+		if err := e.AutomorphismHoisted(vecOp.LevelQ(), vecOp.Ciphertext, vecDecom, diagGalEl[di], vecRotated); err != nil {
+			return err
+		}
+		e.MulThenAdd(vecRotated, d, ctres)
+	}
+	if err := e.Relinearize(ctres, ctres); err != nil {
+		return err
+	}
+
+	opres := pkg.Operand{OperandLabel: "//cloud/res-0", Ciphertext: ctres}
+	opout, err := e.DEC(opres, map[string]string{
+		"target":   "cloud",
+		"lvl":      strconv.Itoa(params.MaxLevel()),
+		"smudging": "1.0",
+	})
+	if err != nil {
+		return err
+	}
+
+	e.Output(opout, "cloud")
+	return nil
 }
 
 func mul4Dec(e compute.EvaluationContext) error {

@@ -184,13 +184,13 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 		p = new(cpkProtocol)
 		p.protocol = protocol
 		p.crs = GetCRSForProtocol(pd, sess)
-		p.proto, err = NewCKGProtocol(*sess.Params, pd.Signature.Args)
+		p.proto, err = NewCKGProtocol(*&sess.Params.Parameters, pd.Signature.Args)
 		inst = p
 	case RTG:
 		p = new(cpkProtocol)
 		p.protocol = protocol
 		p.crs = GetCRSForProtocol(pd, sess)
-		p.proto, err = NewRTGProtocol(*sess.Params, pd.Signature.Args)
+		p.proto, err = NewRTGProtocol(*&sess.Params.Parameters, pd.Signature.Args)
 		inst = p
 	case RKG_1:
 		p := new(cpkProtocol)
@@ -203,7 +203,7 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 				return nil, err
 			}
 		}
-		p.proto, err = NewRKGProtocol(*sess.Params, ephSk, 1, pd.Signature.Args)
+		p.proto, err = NewRKGProtocol(*&sess.Params.Parameters, ephSk, 1, pd.Signature.Args)
 		inst = p
 	case RKG_2:
 		p := new(cpkProtocol)
@@ -216,13 +216,13 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 				return nil, err
 			}
 		}
-		p.proto, err = NewRKGProtocol(*sess.Params, ephSk, 2, pd.Signature.Args)
+		p.proto, err = NewRKGProtocol(*&sess.Params.Parameters, ephSk, 2, pd.Signature.Args)
 		inst = p
 	case PK:
 		p := new(pkProtocol)
 		p.protocol = protocol
 		p.crs = GetCRSForProtocol(pd, sess)
-		p.proto, err = NewCKGProtocol(*sess.Params, pd.Signature.Args)
+		p.proto, err = NewCKGProtocol(*&sess.Params.Parameters, pd.Signature.Args)
 		inst = p
 	default:
 		err = fmt.Errorf("unknown protocol type: %s", pd.Signature.Type)

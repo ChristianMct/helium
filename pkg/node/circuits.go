@@ -15,63 +15,63 @@ import (
 
 // TestCircuits is a map mapping a circuitID string to each circuit function.
 var TestCircuits = map[string]compute.Circuit{
-	"identity-1": func(ec compute.EvaluationContext) error {
-		opIn := ec.Input("//node-0/in-0")
+	// "identity-1": func(ec compute.EvaluationContext) error {
+	// 	opIn := ec.Input("//node-0/in-0")
 
-		opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
+	// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
 
-		params := ec.Parameters().Parameters
-		opOut, err := ec.DEC(opRes, map[string]string{
-			"target":   "node-0",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": "1.0",
-		})
-		if err != nil {
-			return err
-		}
+	// 	params := ec.Parameters().Parameters
+	// 	opOut, err := ec.DEC(opRes, map[string]string{
+	// 		"target":   "node-0",
+	// 		"lvl":      strconv.Itoa(params.MaxLevel()),
+	// 		"smudging": "1.0",
+	// 	})
+	// 	if err != nil {
+	// 		return err
+	// 	}
 
-		ec.Output(opOut, "node-0")
-		return nil
-	},
-	"psi-2": func(ec compute.EvaluationContext) error {
-		return psiN(2, ec)
-	},
-	"psi-4": func(ec compute.EvaluationContext) error {
-		return psiN(4, ec)
-	},
-	"psi-8": func(ec compute.EvaluationContext) error {
-		return psiN(8, ec)
-	},
-	"psi-2-PCKS": func(ec compute.EvaluationContext) error {
-		opIn1 := ec.Input("//node-0/in-0")
-		opIn2 := ec.Input("//node-1/in-0")
+	// 	ec.Output(opOut, "node-0")
+	// 	return nil
+	// },
+	// "psi-2": func(ec compute.EvaluationContext) error {
+	// 	return psiN(2, ec)
+	// },
+	// "psi-4": func(ec compute.EvaluationContext) error {
+	// 	return psiN(4, ec)
+	// },
+	// "psi-8": func(ec compute.EvaluationContext) error {
+	// 	return psiN(8, ec)
+	// },
+	// "psi-2-PCKS": func(ec compute.EvaluationContext) error {
+	// 	opIn1 := ec.Input("//node-0/in-0")
+	// 	opIn2 := ec.Input("//node-1/in-0")
 
-		res, _ := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
-		ec.Relinearize(res, res)
-		opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+	// 	res, _ := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+	// 	ec.Relinearize(res, res)
+	// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 
-		params := ec.Parameters().Parameters
-		opOut, err := ec.PCKS(opRes, map[string]string{
-			"target":   "node-R",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": "1.0",
-		})
-		if err != nil {
-			return err
-		}
+	// 	params := ec.Parameters().Parameters
+	// 	opOut, err := ec.PCKS(opRes, map[string]string{
+	// 		"target":   "node-R",
+	// 		"lvl":      strconv.Itoa(params.MaxLevel()),
+	// 		"smudging": "1.0",
+	// 	})
+	// 	if err != nil {
+	// 		return err
+	// 	}
 
-		ec.Output(opOut, "node-R")
-		return nil
-	},
-	"pir-3": func(ec compute.EvaluationContext) error {
-		return pirN(3, ec)
-	},
-	"pir-5": func(ec compute.EvaluationContext) error {
-		return pirN(5, ec)
-	},
-	"pir-9": func(ec compute.EvaluationContext) error {
-		return pirN(9, ec)
-	},
+	// 	ec.Output(opOut, "node-R")
+	// 	return nil
+	// },
+	// "pir-3": func(ec compute.EvaluationContext) error {
+	// 	return pirN(3, ec)
+	// },
+	// "pir-5": func(ec compute.EvaluationContext) error {
+	// 	return pirN(5, ec)
+	// },
+	// "pir-9": func(ec compute.EvaluationContext) error {
+	// 	return pirN(9, ec)
+	// },
 
 	"mul4-dec": func(e compute.EvaluationContext) error {
 
@@ -122,6 +122,52 @@ var TestCircuits = map[string]compute.Circuit{
 
 		e.Output(opout, "helper-0")
 
+		return nil
+	},
+
+	"matmul4-dec": func(e compute.EvaluationContext) error {
+		params := e.Parameters()
+
+		m := params.PlaintextDimensions().Cols
+
+		vecOp := e.Input(pkg.OperandLabel("//light-0/vec"))
+
+		matOps := make(map[int]pkg.Operand)
+		diagGalEl := make(map[int]uint64)
+		for k := 0; k < m; k++ {
+			matOps[k] = e.Load(pkg.OperandLabel(fmt.Sprintf("//helper-0/mat-diag-%d", k)))
+			diagGalEl[k] = params.GaloisElement(k)
+		}
+
+		if vecOp.Ciphertext == nil { //TODO: this is only for the circuit parser to pass...
+			vecOp.Ciphertext = bgv.NewCiphertext(params, 1, params.MaxLevelQ())
+		}
+
+		vecDecom := e.NewDecompQPBuffer()
+		vecRotated := bgv.NewCiphertext(params, 1, params.MaxLevelQ())
+		e.DecomposeNTT(params.MaxLevelQ(), params.MaxLevelP(), params.PCount(), vecOp.Value[1], true, vecDecom)
+		ctres := rlwe.NewCiphertext(params, 2, params.MaxLevel())
+		for di, d := range matOps {
+			if err := e.AutomorphismHoisted(vecOp.LevelQ(), vecOp.Ciphertext, vecDecom, diagGalEl[di], vecRotated); err != nil {
+				return err
+			}
+			e.MulThenAdd(vecRotated, d.Ciphertext, ctres)
+		}
+		if err := e.Relinearize(ctres, ctres); err != nil {
+			return err
+		}
+
+		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: ctres}
+		opout, err := e.DEC(opres, map[string]string{
+			"target":   "helper-0",
+			"lvl":      strconv.Itoa(params.MaxLevel()),
+			"smudging": "40.0",
+		})
+		if err != nil {
+			return err
+		}
+
+		e.Output(opout, "helper-0")
 		return nil
 	},
 }

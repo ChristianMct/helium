@@ -9,7 +9,7 @@ import (
 )
 
 func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.SecretKey, tsk *drlwe.ShamirSecretShare, err error) {
-	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams)
+	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams.RLWEParametersLiteral())
 	if err != nil {
 		return nil, nil, err
 	}
