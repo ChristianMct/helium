@@ -319,6 +319,7 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 		if err != nil {
 			return err
 		}
+		s.Logf("is registered with %s", s.evaluatorID)
 		go func() {
 			if err := s.catchUp(cus, present, sigs); err != nil {
 				panic(err)
