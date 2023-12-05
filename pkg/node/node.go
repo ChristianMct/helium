@@ -38,7 +38,12 @@ type Node struct {
 
 	objectstore.ObjectStore
 
+	pkBackend compute.PublicKeyBackend
+
+	postsetupHandler  func(*pkg.SessionStore, compute.PublicKeyBackend) error
 	precomputeHandler func(*pkg.SessionStore, compute.PublicKeyBackend) error
+
+	setupDone chan struct{}
 }
 
 type Config struct {
@@ -95,7 +100,9 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
-	node.compute, err = compute.NewComputeService(node.id, cloudID, node, node.transport.GetComputeTransport(), node.setup)
+
+	node.pkBackend = compute.NewCachedPublicKeyBackend(node.setup)
+	node.compute, err = compute.NewComputeService(node.id, cloudID, node, node.transport.GetComputeTransport(), node.pkBackend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}
@@ -103,7 +110,10 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	node.transport.RegisterSetupService(node.setup)
 	node.transport.RegisterComputeService(node.compute)
 
+	node.postsetupHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
 	node.precomputeHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
+
+	node.setupDone = make(chan struct{})
 
 	return node, nil
 }
@@ -137,8 +147,6 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 	}
 
 	setupSrv, computeSrv := node.GetSetupService(), node.GetComputeService()
-
-	setupDone := make(chan struct{})
 	// executes the setup phase
 	go func() {
 		start := time.Now()
@@ -149,14 +157,15 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 		elapsed := time.Since(start)
 		node.OutputStats("setup", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
 		node.ResetNetworkStats()
-		close(setupDone)
+		node.postsetupHandler(node.sessions, node.pkBackend)
+		close(node.setupDone)
 	}()
 
 	sigs = make(chan circuits.Signature)
 	outs = make(chan compute.CircuitOutput)
 
 	go func() {
-		<-setupDone
+		<-node.setupDone
 		if err := node.precomputeHandler(node.sessions, setupSrv); err != nil {
 			panic(fmt.Errorf("precomputeHandler returned an error: %w", err))
 		}
@@ -171,6 +180,10 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 	}()
 
 	return sigs, outs, nil
+}
+
+func (node *Node) WaitForSetupDone() {
+	<-node.setupDone
 }
 
 func (node *Node) GetTransport() transport.Transport {
@@ -319,6 +332,10 @@ func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, m
 
 func (node *Node) ResetNetworkStats() {
 	node.transport.ResetNetworkStats()
+}
+
+func (node *Node) RegisterPostsetupHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
+	node.postsetupHandler = h
 }
 
 func (node *Node) RegisterPrecomputeHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {

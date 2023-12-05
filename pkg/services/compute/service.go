@@ -62,7 +62,7 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 	s.sessions = sessions
 	s.transport = trans
 
-	s.pkBackend = NewCachedPublicKeyBackend(pkBackend)
+	s.pkBackend = pkBackend
 
 	s.peers = pkg.NewPartySet()
 

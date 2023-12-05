@@ -3,6 +3,7 @@
 #########################################
 FROM golang:1.20.1 as builder
 
+ARG APP=./apps/node
 
 WORKDIR /helium
 
@@ -12,9 +13,11 @@ COPY go.sum ./
 RUN go mod download
 
 COPY pkg ./pkg
-COPY apps ./apps
+#COPY apps ./apps
 
-RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -v ./apps/node
+COPY ${APP} ./app
+
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -v -o node ./app 
 
 #########################################
 #  Image                                #

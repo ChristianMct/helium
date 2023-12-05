@@ -15,9 +15,11 @@ import (
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"gonum.org/v1/gonum/mat"
 
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/services/compute"
+	"github.com/ldsec/helium/pkg/services/setup"
 )
 
 const DefaultAddress = ""
@@ -87,15 +89,95 @@ func main() {
 		panic(err)
 	}
 
-	nParty := len(conf.nc.SessionParameters[0].Nodes)
+	//nParty := len(conf.nc.SessionParameters[0].Nodes)
+
+	m := params.PlaintextDimensions().Cols
+
+	a := mat.NewDense(m, m, nil)
+	a.Apply(func(i, j int, v float64) float64 {
+		return float64(i) + float64(2*j)
+	}, a)
 
 	encoder := bgv.NewEncoder(params) // TODO pass encoder in ip ?
 
+	var ip compute.InputProvider = func(ctx context.Context, ol pkg.OperandLabel) (*rlwe.Plaintext, error) {
+		encoder := encoder.ShallowCopy()
+		url, err := pkg.ParseURL(string(ol))
+		if err != nil {
+			return nil, err
+		}
+
+		if url.NodeID() == "cloud" {
+			return nil, nil
+		}
+
+		nodeNum, err := strconv.Atoi(strings.TrimPrefix(string(conf.nc.ID), "node-"))
+		if err != nil {
+			panic(err)
+		}
+
+		// val, err := strconv.Atoi(strings.TrimPrefix(string(url.CircuitID()), "test-circuit-"))
+		// if err != nil {
+		// 	return nil, err
+		// }
+
+		var pt *rlwe.Plaintext
+		b := mat.NewVecDense(m, nil)
+		b.SetVec(nodeNum, 1)
+		data := make([]uint64, len(b.RawVector().Data))
+		for i, bi := range b.RawVector().Data {
+			data[i] = uint64(bi)
+		}
+
+		pt = bgv.NewPlaintext(params, params.MaxLevelQ())
+		err = encoder.Encode(data, pt)
+
+		if err != nil {
+			return nil, err
+		}
+		return pt, nil
+	}
+
+	checkResultCorrect := func(opl pkg.OperandLabel, res []uint64) {
+		// url, err := pkg.ParseURL(string(opl))
+		// if err != nil {
+		// 	panic(err)
+		// }
+		// val, err := strconv.Atoi(strings.TrimPrefix(string(url.CircuitID()), "test-circuit-"))
+		// if err != nil {
+		// 	panic(err)
+		// }
+
+		b := mat.NewVecDense(m, nil)
+		b.SetVec(0, 1)
+		r := mat.NewVecDense(m, nil)
+
+		r.MulVec(a, b)
+		dataWant := make([]uint64, len(r.RawVector().Data))
+		for i, v := range r.RawVector().Data {
+			dataWant[i] = uint64(v)
+		}
+
+		for i, v := range res {
+			if v != dataWant[i] {
+				panic(fmt.Errorf("incorrect result for %s: \n has %v, want %v", opl, res, dataWant))
+			}
+		}
+	}
+
+	allNodes := make([]pkg.NodeID, len(conf.nl))
+	for i := range conf.nl {
+		allNodes[i] = conf.nl[i].NodeID
+	}
+
 	app := node.App{
-		Circuits: map[string]compute.Circuit{
-			"mul4-dec": mul4Dec,
+		SetupDescription: &setup.Description{
+			Cpk: allNodes,
 		},
-		InputProvider: getInputProvider(conf.nc.ID, nParty, params, encoder),
+		Circuits: map[string]compute.Circuit{
+			"matmul4-dec": matmul4dec,
+		},
+		InputProvider: &ip,
 	}
 
 	node, err := node.NewNode(conf.nc, conf.nl)
@@ -119,17 +201,69 @@ func main() {
 	sessId := pkg.SessionID("test-session")
 	ctx := pkg.NewContext(&sessId, nil)
 
+	if conf.nc.ID == "cloud" {
+		node.RegisterPostsetupHandler(func(ss *pkg.SessionStore, pkb compute.PublicKeyBackend) error {
+			encoder := bgv.NewEncoder(params)
+
+			cpk, err := pkb.GetCollectivePublicKey()
+			if err != nil {
+				return err
+			}
+			encryptor, err := bgv.NewEncryptor(params, cpk)
+			if err != nil {
+				return err
+			}
+
+			pta := make(map[int]*rlwe.Plaintext)
+			cta := make(map[int]*rlwe.Ciphertext)
+			sess, _ := ss.GetSessionFromID("test-session")
+
+			diag := make(map[int][]uint64, m)
+			for k := 0; k < m; k++ {
+				diag[k] = make([]uint64, m)
+				for i := 0; i < m; i++ {
+					j := (i + k) % m
+					diag[k][i] = uint64(a.At(i, j))
+				}
+			}
+
+			node.Logf("generating encrypted matrix...")
+			for di, d := range diag {
+				pta[di] = rlwe.NewPlaintext(params, params.MaxLevel())
+				encoder.Encode(d, pta[di])
+				cta[di], err = encryptor.EncryptNew(pta[di])
+				if err != nil {
+					return err
+				}
+				sess.CiphertextStore.Store(pkg.Ciphertext{Ciphertext: *cta[di], CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(fmt.Sprintf("//cloud/mat-diag-%d", di))}})
+			}
+			node.Logf("done")
+
+			node.Logf("loading the evaluation keys...")
+			for di := range diag {
+				_, err = pkb.GetGaloisKey(params.GaloisElement(di))
+				if err != nil {
+					return err
+				}
+			}
+			node.Logf("done")
+			return nil
+		})
+	}
+
 	sigs, outs, err := node.Run(ctx, app)
 	if err != nil {
 		panic(err)
 	}
+
+	node.WaitForSetupDone()
 
 	start := time.Now()
 	var nSig int
 	if conf.nc.ID == "cloud" {
 		go func() {
 			for i := 0; time.Since(start) < *expDuration; i++ {
-				sigs <- circuits.Signature{CircuitName: "mul4-dec", CircuitID: pkg.CircuitID(fmt.Sprintf("test-circuit-%d", i))}
+				sigs <- circuits.Signature{CircuitName: "matmul4-dec", CircuitID: pkg.CircuitID(fmt.Sprintf("test-circuit-%d", i))}
 				nSig++
 			}
 			close(sigs)
@@ -140,60 +274,16 @@ func main() {
 	for out := range outs {
 		res := make([]uint64, params.PlaintextSlots())
 		encoder.Decode(out.Pt, res)
-		res = res[:nParty]
+		res = res[:m]
 		checkResultCorrect(out.OperandLabel, res)
 		node.Logf("got correct result for %s: %v", out.OperandLabel, res)
 		nRes++
 	}
 
 	if conf.nc.ID == "cloud" {
-		node.Logf("Processed %d/%d signatures in %s", nSig, nRes, time.Since(start))
+		node.Logf("Processed %d/%d signatures in %s.", nSig, nRes, time.Since(start))
 	}
 	node.Logf("exiting.")
-}
-
-func getInputProvider(nodeId pkg.NodeID, nParty int, params bgv.Parameters, encoder *bgv.Encoder) *compute.InputProvider {
-
-	ip := func(ctx context.Context, ol pkg.OperandLabel) (*rlwe.Plaintext, error) {
-		encoder := encoder.ShallowCopy()
-		url, err := pkg.ParseURL(string(ol))
-		if err != nil {
-			return nil, err
-		}
-
-		if url.NodeID() == "cloud" {
-			return nil, nil
-		}
-
-		nodeNum, err := strconv.Atoi(strings.TrimPrefix(string(nodeId), "node-"))
-		if err != nil {
-			panic(err)
-		}
-
-		val, err := strconv.Atoi(strings.TrimPrefix(string(url.CircuitID()), "test-circuit-"))
-		if err != nil {
-			return nil, err
-		}
-
-		var pt *rlwe.Plaintext
-		data := make([]uint64, nParty, nParty)
-		for i := range data {
-			if i == nodeNum {
-				data[i] = uint64(val)
-			} else {
-				data[i] = 1
-			}
-		}
-
-		pt = bgv.NewPlaintext(params, params.MaxLevelQ())
-		err = encoder.Encode(data, pt)
-
-		if err != nil {
-			return nil, err
-		}
-		return pt, nil
-	}
-	return (*compute.InputProvider)(&ip)
 }
 
 func matmul4dec(e compute.EvaluationContext) error {
@@ -240,73 +330,4 @@ func matmul4dec(e compute.EvaluationContext) error {
 
 	e.Output(opout, "cloud")
 	return nil
-}
-
-func mul4Dec(e compute.EvaluationContext) error {
-
-	inputs := make(chan pkg.Operand, 4)
-	inOpls := utils.NewSet([]pkg.OperandLabel{"//node-0/in-0", "//node-1/in-0", "//node-2/in-0", "//node-3/in-0"})
-	for inOpl := range inOpls {
-		inOpl := inOpl
-		go func() {
-			inputs <- e.Input(inOpl)
-		}()
-	}
-
-	op0 := <-inputs
-	op1 := <-inputs
-
-	lvl2 := make(chan *rlwe.Ciphertext, 2)
-	go func() {
-		ev := e.NewEvaluator()
-		res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
-		ev.Relinearize(res, res)
-		lvl2 <- res
-	}()
-
-	op2 := <-inputs
-	op3 := <-inputs
-
-	go func() {
-		ev := e.NewEvaluator()
-		res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
-		ev.Relinearize(res, res)
-		lvl2 <- res
-	}()
-
-	res1, res2 := <-lvl2, <-lvl2
-	res, _ := e.MulNew(res1, res2)
-	e.Relinearize(res, res)
-
-	params := e.Parameters().Parameters
-	opres := pkg.Operand{OperandLabel: "//cloud/res-0", Ciphertext: res}
-	opout, err := e.DEC(opres, map[string]string{
-		"target":   "cloud",
-		"lvl":      strconv.Itoa(params.MaxLevel()),
-		"smudging": "1.0",
-	})
-	if err != nil {
-		return err
-	}
-
-	e.Output(opout, "cloud")
-
-	return nil
-}
-
-func checkResultCorrect(opl pkg.OperandLabel, res []uint64) {
-	url, err := pkg.ParseURL(string(opl))
-	if err != nil {
-		panic(err)
-	}
-	val, err := strconv.Atoi(strings.TrimPrefix(string(url.CircuitID()), "test-circuit-"))
-	if err != nil {
-		panic(err)
-	}
-
-	for _, v := range res {
-		if v != uint64(val) {
-			panic(fmt.Errorf("incorrect result for %s: %v", opl, res))
-		}
-	}
 }
