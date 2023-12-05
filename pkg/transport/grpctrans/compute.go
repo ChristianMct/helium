@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-const peerCircuitUpdateQueueSize = 10000 // TODO: find way to size that better
+const peerCircuitUpdateQueueSize = 100000 // TODO: find way to size that better
 
 type computeTransport struct {
 	*Transport

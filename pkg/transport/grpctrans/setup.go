@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const peerProtocolUpdateQueueSize = 100
+const peerProtocolUpdateQueueSize = 10000 // TODO: find way to size that better
 
 type setupTransport struct {
 	*Transport
