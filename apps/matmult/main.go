@@ -12,9 +12,11 @@ import (
 
 func main() {
 
-	pl := bgv.ParametersLiteral{T: 1099511678977, LogN: 13, LogQ: []int{45, 45, 45}, LogP: []int{45}}
+	//pl := bgv.ParametersLiteral{T: 1099511678977, LogN: 13, LogQ: []int{45, 45, 45}, LogP: []int{45}}
 
-	printParamT(pl, 8)
+	pl := bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{39, 31}, LogP: []int{39}}
+
+	//printParamT(pl, 16)
 
 	params, err := bgv.NewParametersFromLiteral(pl)
 	if err != nil {

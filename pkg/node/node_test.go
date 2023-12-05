@@ -24,7 +24,7 @@ func failIfNonNil(t *testing.T, err error) {
 func TestHelium(t *testing.T) {
 
 	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 65537, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}})         // vecmul
-	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 1099511678977, LogN: 13, LogQ: []int{45, 45, 45}, LogP: []int{45}}) // matmul
+	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{39, 31}, LogP: []int{39}}) // matmul
 	failIfNonNil(t, err)
 	sessParams := pkg.SessionParameters{
 		ID:         "test-session",

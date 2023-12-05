@@ -324,7 +324,7 @@ func matmul4dec(e compute.EvaluationContext) error {
 	opout, err := e.DEC(opres, map[string]string{
 		"target":   "cloud",
 		"lvl":      strconv.Itoa(params.MaxLevel()),
-		"smudging": "40.0",
+		"smudging": fmt.Sprintf("%f", float64(1<<20)),
 	})
 	if err != nil {
 		return err
