@@ -10,10 +10,15 @@ services:
     ports:
       - "40000:40000"
       # - cloud-data:/helium/data
-    profiles: ["all", "cloud"]
+    profiles: ["all",  "cloud"]
 
   node-0:
     image: heliummpc/helium:latest
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     container_name: node-0
     volumes:
       - ../node-0.json:/helium/config/node.json
@@ -25,29 +30,44 @@ services:
 
   node-1:
     image: heliummpc/helium:latest
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     container_name: node-1
     volumes:
       - ../node-1.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
 
       # No persistency.
-    profiles: ["all", "clients"]
+    profiles: ["all", "clients", "nonfaulty"]
 
   node-2:
     image: heliummpc/helium:latest
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     container_name: node-2
     volumes:
       - ../node-2.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
-    profiles: ["all", "clients"]
+    profiles: ["all", "clients", "nonfaulty"]
 
   node-3:
     image: heliummpc/helium:latest
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     container_name: node-3
     volumes:
       - ../node-3.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
-    profiles: ["all", "clients"]
+    profiles: ["all", "clients", "nonfaulty"]
 
 # volumes:
   # cloud-data:

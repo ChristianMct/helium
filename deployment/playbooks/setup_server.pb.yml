@@ -26,6 +26,7 @@
           - python3-pip
           - virtualenv
           - python3-setuptools
+          - jq
         state: latest
         update_cache: true
 
@@ -57,6 +58,7 @@
         name: 
           - docker
           - python_on_whales
+          - python-dotenv
 
     - name: Log into DockerHub
       docker_login:

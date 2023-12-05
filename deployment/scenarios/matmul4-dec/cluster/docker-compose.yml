@@ -9,6 +9,8 @@ services:
         - APP=./deployment/scenarios/matmul4-dec/node
     command: -expDuration 10s
     container_name: cloud
+    port:
+      - "40000:40000"
     volumes:
       - ../cloud.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
@@ -23,6 +25,11 @@ services:
       args:
         - APP=./deployment/scenarios/matmul4-dec/node
     container_name: node-0
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     volumes:
       - ../node-0.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
@@ -37,6 +44,11 @@ services:
       args:
         - APP=./deployment/scenarios/matmul4-dec/node
     container_name: node-1
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     volumes:
       - ../node-1.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
@@ -50,6 +62,11 @@ services:
       args:
         - APP=./deployment/scenarios/matmul4-dec/node
     container_name: node-2
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     volumes:
       - ../node-2.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json
@@ -63,6 +80,11 @@ services:
       args:
         - APP=./deployment/scenarios/matmul4-dec/node
     container_name: node-3
+    entrypoint: /helium/shape_egress_and_start.sh
+    env_file:
+      - 'network.env'
+    cap_add:
+      - NET_ADMIN
     volumes:
       - ../node-3.json:/helium/config/node.json
       - ./nodelist.json:/helium/config/nodelist.json

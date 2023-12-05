@@ -5,6 +5,10 @@ import random
 import time
 from python_on_whales import DockerClient
 import subprocess
+import os
+
+from dotenv import load_dotenv
+from pathlib import Path
 
 
 def signal_handler(sig, frame):
@@ -17,27 +21,28 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 if len(sys.argv) != 2:
-    print("Usage: ./%s dockerfile" % sys.argv[0])
+    print("Usage: ./%s composefile" % sys.argv[0])
     sys.exit(1)
 
 
+# Loads the docker compose
 docker = DockerClient(compose_files=[sys.argv[1]], compose_profiles=["all"])
 
-conf = docker.compose.config()
 
-nodes = [n for n in conf.services if n != "cloud"]
-online = list()
-offline = nodes.copy()
-
-# changes the command command with the egress traffic shaper.
-for node in nodes:
-    conf.services[node].command = ["./shape_egress_traffic_and_start.sh"]
-
+# Loads the network condition from network.env
+compose_path = Path(sys.argv[1])
+dotenv_path = compose_path.parent.absolute() / "network.env"
+load_dotenv(dotenv_path=dotenv_path)
+NET_BANDWIDTH_LIMIT = os.getenv('RATE_LIMIT')
+NET_DELAY = os.getenv('DELAY')
 MEAN_FAILURES_PER_MIN = 10
 MEAN_FAILURE_DURATION_MIN = 10/60
 
-NET_BANDWIDTH_LIMIT = "50mbit"
-NET_DELAY = "30ms"
+
+conf = docker.compose.config()
+nodes = [n for n in conf.services if n != "cloud"]
+online = list()
+offline = nodes.copy()
 
 def time_offline():
     return random.expovariate(MEAN_FAILURE_DURATION_MIN)
@@ -49,12 +54,11 @@ def set_online(node):
     offline.remove(node)
     online.append(node)
     docker.compose.start(services=[node])
-
     # runs the ingress traffic shaper
     subprocess.call(["bash", "./shape_ingress_traffic.sh", node, NET_BANDWIDTH_LIMIT, NET_DELAY])
 
-    print("exec", conf.services[node].command)
-    docker.execute(container=node, command=conf.services[node].command, detach=True)
+    #print("exec", conf.services[node].command)
+    #docker.execute(container=node, command=conf.services[node].command, detach=True)
     print("%s is now online" % node)
 
 def set_offline(node):
@@ -81,7 +85,7 @@ stop_event = threading.Event()
 t = threading.Thread(target=failure_process)
 print("Starting up containers...")
 for node in nodes:
-    set_online(node)
+    threading.Thread(target=set_online, args=[node]).start()
 t.start()
 signal.pause()
 t.join()

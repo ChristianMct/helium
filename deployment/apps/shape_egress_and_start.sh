@@ -17,6 +17,8 @@ if [[ -n "${RATE_LIMIT}" ]] || [[ -n "${DELAY}" ]]; then
 
     # apply egress traffic rate limit
     tc qdisc add dev $interface root netem $delay $rate || exit 1
+else
+    echo "No network condition applied"
 fi
 
 /helium/node $@

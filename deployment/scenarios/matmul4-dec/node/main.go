@@ -193,10 +193,12 @@ func main() {
 		}
 	}()
 
+	node.Logf("connecting...")
 	err = node.Connect()
 	if err != nil {
 		panic(err)
 	}
+	node.Logf("done")
 
 	sessId := pkg.SessionID("test-session")
 	ctx := pkg.NewContext(&sessId, nil)
