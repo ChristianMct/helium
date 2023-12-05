@@ -29,7 +29,7 @@ func TestHelium(t *testing.T) {
 	sessParams := pkg.SessionParameters{
 		ID:         "test-session",
 		RLWEParams: params.ParametersLiteral(),
-		//T:          3,
+		T:          3,
 	}
 
 	lt := NewLocalTest(LocalTestConfig{
