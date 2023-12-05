@@ -382,7 +382,7 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 		select {
 		case share := <-env.IncomingShares():
 			done, err := aggregator.PutShare(share)
-			p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
+			//p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 			if err != nil {
 				return err
 			}

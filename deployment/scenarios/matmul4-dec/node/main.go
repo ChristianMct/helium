@@ -278,7 +278,7 @@ func main() {
 		encoder.Decode(out.Pt, res)
 		res = res[:m]
 		checkResultCorrect(out.OperandLabel, res)
-		node.Logf("got correct result for %s: %v", out.OperandLabel, res)
+		node.Logf("got correct result for %s", out.OperandLabel)
 		nRes++
 	}
 

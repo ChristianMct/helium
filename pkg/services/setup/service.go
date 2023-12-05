@@ -87,8 +87,7 @@ func (s *Service) Execute(ctx context.Context, sd Description) error {
 
 	// keep track of protocols whose results are already available
 	sigListNoResult, sigListHasResult := s.filterSignatureList(sigList)
-	s.Logf("protocol results can be loaded from the object store: %s", sigListHasResult)
-	s.Logf("protocol will be executed: %s", sigListNoResult)
+	s.Logf("%d protocols in the setup: %d in object store + %d to be executed", len(sigList), len(sigListHasResult), len(sigListNoResult))
 
 	// 2. REGISTRATION: register for setup to the aggregator
 	outCtx := pkg.GetOutgoingContext(context.Background(), s.self)
