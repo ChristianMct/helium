@@ -9,7 +9,8 @@
         "RLWEParams": {"T": 79873, "LogN":12,"LogQ":[39, 31],"LogP":[39]},
         "Nodes": ["node-0", "node-1", "node-2", "node-3"],
 		"PublicSeed": "bGF0dGlnMA==",
-        "T": 3
+        "T": 3,
+        "ShamirPks" : {"node-0": 1, "node-1":2, "node-2":3, "node-3":4}
     }],
     "ObjectStoreConfig": {
         "BackendName": "mem"          
