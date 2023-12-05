@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 const MaxMsgSize = 1024 * 1024 * 32
@@ -115,6 +116,10 @@ func (t *Transport) ConnectWithDialers(lis net.Listener, dialers map[pkg.NodeID]
 			grpc.MaxSendMsgSize(MaxMsgSize),
 			grpc.StatsHandler(&t.statsHandler),
 			grpc.ChainUnaryInterceptor(interceptors...),
+			grpc.KeepaliveParams(keepalive.ServerParameters{
+				Time:    time.Second,
+				Timeout: time.Second,
+			}),
 		}
 
 		if !t.tlsSetup.withInsecureChannels {
