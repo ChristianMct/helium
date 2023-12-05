@@ -9,7 +9,7 @@ services:
         - APP=./deployment/scenarios/matmul4-dec/node
     command: -expDuration 10s
     container_name: cloud
-    port:
+    ports:
       - "40000:40000"
     volumes:
       - ../cloud.json:/helium/config/node.json
