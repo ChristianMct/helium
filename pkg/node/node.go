@@ -169,12 +169,11 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 		if err := node.precomputeHandler(node.sessions, setupSrv); err != nil {
 			panic(fmt.Errorf("precomputeHandler returned an error: %w", err))
 		}
-		start := time.Now()
 		err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outs)
 		if err != nil {
 			panic(fmt.Errorf("error during compute: %w", err)) // TODO return error somehow
 		}
-		elapsed := time.Since(start)
+		elapsed := time.Since(computeSrv.ExecStart)
 		node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
 
 	}()
@@ -303,14 +302,17 @@ func (node *Node) Logf(msg string, v ...any) {
 
 // outputStats outputs the total network usage and time take to execute a protocol phase.
 func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
+	dataSent := node.GetTransport().GetNetworkStats().DataSent
+	dataRecv := node.GetTransport().GetNetworkStats().DataRecv
+	fmt.Printf("STATS: phase: %s time: %f sent: %f MB recv: %f MB\n", phase, elapsed.Seconds(), float64(dataSent)/float64(1e6), float64(dataRecv)/float64(1e6))
 	log.Println("==============", phase, "phase ==============")
 	log.Printf("%s | time %s", node.ID(), elapsed)
 	log.Printf("%s | network: %s\n", node.ID(), node.GetTransport().GetNetworkStats())
 	if write {
 		stats := map[string]string{
 			"Wall":  fmt.Sprint(elapsed),
-			"Sent":  fmt.Sprint(node.GetTransport().GetNetworkStats().DataSent),
-			"Recvt": fmt.Sprint(node.GetTransport().GetNetworkStats().DataRecv),
+			"Sent":  fmt.Sprint(dataSent),
+			"Recvt": fmt.Sprint(dataRecv),
 			"ID":    fmt.Sprint(node.ID()),
 			"Phase": phase,
 		}

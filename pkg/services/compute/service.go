@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
@@ -50,6 +51,8 @@ type Service struct {
 
 	incomingPdescMu sync.RWMutex
 	incomingPdesc   map[string]chan protocols.Descriptor
+
+	ExecStart time.Time
 }
 
 func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport, pkBackend PublicKeyBackend) (s *Service, err error) {
@@ -325,12 +328,17 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 				panic(err)
 			}
 
+			firstSig := true
 			for cu := range cus {
 
 				switch cu.Status {
 				case circuits.Created:
 					sigs <- cu.Signature
 					s.Logf("new circuit update: created %s", cu.Signature)
+					if firstSig {
+						s.ExecStart = time.Now()
+						firstSig = false
+					}
 				case circuits.Executing:
 					if cu.StatusUpdate.Status == protocols.OK {
 						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
@@ -355,6 +363,8 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 			}
 			close(sigs)
 		}()
+	} else {
+		s.ExecStart = time.Now()
 	}
 
 	// initializes an encryptor for the inputs. TODO: check if node actually needs it.
