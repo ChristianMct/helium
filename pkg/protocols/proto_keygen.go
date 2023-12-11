@@ -400,6 +400,9 @@ func (p *protocol) IsAggregator() bool {
 }
 
 func (p protocol) Logf(msg string, v ...any) {
+	if !protocolLogging {
+		return
+	}
 	log.Printf("%s | [%s] %s\n", p.self, p.HID(), fmt.Sprintf(msg, v...))
 }
 

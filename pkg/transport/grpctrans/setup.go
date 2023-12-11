@@ -221,6 +221,7 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 				err := stream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(pu.Status)})
 				if err != nil {
 					close(peerUpdateQueue)
+					done = true
 				}
 			} else {
 				done = true

@@ -99,7 +99,7 @@ func (s *Service) Execute(ctx context.Context, sd Description) error {
 		// every time it receives a protocol update, puts the protocol descriptor
 		// in the protocols to run or in the protocols completed
 		for protoUpdate := range protosUpdatesChan {
-			s.Logf("got protocol update for protocol %s : status: %v ", protoUpdate.HID(), protoUpdate.Status)
+			//s.Logf("got protocol update for protocol %s : status: %v ", protoUpdate.HID(), protoUpdate.Status)
 			switch protoUpdate.Status {
 			case protocols.OK:
 				protoCompleted <- protoUpdate.Descriptor
@@ -396,7 +396,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					}
 				}
 
-				s.Logf("[Aggregate] Making new protocol pd: %v", pd)
+				//s.Logf("[Aggregate] Making new protocol pd: %v", pd)
 				proto, err := protocols.NewProtocol(pd, sess)
 				if err != nil {
 					panic(err)
@@ -418,7 +418,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running})
 
 				// blocking, returns the result of the aggregation.
-				s.Logf("[Aggregate] Waiting to finish aggregation for pd: %v", pd)
+				//s.Logf("[Aggregate] Waiting to finish aggregation for pd: %v", pd)
 
 				var ctxdl context.Context
 				if sess.T != len(sess.Nodes) {
@@ -454,7 +454,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					s.runningProtosMu.Unlock()
 					continue
 				}
-				s.Logf("[Aggregate] Finished aggregating for pd: %v", pd)
+				//s.Logf("[Aggregate] Finished aggregating for pd: %v", pd)
 
 				err = s.ResultBackend.Put(pd, aggOut.Share)
 				if err != nil {
