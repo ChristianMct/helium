@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
@@ -52,11 +51,7 @@ type Service struct {
 	incomingPdescMu sync.RWMutex
 	incomingPdesc   map[string]chan protocols.Descriptor
 
-<<<<<<< HEAD
-	ExecStart time.Time
-=======
 	ComputeStart chan struct{}
->>>>>>> 90c8f63 (better timing of compute phase)
 }
 
 func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport, pkBackend PublicKeyBackend) (s *Service, err error) {
@@ -334,7 +329,6 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 				panic(err)
 			}
 
-			firstSig := true
 			for cu := range cus {
 
 				switch cu.Status {
