@@ -2,6 +2,7 @@ package compute
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
@@ -41,6 +42,7 @@ func (pkb *MemoryKeyBackend) GetRelinearizationKey() (rlk *rlwe.RelinearizationK
 }
 
 type CachedKeyBackend struct {
+	sync.Mutex // TODO: could be more clever
 	MemoryKeyBackend
 	PublicKeyBackend
 }
@@ -53,6 +55,8 @@ func NewCachedPublicKeyBackend(kb PublicKeyBackend) (ckb *CachedKeyBackend) {
 }
 
 func (ckb *CachedKeyBackend) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
+	ckb.Lock()
+	defer ckb.Unlock()
 	cpk, err := ckb.MemoryKeyBackend.GetCollectivePublicKey()
 	if err == nil {
 		return cpk, nil
@@ -66,6 +70,8 @@ func (ckb *CachedKeyBackend) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
 }
 
 func (ckb *CachedKeyBackend) GetGaloisKey(galEl uint64) (*rlwe.GaloisKey, error) {
+	ckb.Lock()
+	defer ckb.Unlock()
 	gk, err := ckb.MemoryKeyBackend.GetGaloisKey(galEl)
 	if err == nil {
 		return gk, nil
@@ -79,6 +85,8 @@ func (ckb *CachedKeyBackend) GetGaloisKey(galEl uint64) (*rlwe.GaloisKey, error)
 }
 
 func (ckb *CachedKeyBackend) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
+	ckb.Lock()
+	defer ckb.Unlock()
 	rk, err := ckb.MemoryKeyBackend.GetRelinearizationKey()
 	if err == nil {
 		return rk, nil

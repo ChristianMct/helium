@@ -175,9 +175,6 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 		if err != nil {
 			panic(fmt.Errorf("error during compute: %w", err)) // TODO return error somehow
 		}
-<<<<<<< HEAD
-		elapsed := time.Since(computeSrv.ExecStart)
-=======
 		close(node.computeDone)
 	}()
 
@@ -186,7 +183,6 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 		start := time.Now()
 		<-node.computeDone
 		elapsed := time.Since(start)
->>>>>>> 90c8f63 (better timing of compute phase)
 		node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
 	}()
 
