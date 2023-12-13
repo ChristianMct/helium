@@ -84,7 +84,8 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 			proto, exists := s.runningProtos[share.ProtocolID]
 			s.runningProtosMu.RUnlock()
 			if !exists {
-				panic(fmt.Errorf("protocol %s is not running", share.ProtocolID))
+				s.Logf("protocol %s is not running", share.ProtocolID)
+				continue
 			}
 			proto.incoming <- share
 		}
