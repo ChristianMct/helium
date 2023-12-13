@@ -52,7 +52,11 @@ type Service struct {
 	incomingPdescMu sync.RWMutex
 	incomingPdesc   map[string]chan protocols.Descriptor
 
+<<<<<<< HEAD
 	ExecStart time.Time
+=======
+	ComputeStart chan struct{}
+>>>>>>> 90c8f63 (better timing of compute phase)
 }
 
 func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider, trans transport.ComputeServiceTransport, pkBackend PublicKeyBackend) (s *Service, err error) {
@@ -91,6 +95,7 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 		}
 	}()
 
+	s.ComputeStart = make(chan struct{})
 	return s, nil
 }
 
@@ -324,6 +329,7 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 		}
 		s.Logf("is registered with %s", s.evaluatorID)
 		go func() {
+			first := true
 			if err := s.catchUp(cus, present, sigs); err != nil {
 				panic(err)
 			}
@@ -335,9 +341,9 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 				case circuits.Created:
 					sigs <- cu.Signature
 					s.Logf("new circuit update: created %s", cu.Signature)
-					if firstSig {
-						s.ExecStart = time.Now()
-						firstSig = false
+					if first {
+						first = false
+						close(s.ComputeStart) // TODO better mechanism that also consider crashing nodes stats
 					}
 				case circuits.Executing:
 					if cu.StatusUpdate.Status == protocols.OK {
@@ -364,7 +370,7 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 			close(sigs)
 		}()
 	} else {
-		s.ExecStart = time.Now()
+		close(s.ComputeStart)
 	}
 
 	// initializes an encryptor for the inputs. TODO: check if node actually needs it.

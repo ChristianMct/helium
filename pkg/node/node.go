@@ -43,7 +43,8 @@ type Node struct {
 	postsetupHandler  func(*pkg.SessionStore, compute.PublicKeyBackend) error
 	precomputeHandler func(*pkg.SessionStore, compute.PublicKeyBackend) error
 
-	setupDone chan struct{}
+	setupDone   chan struct{}
+	computeDone chan struct{}
 }
 
 type Config struct {
@@ -114,6 +115,7 @@ func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport
 	node.precomputeHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
 
 	node.setupDone = make(chan struct{})
+	node.computeDone = make(chan struct{})
 
 	return node, nil
 }
@@ -173,9 +175,19 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 		if err != nil {
 			panic(fmt.Errorf("error during compute: %w", err)) // TODO return error somehow
 		}
+<<<<<<< HEAD
 		elapsed := time.Since(computeSrv.ExecStart)
-		node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+=======
+		close(node.computeDone)
+	}()
 
+	go func() {
+		<-computeSrv.ComputeStart
+		start := time.Now()
+		<-node.computeDone
+		elapsed := time.Since(start)
+>>>>>>> 90c8f63 (better timing of compute phase)
+		node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
 	}()
 
 	return sigs, outs, nil
