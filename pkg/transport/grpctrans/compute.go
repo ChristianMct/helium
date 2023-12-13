@@ -168,12 +168,12 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 
 	t.mCircuitUpdates.RLock() // locks the updates while populating the past message queue
 	present := len(t.circuitUpdates)
-	peer.circuitUpdateQueue = peerCircuitUpdateQueue
 	for _, cu := range t.circuitUpdates {
 		peerCircuitUpdateQueue <- cu
 	}
 	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 	t.mPeers.Lock() // updates the peer status to online, peer will recieve subsequent updates on its queue
+	peer.circuitUpdateQueue = peerCircuitUpdateQueue
 	peer.connected = true
 	t.mPeers.Unlock()
 	t.mCircuitUpdates.RUnlock()
@@ -185,19 +185,22 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 			if more {
 				err := SendUpdate(cu, stream)
 				if err != nil {
-					close(peerCircuitUpdateQueue)
+					done = true
 				}
 			} else {
 				done = true
 			}
 		case <-t.transportDone:
 			done = true
-			close(peerCircuitUpdateQueue)
 		case <-stream.Context().Done():
 			done = true
-			close(peerCircuitUpdateQueue)
 		}
 	}
+	t.mPeers.Lock()
+	peer.connected = false
+	close(peerCircuitUpdateQueue)
+	t.mPeers.Unlock()
+
 	err = t.srvHandler.Unregister(peerID)
 	if err != nil {
 		return err
