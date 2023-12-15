@@ -676,13 +676,13 @@ func (s *Service) Register(peer pkg.NodeID) error {
 // Unregister is called by the transport when a peer is unregistered from the setup.
 func (s *Service) Unregister(peer pkg.NodeID) error {
 
-	s.connectedNodesMu.RLock()
+	s.connectedNodesMu.Lock()
 	protoIDs, has := s.connectedNodes[peer]
 	if !has {
 		panic("unregistering an unregistered node")
 	}
 	delete(s.connectedNodes, peer)
-	s.connectedNodesMu.RUnlock()
+	s.connectedNodesMu.Unlock()
 	s.runningProtosMu.RLock()
 	for pid := range protoIDs {
 		s.runningProtos[pid].disconnected <- peer
