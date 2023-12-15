@@ -52,6 +52,8 @@ type Instance interface {
 	Init(CRP) error
 	Aggregate(ctx context.Context, env Transport) chan AggregationOutput
 	Output(agg AggregationOutput) chan Output
+
+	HasShareFrom(pkg.NodeID) bool
 }
 
 type KeySwitchInstance interface {
@@ -139,12 +141,12 @@ type protocol struct {
 	sk   *rlwe.SecretKey
 
 	shareProviders utils.Set[pkg.NodeID]
+	agg            shareAggregator
 }
 
 type cpkProtocol struct {
 	*protocol
 	proto LattigoKeygenProtocol
-	agg   shareAggregator
 	crs   drlwe.CRS
 	crp   CRP
 }
@@ -393,6 +395,10 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 			return fmt.Errorf("%s | timeout while aggregating shares for protocol %s, missing: %v", p.self, p.ID(), aggregator.Missing())
 		}
 	}
+}
+
+func (p protocol) HasShareFrom(nid pkg.NodeID) bool {
+	return p.agg.Missing().Contains(nid)
 }
 
 func (p *protocol) IsAggregator() bool {

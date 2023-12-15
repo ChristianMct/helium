@@ -15,7 +15,6 @@ type keySwitchProtocol struct {
 	proto     LattigoKeySwitchProtocol
 	target    pkg.NodeID
 	outputKey OutputKey
-	agg       shareAggregator
 	inputChan chan *rlwe.Ciphertext
 	input     *rlwe.Ciphertext
 }

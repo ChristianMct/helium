@@ -36,7 +36,7 @@ type Service struct {
 	transport transport.ComputeServiceTransport
 	pkBackend PublicKeyBackend
 
-	peers *pkg.PartySet
+	peers *pkg.PartySet // TODO: kill type when done moving to new runner
 
 	runningCircuitsMu sync.RWMutex
 	circuits          map[pkg.CircuitID]CircuitInstance
