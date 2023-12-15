@@ -425,6 +425,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 		case participantId := <-disconnected:
 
 			if proto.HasShareFrom(participantId) {
+				s.Logf("%s had already provided its share, ignoring", participantId)
 				continue
 			}
 
@@ -492,7 +493,6 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					sigs <- sig
 					continue
 				}
-				wgSig.Done()
 
 				if sig.Type == protocols.RKG_1 {
 					s.rkgRound1Results[pd.ID()] = aggOut.Share
@@ -507,6 +507,8 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					if err != nil {
 						panic(err)
 					}
+
+					s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pdRkgRound2, Status: protocols.Status(api.ProtocolStatus_OK)})
 					wgSig.Done()
 				}
 
@@ -516,6 +518,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				}
 
 				s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)})
+				wgSig.Done()
 
 				s.Logf("[Aggregate] completed sig: %s", pd.Signature)
 

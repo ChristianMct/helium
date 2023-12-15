@@ -398,7 +398,7 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 }
 
 func (p protocol) HasShareFrom(nid pkg.NodeID) bool {
-	return p.agg.Missing().Contains(nid)
+	return !p.agg.Missing().Contains(nid)
 }
 
 func (p *protocol) IsAggregator() bool {
