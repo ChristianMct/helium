@@ -377,7 +377,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 
 	pid := pd.ID()
 	inc := make(chan protocols.Share)
-	disconnected := make(chan pkg.NodeID)
+	disconnected := make(chan pkg.NodeID, len(pd.Participants))
 	s.runningProtosMu.Lock()
 	s.runningProtos[pid] = struct {
 		pd           protocols.Descriptor
@@ -683,6 +683,7 @@ func (s *Service) Unregister(peer pkg.NodeID) error {
 	}
 	delete(s.connectedNodes, peer)
 	s.connectedNodesMu.Unlock()
+
 	s.runningProtosMu.RLock()
 	for pid := range protoIDs {
 		s.runningProtos[pid].disconnected <- peer
