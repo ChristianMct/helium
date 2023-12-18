@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
@@ -136,6 +137,7 @@ func (s Signature) Equals(other Signature) bool {
 type protocol struct {
 	pkg.ProtocolID
 	Descriptor
+	L sync.RWMutex
 
 	self pkg.NodeID
 	sk   *rlwe.SecretKey
@@ -383,7 +385,9 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 	for {
 		select {
 		case share := <-env.IncomingShares():
+			p.L.Lock()
 			done, err := aggregator.PutShare(share)
+			p.L.Unlock()
 			//p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 			if err != nil {
 				return err
@@ -397,7 +401,9 @@ func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregato
 	}
 }
 
-func (p protocol) HasShareFrom(nid pkg.NodeID) bool {
+func (p *protocol) HasShareFrom(nid pkg.NodeID) bool {
+	p.L.RLock()
+	defer p.L.RUnlock()
 	return !p.agg.Missing().Contains(nid)
 }
 
@@ -405,7 +411,7 @@ func (p *protocol) IsAggregator() bool {
 	return p.Descriptor.Aggregator == p.self || p.Descriptor.Signature.Type == SKG
 }
 
-func (p protocol) Logf(msg string, v ...any) {
+func (p *protocol) Logf(msg string, v ...any) {
 	if !protocolLogging {
 		return
 	}

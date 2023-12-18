@@ -425,7 +425,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 		case participantId := <-disconnected:
 
 			if proto.HasShareFrom(participantId) {
-				s.Logf("%s had already provided its share, ignoring", participantId)
+				s.Logf("node %s disconnected after providing its share", participantId)
 				continue
 			}
 
@@ -684,14 +684,15 @@ func (s *Service) Unregister(peer pkg.NodeID) error {
 	if !has {
 		panic("unregistering an unregistered node")
 	}
-	delete(s.connectedNodes, peer)
-	s.connectedNodesMu.Unlock()
 
 	s.runningProtosMu.RLock()
 	for pid := range protoIDs {
 		s.runningProtos[pid].disconnected <- peer
 	}
 	s.runningProtosMu.RUnlock()
+
+	delete(s.connectedNodes, peer)
+	s.connectedNodesMu.Unlock()
 
 	s.Logf("setup unregistered peer %v", peer)
 	return nil // TODO: Implement
