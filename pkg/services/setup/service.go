@@ -365,6 +365,21 @@ func (s *Service) getProtocolDescriptor(sig protocols.Signature, threshold int) 
 	for nid := range selected {
 		s.connectedNodes[nid].Add(pd.ID())
 	}
+
+	inc := make(chan protocols.Share)
+	disconnected := make(chan pkg.NodeID)
+	s.runningProtosMu.Lock()
+	s.runningProtos[pd.ID()] = struct {
+		pd           protocols.Descriptor
+		incoming     chan protocols.Share
+		disconnected chan pkg.NodeID
+	}{
+		pd:           pd,
+		incoming:     inc,
+		disconnected: disconnected,
+	}
+	s.runningProtosMu.Unlock()
+
 	s.connectedNodesCond.L.Unlock()
 	return pd
 }
@@ -376,19 +391,9 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 	}
 
 	pid := pd.ID()
-	inc := make(chan protocols.Share)
-	disconnected := make(chan pkg.NodeID, len(pd.Participants))
-	s.runningProtosMu.Lock()
-	s.runningProtos[pid] = struct {
-		pd           protocols.Descriptor
-		incoming     chan protocols.Share
-		disconnected chan pkg.NodeID
-	}{
-		pd:           pd,
-		incoming:     inc,
-		disconnected: disconnected,
-	}
-	s.runningProtosMu.Unlock()
+	s.runningProtosMu.RLock()
+	rp := s.runningProtos[pid]
+	s.runningProtosMu.RUnlock()
 
 	// sending pd to list of chosen parties.
 	s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running})
@@ -414,15 +419,14 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 
 	var aggOut protocols.AggregationOutput
 	var errAgg error
-
 	for done := false; !done; {
 		select {
-		case aggOut = <-proto.Aggregate(ctx, &ProtocolTransport{incoming: inc, outgoing: s.transport.OutgoingShares()}):
+		case aggOut = <-proto.Aggregate(ctx, &ProtocolTransport{incoming: rp.incoming, outgoing: s.transport.OutgoingShares()}):
 			if aggOut.Error != nil {
 				panic(aggOut.Error)
 			}
 			done = true
-		case participantId := <-disconnected:
+		case participantId := <-rp.disconnected:
 
 			if proto.HasShareFrom(participantId) {
 				s.Logf("node %s disconnected after providing its share", participantId)
