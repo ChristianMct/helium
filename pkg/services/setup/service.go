@@ -411,6 +411,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 				aggOut, err := s.runProtocolDescriptor(ctx, pd, sess)
 				if err != nil {
 					s.Logf("error while running protocol %s: %s, requeuing", pd.HID(), err)
+					s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Failed})
 					sigs <- sig
 					continue
 				}
@@ -422,6 +423,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					aggOutRound2, err := s.runProtocolDescriptor(ctx, pdRkgRound2, sess)
 					if err != nil {
 						s.Logf("error while running RKG_2 protocol: %s, requeuing RKG_1", err)
+						s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pdRkgRound2, Status: protocols.Failed})
 						sigs <- sig
 						continue
 					}
