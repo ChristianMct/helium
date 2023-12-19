@@ -295,7 +295,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 
 	pid := pd.ID()
 	incoming := make(chan protocols.Share)
-	disconnected := make(chan pkg.NodeID)
+	disconnected := make(chan pkg.NodeID, len(pd.Participants))
 	s.runningProtos[pd.ID()] = struct {
 		pd           protocols.Descriptor
 		incoming     chan protocols.Share
@@ -344,7 +344,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 		case participantId := <-disconnected:
 
 			if proto.HasShareFrom(participantId) {
-				s.Logf("node %s disconnected after providing its share, protocol %s continuing...", pd.HID(), participantId)
+				s.Logf("node %s disconnected after providing its share, protocol %s continuing...", participantId, pd.HID())
 				continue
 			}
 
