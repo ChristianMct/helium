@@ -381,14 +381,14 @@ func (p *keySwitchProtocol) AllocateShare() Share {
 	return p.proto.AllocateShare()
 }
 
-func (p protocol) aggregateShares(ctx context.Context, aggregator shareAggregator, env Transport) error {
+func (p *protocol) aggregateShares(ctx context.Context, aggregator shareAggregator, env Transport) error {
 	for {
 		select {
 		case share := <-env.IncomingShares():
 			p.L.Lock()
 			done, err := aggregator.PutShare(share)
 			p.L.Unlock()
-			//p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
+			p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 			if err != nil {
 				return err
 			}

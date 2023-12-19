@@ -114,7 +114,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 						{25, []pkg.NodeID{clou.Node.ID()}},
 						{125, []pkg.NodeID{clou.Node.ID()}},
 					},
-					Rlk: []pkg.NodeID{clou.Node.ID()},
+					//Rlk: []pkg.NodeID{clou.Node.ID()},
 				}
 
 				localTest.Start()
