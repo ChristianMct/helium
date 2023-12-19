@@ -333,9 +333,10 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 	var aggOut protocols.AggregationOutput
 	var errAgg error
 	abort := make(chan pkg.NodeID)
+	aggregation := proto.Aggregate(ctx, &ProtocolTransport{incoming: incoming, outgoing: s.transport.OutgoingShares()})
 	for done := false; !done; {
 		select {
-		case aggOut = <-proto.Aggregate(ctx, &ProtocolTransport{incoming: incoming, outgoing: s.transport.OutgoingShares()}):
+		case aggOut = <-aggregation:
 			if aggOut.Error != nil {
 				panic(aggOut.Error)
 			}
