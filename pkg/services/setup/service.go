@@ -332,6 +332,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 
 	var aggOut protocols.AggregationOutput
 	var errAgg error
+	abort := make(chan pkg.NodeID)
 	for done := false; !done; {
 		select {
 		case aggOut = <-proto.Aggregate(ctx, &ProtocolTransport{incoming: incoming, outgoing: s.transport.OutgoingShares()}):
@@ -342,12 +343,18 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 		case participantId := <-disconnected:
 
 			if proto.HasShareFrom(participantId) {
-				s.Logf("node %s disconnected after providing its share", participantId)
+				s.Logf("node %s disconnected after providing its share, protocol %s continuing...", pd.HID(), participantId)
 				continue
 			}
 
+			time.AfterFunc(time.Second, func() { // leaves some time to process some more messages
+				participantId := participantId
+				abort <- participantId
+			})
+			//errAgg = fmt.Errorf("participant disconnected before providing its share: %s", participantId)
+		case nid := <-abort:
 			done = true
-			errAgg = fmt.Errorf("participant disconnected before providing its share: %s", participantId)
+			errAgg = fmt.Errorf("aborted due to disconnection of %s before providing its share", nid)
 		}
 	}
 
