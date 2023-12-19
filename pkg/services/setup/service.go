@@ -141,7 +141,7 @@ func (s *Service) Execute(ctx context.Context, sd Description) error {
 			}
 			// sends received share to the incoming channel of the destination protocol.
 			proto.incoming <- incShare
-			s.Logf("received share from sender %s for protocol %s", incShare.From, incShare.ProtocolID)
+			//s.Logf("received share from sender %s for protocol %s", incShare.From, incShare.ProtocolID)
 		}
 	}()
 
