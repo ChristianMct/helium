@@ -164,29 +164,34 @@ func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signatur
 	}()
 
 	sigs = make(chan circuits.Signature)
-	outs = make(chan compute.CircuitOutput)
+	outsLocal := make(chan compute.CircuitOutput)
 
 	go func() {
 		<-node.setupDone
 		if err := node.precomputeHandler(node.sessions, setupSrv); err != nil {
 			panic(fmt.Errorf("precomputeHandler returned an error: %w", err))
 		}
-		err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outs)
+		err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outsLocal)
 		if err != nil {
 			panic(fmt.Errorf("error during compute: %w", err)) // TODO return error somehow
 		}
 		close(node.computeDone)
 	}()
 
+	outsUser := make(chan compute.CircuitOutput)
 	go func() {
 		<-computeSrv.ComputeStart
 		start := time.Now()
-		<-node.computeDone
+		for out := range outsLocal {
+			outsUser <- out
+		}
+		//<-node.computeDone
 		elapsed := time.Since(start)
 		node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
+		close(outsUser)
 	}()
 
-	return sigs, outs, nil
+	return sigs, outsUser, nil
 }
 
 func (node *Node) WaitForSetupDone() {
