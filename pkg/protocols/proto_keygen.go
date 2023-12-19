@@ -388,7 +388,7 @@ func (p *protocol) aggregateShares(ctx context.Context, aggregator shareAggregat
 			p.L.Lock()
 			done, err := aggregator.PutShare(share)
 			p.L.Unlock()
-			p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
+			//p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 			if err != nil {
 				return err
 			}

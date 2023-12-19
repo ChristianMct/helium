@@ -307,6 +307,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 	}
 	s.L.Unlock()
 
+	s.Logf("starting %s", pd.HID())
 	// sending pd to list of chosen parties.
 	s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Running})
 
@@ -402,7 +403,7 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 
 				aggOut, err := s.runProtocolDescriptor(ctx, pd, sess)
 				if err != nil {
-					s.Logf("error while running protocol: %s, requeuing", err)
+					s.Logf("error while running protocol %s: %s, requeuing", pd.HID(), err)
 					sigs <- sig
 					continue
 				}

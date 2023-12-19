@@ -301,7 +301,7 @@ type InputProvider func(context.Context, pkg.OperandLabel) (*rlwe.Plaintext, err
 
 var NoInput InputProvider = func(_ context.Context, _ pkg.OperandLabel) (*rlwe.Plaintext, error) { return nil, nil }
 
-// TODO: async execute that returns ops as they are computed
+// TODO: sigs chan is closed immediately
 // func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
 func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, outs chan CircuitOutput) error {
 
