@@ -388,7 +388,7 @@ func (p *protocol) aggregateShares(ctx context.Context, aggregator shareAggregat
 			p.L.Lock()
 			done, err := aggregator.PutShare(share)
 			p.L.Unlock()
-			//p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
+			p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 			if err != nil {
 				return err
 			}
@@ -404,7 +404,12 @@ func (p *protocol) aggregateShares(ctx context.Context, aggregator shareAggregat
 func (p *protocol) HasShareFrom(nid pkg.NodeID) bool {
 	p.L.RLock()
 	defer p.L.RUnlock()
-	return !p.agg.Missing().Contains(nid)
+	miss := p.agg.Missing()
+	isMissing := miss.Contains(nid)
+	if !isMissing {
+		p.Logf("%v", miss)
+	}
+	return !isMissing
 }
 
 func (p *protocol) IsAggregator() bool {
