@@ -49,7 +49,7 @@ func (s Set[T]) Remove(el ...T) {
 
 func (s Set[T]) Diff(other Set[T]) Set[T] {
 	sc := s.Copy()
-	s.Remove(other.Elements()...)
+	sc.Remove(other.Elements()...)
 	return sc
 }
 
