@@ -46,6 +46,7 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session) (KeySwitchInstance, 
 	case DEC:
 		ks.proto, err = NewCKSProtocol(params.Parameters, pd.Signature.Args)
 		ks.outputKey = rlwe.NewSecretKey(params) // target key is zero for decryption
+		ks.shareProviders.Remove(ks.target)      // target does not provide a share in decrypt
 	case PCKS:
 		ks.proto, err = NewPCKSProtocol(params.Parameters, pd.Signature.Args)
 		pk, err := sess.GetOutputPkForNode(pkg.NodeID(target))
@@ -56,6 +57,10 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session) (KeySwitchInstance, 
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if ks.protocol.IsAggregator() {
+		ks.protocol.agg = *newShareAggregator(ks.protocol.shareProviders, Share{}, nil)
 	}
 
 	if ks.shareProviders.Contains(ks.self) {
@@ -116,11 +121,6 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 	}
 
 	if p.IsAggregator() {
-
-		sp := p.shareProviders
-		if p.Signature.Type == DEC {
-			sp.Remove(p.target)
-		}
 
 		p.agg.share = share
 		p.agg.aggFunc = p.proto.AggregatedShares

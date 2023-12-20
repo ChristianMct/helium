@@ -173,11 +173,6 @@ func newProtocol(pd Descriptor, sess *pkg.Session) (p *protocol, err error) {
 	p.Descriptor = pd
 	p.ProtocolID = pd.ID()
 	p.shareProviders = utils.NewSet(pd.Participants)
-
-	if p.IsAggregator() {
-		p.agg = *newShareAggregator(p.shareProviders, Share{}, nil)
-	}
-
 	return p, err
 }
 
@@ -187,6 +182,7 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	var p *cpkProtocol
 	switch pd.Signature.Type {
 	case CKG:
@@ -238,6 +234,10 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session) (Instance, error) {
 	}
 	if err != nil {
 		inst = nil
+	}
+
+	if protocol.IsAggregator() {
+		protocol.agg = *newShareAggregator(protocol.shareProviders, Share{}, nil)
 	}
 
 	if protocol.shareProviders.Contains(protocol.self) {
