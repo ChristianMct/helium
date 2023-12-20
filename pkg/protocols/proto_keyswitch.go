@@ -122,7 +122,8 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 			sp.Remove(p.target)
 		}
 
-		p.agg = *newShareAggregator(sp, share, p.proto.AggregatedShares)
+		p.agg.share = share
+		p.agg.aggFunc = p.proto.AggregatedShares
 
 		errAggr := p.aggregateShares(ctx, p.agg, env)
 		if errAggr != nil {

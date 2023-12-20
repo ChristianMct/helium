@@ -173,6 +173,11 @@ func newProtocol(pd Descriptor, sess *pkg.Session) (p *protocol, err error) {
 	p.Descriptor = pd
 	p.ProtocolID = pd.ID()
 	p.shareProviders = utils.NewSet(pd.Participants)
+
+	if p.IsAggregator() {
+		p.agg = *newShareAggregator(p.shareProviders, Share{}, nil)
+	}
+
 	return p, err
 }
 
@@ -310,7 +315,8 @@ func (p *cpkProtocol) run(ctx context.Context, env Transport) AggregationOutput 
 	}
 
 	if p.IsAggregator() {
-		p.agg = *newShareAggregator(p.shareProviders, share, p.proto.AggregatedShares)
+		p.agg.share = share
+		p.agg.aggFunc = p.proto.AggregatedShares
 
 		errAggr := p.aggregateShares(ctx, p.agg, env)
 		if errAggr != nil {
@@ -404,12 +410,7 @@ func (p *protocol) aggregateShares(ctx context.Context, aggregator shareAggregat
 func (p *protocol) HasShareFrom(nid pkg.NodeID) bool {
 	p.L.RLock()
 	defer p.L.RUnlock()
-	miss := p.agg.Missing()
-	isMissing := miss.Contains(nid)
-	if !isMissing {
-		p.Logf("%v", miss)
-	}
-	return !isMissing
+	return !p.agg.Missing().Contains(nid)
 }
 
 func (p *protocol) IsAggregator() bool {
