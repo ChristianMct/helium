@@ -174,7 +174,7 @@ func (se *fullEvaluatorContext) Load(opl pkg.OperandLabel) pkg.Operand {
 }
 
 func (se *fullEvaluatorContext) Set(op pkg.Operand) {
-	se.ops[op.OperandLabel.ForCircuit(se.cid)].Done(op)
+	se.ops[op.OperandLabel].Done(op)
 }
 
 func (se *fullEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
@@ -185,8 +185,8 @@ func (se *fullEvaluatorContext) Get(opl pkg.OperandLabel) pkg.Operand {
 }
 
 func (se *fullEvaluatorContext) Output(op pkg.Operand, to pkg.NodeID) {
-	se.ops[op.OperandLabel.ForCircuit(se.cid)].Done(op)
-	se.outputs <- pkg.Operand{OperandLabel: op.OperandLabel.ForCircuit(se.cid), Ciphertext: op.Ciphertext}
+	se.ops[op.OperandLabel].Done(op)
+	se.outputs <- pkg.Operand{OperandLabel: op.OperandLabel, Ciphertext: op.Ciphertext}
 }
 
 func (se *fullEvaluatorContext) SubCircuit(_ pkg.CircuitID, _ Circuit) (EvaluationContext, error) {
@@ -195,18 +195,18 @@ func (se *fullEvaluatorContext) SubCircuit(_ pkg.CircuitID, _ Circuit) (Evaluati
 
 func (se *fullEvaluatorContext) DEC(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	sig := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(se.cid), params)
-	return se.runKeySwitch(sig, in)
+	return se.runKeySwitch(sig, pkg.Operand{OperandLabel: in.OperandLabel.ForCircuit(se.cid), Ciphertext: in.Ciphertext})
 }
 
 func (se *fullEvaluatorContext) PCKS(in pkg.Operand, params map[string]string) (out pkg.Operand, err error) {
 	sig := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(se.cid), params)
-	return se.runKeySwitch(sig, in)
+	return se.runKeySwitch(sig, pkg.Operand{OperandLabel: in.OperandLabel.ForCircuit(se.cid), Ciphertext: in.Ciphertext})
 }
 
 func (se *fullEvaluatorContext) runKeySwitch(sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
 	se.Set(in)
 	ctx := pkg.NewContext(&se.sess.ID, &se.cid)
-	return se.service.RunKeySwitch(ctx, se.cid, sig, in)
+	return se.service.RunKeySwitch(ctx, sig, in)
 }
 
 func (se *fullEvaluatorContext) Parameters() bgv.Parameters {

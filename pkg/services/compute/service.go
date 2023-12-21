@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
@@ -24,6 +25,8 @@ var CircuitDefsLock sync.RWMutex
 var CircuitDefs = map[string]Circuit{}
 
 const parallelExecutions int = 10
+const parallelProtocols int = 10
+const numProtoPerNode int = 3
 
 type Service struct {
 	id pkg.NodeID
@@ -34,20 +37,31 @@ type Service struct {
 
 	sessions  pkg.SessionProvider
 	transport transport.ComputeServiceTransport
+
 	pkBackend PublicKeyBackend
 
-	peers *pkg.PartySet // TODO: kill type when done moving to new runner
+	operandsMu sync.RWMutex
+	operands   map[pkg.OperandLabel]pkg.Operand
 
 	runningCircuitsMu sync.RWMutex
 	circuits          map[pkg.CircuitID]CircuitInstance
 
-	// TODO Extract ProtocolRunner
-	runningProtosMu sync.RWMutex
-	runningProtos   map[pkg.ProtocolID]struct {
-		pd       protocols.Descriptor
-		incoming chan protocols.Share
+	sigQueue chan struct {
+		protocols.Signature
+		ResultOp chan pkg.Operand
 	}
 
+	// TODO Extract ProtocolRunner
+	L              sync.RWMutex
+	C              sync.Cond
+	connectedNodes map[pkg.NodeID]utils.Set[pkg.ProtocolID]
+	runningProtos  map[pkg.ProtocolID]struct {
+		pd           protocols.Descriptor
+		incoming     chan protocols.Share
+		disconnected chan pkg.NodeID
+	}
+
+	// client side
 	incomingPdescMu sync.RWMutex
 	incomingPdesc   map[string]chan protocols.Descriptor
 
@@ -66,30 +80,26 @@ func NewComputeService(id, evaluatorID pkg.NodeID, sessions pkg.SessionProvider,
 
 	s.pkBackend = pkBackend
 
-	s.peers = pkg.NewPartySet()
-
 	s.circuits = make(map[pkg.CircuitID]CircuitInstance)
 
+	s.operands = make(map[pkg.OperandLabel]pkg.Operand)
+
+	s.sigQueue = make(chan struct {
+		protocols.Signature
+		ResultOp chan pkg.Operand
+	})
+
 	// TODO extract protocolrunner
+	s.connectedNodes = make(map[pkg.NodeID]utils.Set[pkg.ProtocolID])
 	s.runningProtos = make(map[pkg.ProtocolID]struct {
-		pd       protocols.Descriptor
-		incoming chan protocols.Share
+		pd           protocols.Descriptor
+		incoming     chan protocols.Share
+		disconnected chan pkg.NodeID
 	})
 
 	s.incomingPdesc = make(map[string]chan protocols.Descriptor)
 
-	go func() {
-		for share := range s.transport.IncomingShares() {
-			s.runningProtosMu.RLock()
-			proto, exists := s.runningProtos[share.ProtocolID]
-			s.runningProtosMu.RUnlock()
-			if !exists {
-				s.Logf("protocol %s is not running", share.ProtocolID)
-				continue
-			}
-			proto.incoming <- share
-		}
-	}()
+	s.C = sync.Cond{L: &s.L}
 
 	s.ComputeStart = make(chan struct{})
 	return s, nil
@@ -158,110 +168,21 @@ func (s *Service) IsEvaluator() bool {
 	return s.id == s.evaluatorID
 }
 
-func (s *Service) RunKeySwitch(ctx context.Context, cid pkg.CircuitID, sig protocols.Signature, in pkg.Operand) (outOp pkg.Operand, err error) {
-	sess, has := s.sessions.GetSessionFromContext(ctx)
-	if !has {
-		return pkg.Operand{}, fmt.Errorf("no such session")
+func (s *Service) RunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (outOp pkg.Operand, err error) {
+
+	s.operandsMu.Lock()
+	if _, exists := s.operands[in.OperandLabel]; !exists {
+		s.operands[in.OperandLabel] = in
 	}
+	s.operandsMu.Unlock()
 
-	protoDesc := protocols.Descriptor{Signature: sig}
-	protoDesc.Aggregator = s.evaluatorID
+	res := make(chan pkg.Operand)
+	s.sigQueue <- struct {
+		protocols.Signature
+		ResultOp chan pkg.Operand
+	}{sig, res}
 
-	switch {
-	case len(protoDesc.Participants) > 0:
-
-	// CASE T < N
-	case len(protoDesc.Participants) == 0 && sess.T < len(sess.Nodes):
-		partSet := utils.NewEmptySet[pkg.NodeID]()
-		if sess.Contains(s.id) {
-			partSet.Add(s.id)
-		}
-
-		if sess.Contains(pkg.NodeID(sig.Args["target"])) {
-			partSet.Add(pkg.NodeID(sig.Args["target"]))
-		}
-
-		// Wait for enough parties to connect
-		online, err := s.peers.WaitForRegisteredIDSet(context.Background(), sess.T-len(partSet))
-		if err != nil {
-			panic(err)
-		}
-
-		// randomizes the remaining participants among the set of registered peers
-		online.Remove(partSet.Elements()...)
-		partSet.AddAll(utils.GetRandomSetOfSize(sess.T-len(partSet), online))
-
-		protoDesc.Participants = partSet.Elements()
-		//pd.Participants = pkg.GetRandomClientSlice(sess.T, sess.Nodes) // Fault injection
-
-	// CASE N
-	default:
-		protoDesc.Participants = make([]pkg.NodeID, len(sess.Nodes))
-		copy(protoDesc.Participants, sess.Nodes)
-	}
-
-	ksInt, err := protocols.NewKeyswitchProtocol(protoDesc, sess)
-	if err != nil {
-		panic(err)
-	}
-
-	pid := ksInt.ID()
-
-	s.runningProtosMu.Lock()
-	_, exists := s.runningProtos[pid]
-	if exists {
-		s.runningProtosMu.Unlock()
-		panic(fmt.Errorf("protocol already running: %s", pid))
-	}
-	incShares := make(chan protocols.Share)
-	s.runningProtos[pid] = struct {
-		pd       protocols.Descriptor
-		incoming chan protocols.Share
-	}{ksInt.Desc(), incShares}
-	s.runningProtosMu.Unlock()
-
-	ksInt.Input(in.Ciphertext)
-
-	s.transport.PutCircuitUpdates(circuits.Update{
-		Signature: circuits.Signature{CircuitID: cid}, // TODO
-		Status:    circuits.Executing,
-		StatusUpdate: &protocols.StatusUpdate{
-			Descriptor: protoDesc,
-			Status:     protocols.Running,
-		}})
-
-	s.Logf("started executing %s", sig)
-	agg := <-ksInt.Aggregate(context.Background(), &ProtocolEnvironment{incoming: incShares, outgoing: nil})
-	if agg.Error != nil {
-		return pkg.Operand{}, agg.Error
-	}
-
-	s.runningProtosMu.Lock()
-	close(s.runningProtos[pid].incoming)
-	delete(s.runningProtos, pid)
-	s.runningProtosMu.Unlock()
-
-	s.transport.PutCircuitUpdates(circuits.Update{
-		Signature: circuits.Signature{CircuitID: cid}, // TODO
-		Status:    circuits.Executing,
-		StatusUpdate: &protocols.StatusUpdate{
-			Descriptor: protoDesc,
-			Status:     protocols.OK,
-		}})
-
-	outCt := (<-ksInt.Output(agg)).Result.(*rlwe.Ciphertext)
-	target := pkg.NodeID(protoDesc.Signature.Args["target"])
-	if protoDesc.Signature.Type == protocols.DEC && sess.T < len(sess.Nodes) && sess.Contains(target) {
-
-		lagrangeCoeff := s.getLagrangeCoeff(sess, target, protoDesc.Participants)
-		ringQP := &ringqp.Ring{RingQ: sess.Params.RingQ()}
-		// If decrypt among T<N, pre-multiplies the c1 elem by the Lagrange coeff.
-		// This avoids requiring participant set on the receiver party side for decryption.
-		ringQP.MulRNSScalarMontgomery(ringqp.Poly{Q: outCt.Value[1]}, lagrangeCoeff, ringqp.Poly{Q: outCt.Value[1]})
-	}
-	outOp = pkg.Operand{Ciphertext: outCt}
-	outOp.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
-	return outOp, nil
+	return <-res, nil
 }
 
 func (s *Service) GetProtoDescAndRunKeySwitch(ctx context.Context, sig protocols.Signature, in pkg.Operand) (out pkg.Operand, err error) {
@@ -301,72 +222,7 @@ type InputProvider func(context.Context, pkg.OperandLabel) (*rlwe.Plaintext, err
 
 var NoInput InputProvider = func(_ context.Context, _ pkg.OperandLabel) (*rlwe.Plaintext, error) { return nil, nil }
 
-// TODO: sigs chan is closed immediately
-// func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
-func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, outs chan CircuitOutput) error {
-
-	sess, has := s.sessions.GetSessionFromContext(ctx)
-	if !has {
-		return fmt.Errorf("no session found in context")
-	}
-
-	log.Printf("%s | started compute execute\n", s.ID())
-
-	if !s.IsEvaluator() {
-		if sigs != nil {
-			s.Logf("client submission of Signatures not supported yet, discarding sigs...")
-		}
-
-		sigs = make(chan circuits.Signature)
-		outCtx := pkg.GetOutgoingContext(ctx, s.id)
-		cus, present, err := s.transport.RegisterForComputeAt(outCtx, s.evaluatorID)
-		if err != nil {
-			return err
-		}
-		s.Logf("is registered with %s", s.evaluatorID)
-		go func() {
-			first := true
-			if err := s.catchUp(cus, present, sigs); err != nil {
-				panic(err)
-			}
-
-			for cu := range cus {
-
-				switch cu.Status {
-				case circuits.Created:
-					sigs <- cu.Signature
-					s.Logf("new circuit update: created %s", cu.Signature)
-					if first {
-						first = false
-						close(s.ComputeStart) // TODO better mechanism that also consider crashing nodes stats
-					}
-				case circuits.Executing:
-					if cu.StatusUpdate.Status == protocols.OK {
-						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
-						continue
-					}
-					s.incomingPdescMu.Lock()
-					pdc, has := s.incomingPdesc[cu.StatusUpdate.Signature.String()]
-					if !has {
-						pdc = make(chan protocols.Descriptor, 1)
-						s.incomingPdesc[cu.StatusUpdate.Signature.String()] = pdc
-					}
-					s.incomingPdescMu.Unlock()
-					pdc <- cu.StatusUpdate.Descriptor
-					s.Logf("new circuit update: got protocol descriptor for %s", cu.StatusUpdate.Signature)
-				case circuits.Completed:
-					s.Logf("new circuit update: circuit completed: %s", cu.CircuitID)
-					continue
-				default:
-					panic("invalid circuit update status")
-				}
-
-			}
-			close(sigs)
-		}()
-	} else {
-		close(s.ComputeStart)
-	}
+func (s *Service) processCircuitQueue(ctx context.Context, sess *pkg.Session, ip InputProvider, sigs chan circuits.Signature, outs chan CircuitOutput) error {
 
 	// initializes an encryptor for the inputs. TODO: check if node actually needs it.
 	var cpk *rlwe.PublicKey
@@ -487,6 +343,272 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 	wg.Wait()
 
 	close(outs)
+	return nil
+}
+
+func (s *Service) processIncomingShares() {
+	for share := range s.transport.IncomingShares() {
+		s.L.RLock()
+		proto, exists := s.runningProtos[share.ProtocolID]
+		s.L.RUnlock()
+		if !exists {
+			s.Logf("protocol %s is not running", share.ProtocolID)
+			continue
+		}
+		proto.incoming <- share
+	}
+}
+
+func (s *Service) processProtocolQueue(ctx context.Context, sess *pkg.Session) {
+
+	var wg sync.WaitGroup
+	for w := 0; w < parallelProtocols; w++ {
+		wg.Add(1)
+
+		go func() {
+			for sig := range s.sigQueue {
+
+				opLabel, has := sig.Args["op"]
+				if !has {
+					panic(fmt.Errorf("signature should have an op argument"))
+				}
+
+				s.operandsMu.RLock()
+				op, has := s.operands[pkg.OperandLabel(opLabel)]
+				if !has {
+					panic(fmt.Errorf("operand with label %s not in operand table", opLabel))
+				}
+				s.operandsMu.RUnlock()
+
+				s.L.Lock()
+				pd := s.getProtocolDescriptor(sig.Signature, sess)
+
+				ksInt, err := protocols.NewKeyswitchProtocol(pd, sess) // TODO: should not be done under lock, creation of protocol resources should be decoupled from pd
+				if err != nil {
+					panic(err)
+				}
+				ksInt.Input(op.Ciphertext)
+
+				aggOut, err := s.runProtocolDescriptor(ctx, ksInt, sess)
+				if err != nil {
+					s.Logf("error while running protocol %s: %s, requeuing", pd.HID(), err)
+					s.transport.PutCircuitUpdates(circuits.Update{
+						Signature: circuits.Signature{}, // TODO
+						Status:    circuits.Executing,
+						StatusUpdate: &protocols.StatusUpdate{
+							Descriptor: pd,
+							Status:     protocols.Failed,
+						}})
+					s.sigQueue <- sig
+					continue
+				}
+
+				outCt := (<-ksInt.Output(*aggOut)).Result.(*rlwe.Ciphertext)
+				target := pkg.NodeID(pd.Signature.Args["target"])
+				if pd.Signature.Type == protocols.DEC && sess.T < len(sess.Nodes) && sess.Contains(target) {
+
+					lagrangeCoeff := s.getLagrangeCoeff(sess, target, pd.Participants)
+					ringQP := &ringqp.Ring{RingQ: sess.Params.RingQ()}
+					// If decrypt among T<N, pre-multiplies the c1 elem by the Lagrange coeff.
+					// This avoids requiring participant set on the receiver party side for decryption.
+					ringQP.MulRNSScalarMontgomery(ringqp.Poly{Q: outCt.Value[1]}, lagrangeCoeff, ringqp.Poly{Q: outCt.Value[1]})
+				}
+
+				outOpLabel := pkg.OperandLabel(fmt.Sprintf("%s-%s-out", op.OperandLabel, sig.Type))
+				outOp := pkg.Operand{OperandLabel: outOpLabel, Ciphertext: outCt}
+				s.operandsMu.Lock()
+				s.operands[outOpLabel] = outOp
+				s.operandsMu.Unlock()
+
+				sig.ResultOp <- outOp
+			}
+			wg.Done()
+		}()
+	}
+}
+
+func (s *Service) runProtocolDescriptor(ctx context.Context, ksInt protocols.KeySwitchInstance, sess *pkg.Session) (*protocols.AggregationOutput, error) {
+
+	// cid, has := pkg.CircuitIDFromContext(ctx)
+	// if !has {
+	// 	panic(fmt.Errorf("context should hold the circuit id"))
+	// }
+
+	pd := ksInt.Desc()
+
+	pid := ksInt.ID()
+
+	incoming := make(chan protocols.Share)
+	disconnected := make(chan pkg.NodeID, len(pd.Participants))
+	s.runningProtos[pid] = struct {
+		pd           protocols.Descriptor
+		incoming     chan protocols.Share
+		disconnected chan pkg.NodeID
+	}{ksInt.Desc(), incoming, disconnected}
+	s.L.Unlock()
+
+	s.transport.PutCircuitUpdates(circuits.Update{
+		Signature: circuits.Signature{}, // TODO
+		Status:    circuits.Executing,
+		StatusUpdate: &protocols.StatusUpdate{
+			Descriptor: pd,
+			Status:     protocols.Running,
+		}})
+
+	s.Logf("started executing %s", pd.Signature)
+	var aggOut protocols.AggregationOutput
+	var errAgg error
+	abort := make(chan pkg.NodeID)
+	aggregation := ksInt.Aggregate(ctx, &ProtocolEnvironment{incoming: incoming, outgoing: s.transport.OutgoingShares()})
+	for done := false; !done; {
+		select {
+		case aggOut = <-aggregation:
+			if aggOut.Error != nil {
+				panic(aggOut.Error)
+			}
+			done = true
+		case participantId := <-disconnected:
+
+			if ksInt.HasShareFrom(participantId) {
+				s.Logf("node %s disconnected after providing its share, protocol %s continuing...", participantId, pd.HID())
+				continue
+			}
+
+			time.AfterFunc(time.Second, func() { // leaves some time to process some more messages
+				participantId := participantId
+				abort <- participantId
+			})
+			//errAgg = fmt.Errorf("participant disconnected before providing its share: %s", participantId)
+		case nid := <-abort:
+			done = true
+			errAgg = fmt.Errorf("aborted due to disconnection of %s before providing its share", nid)
+		}
+	}
+
+	s.L.Lock()
+	delete(s.runningProtos, pid)
+
+	for _, participantId := range pd.Participants {
+		s.connectedNodes[participantId].Remove(pid)
+	}
+	s.L.Unlock()
+	s.C.Broadcast()
+
+	s.transport.PutCircuitUpdates(circuits.Update{
+		Signature: circuits.Signature{}, // TODO
+		Status:    circuits.Executing,
+		StatusUpdate: &protocols.StatusUpdate{
+			Descriptor: pd,
+			Status:     protocols.OK,
+		}})
+
+	return &aggOut, errAgg
+}
+
+func (s *Service) getProtocolDescriptor(sig protocols.Signature, sess *pkg.Session) protocols.Descriptor {
+	pd := protocols.Descriptor{Signature: sig, Aggregator: s.id}
+
+	selected := utils.NewEmptySet[pkg.NodeID]()
+	if sess.Contains(pkg.NodeID(sig.Args["target"])) {
+		selected.Add(pkg.NodeID(sig.Args["target"]))
+	}
+	required := sess.T - len(selected)
+
+	var available utils.Set[pkg.NodeID]
+	for available = s.getAvailable(); len(available) < required; available = s.getAvailable() {
+		s.C.Wait()
+	}
+
+	selected.AddAll(utils.GetRandomSetOfSize(required, available))
+
+	pd.Participants = selected.Elements()
+	for nid := range selected {
+		s.connectedNodes[nid].Add(pd.ID())
+	}
+
+	return pd
+}
+
+func (s *Service) getAvailable() utils.Set[pkg.NodeID] {
+	available := make(utils.Set[pkg.NodeID])
+	for nid, nProtos := range s.connectedNodes {
+		if len(nProtos) < numProtoPerNode {
+			available.Add(nid)
+		}
+	}
+	return available
+}
+
+// TODO: sigs chan is closed immediately
+// func (s *Service) Execute(ctx context.Context, label pkg.CircuitID, localOps ...pkg.Operand) ([]pkg.Operand, error) {
+func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip InputProvider, outs chan CircuitOutput) error {
+
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return fmt.Errorf("no session found in context")
+	}
+
+	log.Printf("%s | started compute execute\n", s.ID())
+
+	if !s.IsEvaluator() {
+		if sigs != nil {
+			s.Logf("client submission of Signatures not supported yet, discarding sigs...")
+		}
+
+		sigs = make(chan circuits.Signature)
+		outCtx := pkg.GetOutgoingContext(ctx, s.id)
+		cus, present, err := s.transport.RegisterForComputeAt(outCtx, s.evaluatorID)
+		if err != nil {
+			return err
+		}
+		s.Logf("is registered with %s", s.evaluatorID)
+		go func() {
+			first := true
+			if err := s.catchUp(cus, present, sigs); err != nil {
+				panic(err)
+			}
+
+			for cu := range cus {
+
+				switch cu.Status {
+				case circuits.Created:
+					sigs <- cu.Signature
+					s.Logf("new circuit update: created %s", cu.Signature)
+					if first {
+						first = false
+						close(s.ComputeStart) // TODO better mechanism that also consider crashing nodes stats
+					}
+				case circuits.Executing:
+					if cu.StatusUpdate.Status == protocols.OK {
+						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
+						continue
+					}
+					s.incomingPdescMu.Lock()
+					pdc, has := s.incomingPdesc[cu.StatusUpdate.Signature.String()]
+					if !has {
+						pdc = make(chan protocols.Descriptor, 1)
+						s.incomingPdesc[cu.StatusUpdate.Signature.String()] = pdc
+					}
+					s.incomingPdescMu.Unlock()
+					pdc <- cu.StatusUpdate.Descriptor
+					s.Logf("new circuit update: got protocol descriptor for %s", cu.StatusUpdate.Signature)
+				case circuits.Completed:
+					s.Logf("new circuit update: circuit completed: %s", cu.CircuitID)
+					continue
+				default:
+					panic("invalid circuit update status")
+				}
+
+			}
+			close(sigs)
+		}()
+	} else {
+		go s.processIncomingShares()
+		go s.processProtocolQueue(ctx, sess)
+		close(s.ComputeStart)
+	}
+
+	s.processCircuitQueue(ctx, sess, ip, sigs, outs)
 
 	s.transport.Close()
 
@@ -599,20 +721,35 @@ func (pe *ProtocolEnvironment) IncomingShares() <-chan protocols.Share {
 
 // Register is called by the transport when a new peer register itself for the setup.
 func (s *Service) Register(peer pkg.NodeID) error {
-	if err := s.peers.Register(peer); err != nil {
-		s.Logf("error when registering peer %s for compute: %s", peer, err)
-		return err
+	s.L.Lock()
+	defer s.C.Broadcast()
+	defer s.L.Unlock()
+
+	if _, has := s.connectedNodes[peer]; has {
+		panic("attempting to register a registered node")
 	}
+
+	s.connectedNodes[peer] = make(utils.Set[pkg.ProtocolID])
+
 	s.Logf("compute service registered peer %v", peer)
 	return nil // TODO: Implement
 }
 
 // Unregister is called by the transport when a peer is unregistered from the setup.
 func (s *Service) Unregister(peer pkg.NodeID) error {
-	if err := s.peers.Unregister(peer); err != nil {
-		s.Logf("error when unregistering peer %s for compute: %s", peer, err)
-		return err
+	s.L.Lock()
+	protoIDs, has := s.connectedNodes[peer]
+	if !has {
+		panic("unregistering an unregistered node")
 	}
+
+	for pid := range protoIDs {
+		s.runningProtos[pid].disconnected <- peer
+	}
+
+	delete(s.connectedNodes, peer)
+	s.L.Unlock()
+
 	s.Logf("compute unregistered peer %v", peer)
 	return nil // TODO: Implement
 }

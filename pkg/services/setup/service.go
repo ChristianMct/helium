@@ -363,7 +363,6 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, pd protocols.Descri
 
 	s.L.Lock()
 	delete(s.runningProtos, pid)
-
 	s.completedProtos = append(s.completedProtos, pd)
 
 	for _, participantId := range pd.Participants {

@@ -7,7 +7,7 @@ import (
 	"github.com/ldsec/helium/pkg/pkg"
 )
 
-const protocolLogging = true
+const protocolLogging = false
 
 type ShareQuery struct {
 	ShareDescriptor
