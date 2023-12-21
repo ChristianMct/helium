@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
@@ -800,7 +801,7 @@ func (s *Service) catchUp(cus <-chan circuits.Update, present int, sigs chan cir
 
 	prot := make(map[string]protocols.StatusUpdate)
 	for cid, cus := range circ {
-		s.Logf("will catch up on circuit %s, %+v", cid, cus)
+		s.Logf("will catch up on circuit %s, %s", cid, spew.Sdump(cus))
 		sigs <- cus[0].Signature // first is circuit creation
 		for _, cu := range cus[1:] {
 			switch cu.StatusUpdate.Status {

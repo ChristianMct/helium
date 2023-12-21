@@ -281,7 +281,6 @@ func (t *computeTransport) RegisterForComputeAt(ctx context.Context, peerID pkg.
 				pdesc := getProtocolDescFromAPI(apicu.ProtocolUpdate.ProtocolDescriptor)
 				cu.StatusUpdate = &protocols.StatusUpdate{Descriptor: *pdesc, Status: protocols.Status(apicu.ProtocolUpdate.ProtocolStatus)}
 			}
-			cu.String()
 
 			descStream <- cu
 			//log.Printf("received cu: %v", cu)
