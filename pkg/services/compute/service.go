@@ -380,6 +380,11 @@ func (s *Service) processProtocolQueue(ctx context.Context, sess *pkg.Session) {
 				}
 				s.operandsMu.RUnlock()
 
+				cid := pkg.NewURL(opLabel).CircuitID()
+				if len(cid) == 0 {
+					panic(fmt.Errorf("operand is not attached to any circuit"))
+				}
+
 				s.L.Lock()
 				pd := s.getProtocolDescriptor(sig.Signature, sess)
 
@@ -389,11 +394,13 @@ func (s *Service) processProtocolQueue(ctx context.Context, sess *pkg.Session) {
 				}
 				ksInt.Input(op.Ciphertext)
 
-				aggOut, err := s.runProtocolDescriptor(ctx, ksInt, sess)
+				ctxProt := pkg.NewContext(&sess.ID, &cid)
+
+				aggOut, err := s.runProtocolDescriptor(ctxProt, ksInt, sess)
 				if err != nil {
 					s.Logf("error while running protocol %s: %s, requeuing", pd.HID(), err)
 					s.transport.PutCircuitUpdates(circuits.Update{
-						Signature: circuits.Signature{}, // TODO
+						Signature: circuits.Signature{CircuitID: cid}, // TODO
 						Status:    circuits.Executing,
 						StatusUpdate: &protocols.StatusUpdate{
 							Descriptor: pd,
@@ -429,10 +436,10 @@ func (s *Service) processProtocolQueue(ctx context.Context, sess *pkg.Session) {
 
 func (s *Service) runProtocolDescriptor(ctx context.Context, ksInt protocols.KeySwitchInstance, sess *pkg.Session) (*protocols.AggregationOutput, error) {
 
-	// cid, has := pkg.CircuitIDFromContext(ctx)
-	// if !has {
-	// 	panic(fmt.Errorf("context should hold the circuit id"))
-	// }
+	cid, has := pkg.CircuitIDFromContext(ctx)
+	if !has {
+		panic(fmt.Errorf("context should hold the circuit id"))
+	}
 
 	pd := ksInt.Desc()
 
@@ -448,7 +455,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, ksInt protocols.Key
 	s.L.Unlock()
 
 	s.transport.PutCircuitUpdates(circuits.Update{
-		Signature: circuits.Signature{}, // TODO
+		Signature: circuits.Signature{CircuitID: cid},
 		Status:    circuits.Executing,
 		StatusUpdate: &protocols.StatusUpdate{
 			Descriptor: pd,
@@ -495,7 +502,7 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, ksInt protocols.Key
 	s.C.Broadcast()
 
 	s.transport.PutCircuitUpdates(circuits.Update{
-		Signature: circuits.Signature{}, // TODO
+		Signature: circuits.Signature{CircuitID: cid},
 		Status:    circuits.Executing,
 		StatusUpdate: &protocols.StatusUpdate{
 			Descriptor: pd,
@@ -796,7 +803,7 @@ func (s *Service) catchUp(cus <-chan circuits.Update, present int, sigs chan cir
 				prot[cu.StatusUpdate.Signature.String()] = *cu.StatusUpdate
 			case protocols.OK:
 				if _, has := prot[cu.StatusUpdate.Signature.String()]; !has {
-					return fmt.Errorf("Protocol OK before creation")
+					return fmt.Errorf("protocol OK before creation")
 				}
 				delete(prot, cu.StatusUpdate.Signature.String())
 			}
