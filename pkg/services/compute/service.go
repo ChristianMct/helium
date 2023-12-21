@@ -200,7 +200,7 @@ func (s *Service) GetProtoDescAndRunKeySwitch(ctx context.Context, sig protocols
 	}
 	s.incomingPdescMu.Unlock()
 
-	s.Logf("waiting for protocol description for %s", sig)
+	//s.Logf("waiting for protocol description for %s", sig)
 	pd := <-pdc
 
 	p, err := protocols.NewProtocol(pd, sess)
@@ -211,7 +211,7 @@ func (s *Service) GetProtoDescAndRunKeySwitch(ctx context.Context, sig protocols
 
 	cks.Input(in.Ciphertext)
 
-	s.Logf("started executing %s", sig)
+	//s.Logf("started executing %s", sig)
 	cks.Aggregate(context.Background(), &ProtocolEnvironment{outgoing: s.transport.OutgoingShares()})
 
 	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
@@ -638,7 +638,7 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 		return nil, status.Errorf(codes.InvalidArgument, "invalid session id")
 	}
 
-	s.Logf("%s queried for ciphertext id %s", pkg.SenderIDFromIncomingContext(ctx), ctID)
+	//s.Logf("%s queried for ciphertext id %s", pkg.SenderIDFromIncomingContext(ctx), ctID)
 
 	ctURL, err := pkg.ParseURL(string(ctID))
 	if err != nil {
@@ -777,16 +777,21 @@ func (s *Service) catchUp(cus <-chan circuits.Update, present int, sigs chan cir
 	circ := make(map[pkg.CircuitID][]circuits.Update)
 	for cu := range cus {
 		switch cu.Status {
+		case circuits.Created:
+			circ[cu.CircuitID] = []circuits.Update{cu}
+		case circuits.Executing:
+			if _, has := circ[cu.CircuitID]; !has {
+				return fmt.Errorf("Circuit Executing before creation")
+			}
+			circ[cu.CircuitID] = append(circ[cu.CircuitID], cu)
+
 		case circuits.Completed:
 			if _, has := circ[cu.CircuitID]; !has {
 				return fmt.Errorf("Circuit OK before creation")
 			}
 			delete(circ, cu.CircuitID)
-		case circuits.Created:
-			circ[cu.CircuitID] = []circuits.Update{cu}
-		case circuits.Executing:
-			circ[cu.CircuitID] = append(circ[cu.CircuitID], cu)
 		}
+
 		current++
 		if current == present {
 			break
@@ -795,13 +800,13 @@ func (s *Service) catchUp(cus <-chan circuits.Update, present int, sigs chan cir
 
 	prot := make(map[string]protocols.StatusUpdate)
 	for cid, cus := range circ {
-		s.Logf("will catch up on circuit %s", cid)
-		sigs <- cus[0].Signature
+		s.Logf("will catch up on circuit %s, %+v", cid, cus)
+		sigs <- cus[0].Signature // first is circuit creation
 		for _, cu := range cus[1:] {
 			switch cu.StatusUpdate.Status {
 			case protocols.Running:
 				prot[cu.StatusUpdate.Signature.String()] = *cu.StatusUpdate
-			case protocols.OK:
+			case protocols.OK, protocols.Failed:
 				if _, has := prot[cu.StatusUpdate.Signature.String()]; !has {
 					return fmt.Errorf("protocol OK before creation")
 				}

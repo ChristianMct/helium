@@ -137,7 +137,7 @@ func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) Aggreg
 	if providesShare {
 		env.OutgoingShares() <- share
 	}
-	log.Printf("%s | [%s] completed aggregation\n", p.self, p.HID())
+	p.Logf("completed aggregation")
 	return AggregationOutput{}
 }
 
