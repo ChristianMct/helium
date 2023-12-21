@@ -347,7 +347,7 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 			sess.T).GenAdditiveShare(spks, sess.SPKS[sess.NodeID], *tsk, sk)
 		return sk, nil
 	default:
-		return nil, fmt.Errorf("not enough participants to reconstruct")
+		return nil, fmt.Errorf("group of size %d is not enough participants to reconstruct", len(parties))
 	}
 }
 

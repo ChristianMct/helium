@@ -515,7 +515,11 @@ func (s *Service) getProtocolDescriptor(sig protocols.Signature, sess *pkg.Sessi
 	required := sess.T - len(selected)
 
 	var available utils.Set[pkg.NodeID]
-	for available = s.getAvailable(); len(available) < required; available = s.getAvailable() {
+	for available = s.getAvailable(); ; available = s.getAvailable() {
+		available.Remove(selected.Elements()...)
+		if len(available) >= required {
+			break
+		}
 		s.C.Wait()
 	}
 
