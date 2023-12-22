@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
@@ -202,20 +201,21 @@ func (s *Service) GetProtoDescAndRunKeySwitch(ctx context.Context, sig protocols
 	s.incomingPdescMu.Unlock()
 
 	//s.Logf("waiting for protocol description for %s", sig)
-	pd := <-pdc
+	for pd := range pdc {
+		p, err := protocols.NewProtocol(pd, sess)
+		if err != nil {
+			return pkg.Operand{}, err
+		}
+		cks, _ := p.(protocols.KeySwitchInstance)
 
-	p, err := protocols.NewProtocol(pd, sess)
-	if err != nil {
-		return pkg.Operand{}, err
+		cks.Input(in.Ciphertext)
+
+		//s.Logf("started executing %s", sig)
+		cks.Aggregate(context.Background(), &ProtocolEnvironment{outgoing: s.transport.OutgoingShares()})
 	}
-	cks, _ := p.(protocols.KeySwitchInstance)
-
-	cks.Input(in.Ciphertext)
-
-	//s.Logf("started executing %s", sig)
-	cks.Aggregate(context.Background(), &ProtocolEnvironment{outgoing: s.transport.OutgoingShares()})
 
 	out.OperandLabel = pkg.OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, sig.Type))
+
 	return out, nil
 }
 
@@ -428,7 +428,16 @@ func (s *Service) processProtocolQueue(ctx context.Context, sess *pkg.Session) {
 				s.operands[outOpLabel] = outOp
 				s.operandsMu.Unlock()
 
+				s.transport.PutCircuitUpdates(circuits.Update{
+					Signature: circuits.Signature{CircuitID: cid},
+					Status:    circuits.Executing,
+					StatusUpdate: &protocols.StatusUpdate{
+						Descriptor: pd,
+						Status:     protocols.OK,
+					}}) // must be done before sending to circuit logic to ensure the update is recorded before the OK of the circuit.
+
 				sig.ResultOp <- outOp
+
 			}
 			wg.Done()
 		}()
@@ -501,14 +510,6 @@ func (s *Service) runProtocolDescriptor(ctx context.Context, ksInt protocols.Key
 	}
 	s.L.Unlock()
 	s.C.Broadcast()
-
-	s.transport.PutCircuitUpdates(circuits.Update{
-		Signature: circuits.Signature{CircuitID: cid},
-		Status:    circuits.Executing,
-		StatusUpdate: &protocols.StatusUpdate{
-			Descriptor: pd,
-			Status:     protocols.OK,
-		}})
 
 	return &aggOut, errAgg
 }
@@ -590,11 +591,9 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 						first = false
 						close(s.ComputeStart) // TODO better mechanism that also consider crashing nodes stats
 					}
-				case circuits.Executing:
-					if cu.StatusUpdate.Status == protocols.OK {
-						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
-						continue
-					}
+				case circuits.Executing: // Executing status is for protocol updates
+
+					// retrieves the channel corresponding to this protocol's sig
 					s.incomingPdescMu.Lock()
 					pdc, has := s.incomingPdesc[cu.StatusUpdate.Signature.String()]
 					if !has {
@@ -602,8 +601,17 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 						s.incomingPdesc[cu.StatusUpdate.Signature.String()] = pdc
 					}
 					s.incomingPdescMu.Unlock()
-					pdc <- cu.StatusUpdate.Descriptor
-					s.Logf("new circuit update: got protocol descriptor for %s", cu.StatusUpdate.Signature)
+
+					switch cu.StatusUpdate.Status {
+					case protocols.Running:
+						pdc <- cu.StatusUpdate.Descriptor
+						s.Logf("new circuit update: got protocol descriptor for %s", cu.StatusUpdate.Signature)
+					case protocols.Failed:
+						s.Logf("new circuit update: got status Failed for %s", cu.StatusUpdate.Signature)
+					case protocols.OK:
+						s.Logf("new circuit update: got status OK for %s", cu.StatusUpdate.Signature)
+						close(pdc)
+					}
 				case circuits.Completed:
 					s.Logf("new circuit update: circuit completed: %s", cu.CircuitID)
 					continue
@@ -801,17 +809,18 @@ func (s *Service) catchUp(cus <-chan circuits.Update, present int, sigs chan cir
 
 	prot := make(map[string]protocols.StatusUpdate)
 	for cid, cus := range circ {
-		s.Logf("will catch up on circuit %s, %s", cid, (&spew.ConfigState{DisableMethods: true}).Sdump(cus))
+		s.Logf("will catch up on circuit %s", cid)
 		sigs <- cus[0].Signature // first is circuit creation
 		for _, cu := range cus[1:] {
+			pid := cu.StatusUpdate.Descriptor.ID().String()
 			switch cu.StatusUpdate.Status {
 			case protocols.Running:
-				prot[cu.StatusUpdate.Signature.String()] = *cu.StatusUpdate
+				prot[pid] = *cu.StatusUpdate
 			case protocols.OK, protocols.Failed:
-				if _, has := prot[cu.StatusUpdate.Signature.String()]; !has {
+				if _, has := prot[pid]; !has {
 					return fmt.Errorf("protocol OK before creation")
 				}
-				delete(prot, cu.StatusUpdate.Signature.String())
+				delete(prot, pid)
 			}
 		}
 	}
