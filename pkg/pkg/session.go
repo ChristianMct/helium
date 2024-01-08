@@ -206,7 +206,7 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 			}
 		}
 
-		sess.rlkEphSk = kgen.GenSecretKeyNew()
+		sess.rlkEphSk = kgen.GenSecretKeyNew() // TODO: generates a new ephSK on restart so correctness error
 		sess.SetRLKEphemeralSecretKey(sess.rlkEphSk)
 	} else {
 		sk, pk := kgen.GenKeyPairNew()

@@ -416,10 +416,15 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 					continue
 				}
 
+				s.Logf("[Aggregate] completed sig: %s", pd.Signature)
+
 				if sig.Type == protocols.RKG_1 {
-					s.rkgRound1Results[pd.ID()] = aggOut.Share
+					s.rkgRound1Results[pd.ID()] = aggOut.Share // TODO revamp result backend to store all round results
 					pdRkgRound2 := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_2, Args: pd.Signature.Args}, Participants: pd.Participants, Aggregator: pd.Aggregator}
 					s.L.Lock()
+					for _, nid := range pdRkgRound2.Participants {
+						s.connectedNodes[nid].Add(pdRkgRound2.ID())
+					}
 					aggOutRound2, err := s.runProtocolDescriptor(ctx, pdRkgRound2, sess)
 					if err != nil {
 						s.Logf("error while running RKG_2 protocol: %s, requeuing RKG_1", err)
@@ -427,6 +432,9 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 						sigs <- sig
 						continue
 					}
+
+					s.Logf("[Aggregate] completed sig: %s", pd.Signature)
+
 					err = s.ResultBackend.Put(pdRkgRound2, aggOutRound2.Share)
 					if err != nil {
 						panic(err)
@@ -443,8 +451,6 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 
 				s.transport.PutProtocolUpdate(protocols.StatusUpdate{Descriptor: pd, Status: protocols.Status(api.ProtocolStatus_OK)})
 				wgSig.Done()
-
-				s.Logf("[Aggregate] completed sig: %s", pd.Signature)
 
 			}
 			wg.Done()
