@@ -435,6 +435,8 @@ func (s *Service) aggregate(ctx context.Context, sigList SignatureList, outputs 
 
 					if err == nil {
 						aggOutRound2, err = s.runProtocolDescriptor(ctx, pdRkgRound2, sess)
+					} else {
+						s.L.Unlock()
 					}
 
 					if err != nil {
