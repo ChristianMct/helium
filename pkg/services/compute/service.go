@@ -230,13 +230,14 @@ func (s *Service) processCircuitQueue(ctx context.Context, sess *pkg.Session, ip
 	var encryptor *rlwe.Encryptor
 	var err error
 	cpk, err = s.pkBackend.GetCollectivePublicKey()
-	if err != nil {
-		return fmt.Errorf("error while loading encryption context: %w", err)
-	}
-
-	encryptor, err = rlwe.NewEncryptor(sess.Params, cpk)
-	if err != nil {
-		return fmt.Errorf("error while loading encryption context: %w", err)
+	// if err != nil {
+	// 	return fmt.Errorf("error while loading encryption context: %w", err)
+	// }
+	if err == nil {
+		encryptor, err = rlwe.NewEncryptor(sess.Params, cpk)
+		if err != nil {
+			return fmt.Errorf("error while loading encryption context: %w", err)
+		}
 	}
 
 	var sk *rlwe.SecretKey
@@ -262,7 +263,10 @@ func (s *Service) processCircuitQueue(ctx context.Context, sess *pkg.Session, ip
 		go func() {
 			defer wg.Done()
 
-			encryptor := encryptor.ShallowCopy()
+			var encr *rlwe.Encryptor
+			if encryptor != nil {
+				encr = encryptor.ShallowCopy()
+			}
 			if sk != nil { // TODO: use ShallowCopy when fixed on lattigo side
 				decryptor, err = rlwe.NewDecryptor(sess.Params, sk)
 				if err != nil {
@@ -301,7 +305,7 @@ func (s *Service) processCircuitQueue(ctx context.Context, sess *pkg.Session, ip
 					if err != nil {
 						panic(fmt.Errorf("input provider returned an error: %w", err))
 					}
-					ct, err := encryptor.EncryptNew(inPt)
+					ct, err := encr.EncryptNew(inPt)
 					if err != nil {
 						panic(fmt.Errorf("could not encrypt input plaintext: %w", err))
 					}
@@ -628,11 +632,14 @@ func (s *Service) Execute(ctx context.Context, sigs chan circuits.Signature, ip 
 		close(s.ComputeStart)
 	}
 
-	s.processCircuitQueue(ctx, sess, ip, sigs, outs)
+	err := s.processCircuitQueue(ctx, sess, ip, sigs, outs)
+	if err != nil {
+		panic(err)
+	}
 
 	s.transport.Close()
 
-	log.Printf("%s | execute returned\n", s.ID())
+	log.Printf("%s | compute execute returned\n", s.ID())
 	return nil
 }
 

@@ -34,8 +34,8 @@ type testSetting struct {
 }
 
 var testSettings = []testSetting{
-	{N: 4},
-	{N: 4, T: 3},
+	{N: 6},
+	{N: 6, T: 4},
 }
 
 type peer struct {
@@ -81,7 +81,7 @@ func TestCloudEvalCircuit(t *testing.T) {
 
 				var testConfig = node.LocalTestConfig{
 					HelperNodes: 1,
-					LightNodes:  4,
+					LightNodes:  ts.N,
 					Session: &pkg.SessionParameters{
 						RLWEParams: literalParams,
 						T:          ts.T,

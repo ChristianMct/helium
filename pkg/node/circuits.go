@@ -161,7 +161,7 @@ var TestCircuits = map[string]compute.Circuit{
 		opout, err := e.DEC(opres, map[string]string{
 			"target":   "helper-0",
 			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": fmt.Sprintf("%f", float64(1<<20)),
+			"smudging": fmt.Sprintf("%f", float64(1<<40)),
 		})
 		if err != nil {
 			return err

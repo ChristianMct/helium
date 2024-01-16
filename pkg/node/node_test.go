@@ -2,6 +2,7 @@ package node
 
 import (
 	"fmt"
+	"math/big"
 	"sync"
 	"testing"
 
@@ -23,17 +24,21 @@ func failIfNonNil(t *testing.T, err error) {
 
 func TestHelium(t *testing.T) {
 
-	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 65537, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}})         // vecmul
-	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{39, 31}, LogP: []int{39}}) // matmul
+	N := 4
+	T := N
+	CIRCUIT_REP := 10
+
+	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
+	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
 	failIfNonNil(t, err)
 	sessParams := pkg.SessionParameters{
 		ID:         "test-session",
 		RLWEParams: params.ParametersLiteral(),
-		T:          3,
+		T:          T,
 	}
 
 	lt := NewLocalTest(LocalTestConfig{
-		LightNodes:  4,
+		LightNodes:  N,
 		HelperNodes: 1,
 		Session:     &sessParams,
 	})
@@ -44,13 +49,9 @@ func TestHelium(t *testing.T) {
 	cloud := lt.HelperNodes[0]
 	clients := lt.LightNodes
 
-	cDesc := compute.Description{
-		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-0"},
-		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-1"},
-		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-2"},
-		circuits.Signature{CircuitName: "matmul4-dec", CircuitID: "test-circuit-3"},
-		// circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-4"},
-		// circuits.Signature{CircuitName: "mul4-dec", CircuitID: "test-circuit-5"},
+	cDesc := compute.Description{}
+	for i := 0; i < CIRCUIT_REP; i++ {
+		cDesc = append(cDesc, circuits.Signature{CircuitName: "matmul4-dec", CircuitID: pkg.CircuitID(fmt.Sprintf("test-circuit-%d", i))})
 	}
 
 	ctx := pkg.NewContext(&sessParams.ID, nil)
@@ -174,7 +175,27 @@ func TestHelium(t *testing.T) {
 	}()
 
 	encoder := bgv.NewEncoder(params)
+
+	ptWant := bgv.NewPlaintext(params, params.MaxLevel())
+	encoder.Encode(dataWant, ptWant)
+
+	diff := params.RingQ().NewPoly()
+	coeffsBigint := make([]*big.Int, params.N())
+	for i := range coeffsBigint {
+		coeffsBigint[i] = new(big.Int)
+	}
+
 	for co := range outs {
+
+		params.RingQ().Sub(co.Pt.Value, ptWant.Value, diff)
+
+		params.RingQ().INTT(diff, diff)
+
+		params.RingQ().PolyToBigintCentered(diff, 1, coeffsBigint)
+
+		vari, min, max := rlwe.NormStats(coeffsBigint)
+		fmt.Printf("var=%f, min=%f, max=%f\n", vari, min, max)
+
 		res := make([]uint64, params.PlaintextSlots())
 		err = encoder.Decode(co.Pt, res)
 		if err != nil {
