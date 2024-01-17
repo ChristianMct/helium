@@ -220,7 +220,6 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 				apiDesc := getAPIProtocolDesc(&pu.Descriptor)
 				err := stream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(pu.Status)})
 				if err != nil {
-					close(peerUpdateQueue)
 					done = true
 				}
 			} else {
@@ -241,14 +240,14 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 					done = true
 				}
 			}
-			close(peerUpdateQueue)
 		case <-stream.Context().Done():
 			done = true
-			close(peerUpdateQueue)
+
 		}
 	}
 
 	t.mPeers.Lock()
+	close(peerUpdateQueue)
 	peer.connected = false
 	t.mPeers.Unlock()
 	return t.srvHandler.Unregister(peerID)
