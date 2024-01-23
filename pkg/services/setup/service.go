@@ -699,7 +699,7 @@ func (s *Service) Register(peer pkg.NodeID) error {
 
 	s.connectedNodes[peer] = make(utils.Set[pkg.ProtocolID])
 
-	s.Logf("setup service registered peer %v", peer)
+	s.Logf("setup service registered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 
@@ -719,7 +719,7 @@ func (s *Service) Unregister(peer pkg.NodeID) error {
 	delete(s.connectedNodes, peer)
 	s.L.Unlock()
 
-	s.Logf("setup unregistered peer %v", peer)
+	s.Logf("setup unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 
