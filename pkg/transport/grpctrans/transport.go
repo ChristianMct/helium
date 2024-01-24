@@ -118,7 +118,7 @@ func (t *Transport) ConnectWithDialers(lis net.Listener, dialers map[pkg.NodeID]
 			grpc.ChainUnaryInterceptor(interceptors...),
 			grpc.KeepaliveParams(keepalive.ServerParameters{
 				Time:    time.Second,
-				Timeout: time.Second,
+				Timeout: 5 * time.Second,
 			}),
 		}
 
