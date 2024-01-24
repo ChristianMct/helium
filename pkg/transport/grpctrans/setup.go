@@ -184,19 +184,19 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 		return fmt.Errorf("client must specify node id for stream")
 	}
 
-	peerUpdateQueue := make(chan protocols.StatusUpdate, peerProtocolUpdateQueueSize)
+	t.Logf("setup transport %s, connected", peerID)
 
-	t.protocolUpdatesMu.Lock()
+	t.protocolUpdatesMu.RLock()
 	present := len(t.protocolUpdates)
+	peerUpdateQueue := make(chan protocols.StatusUpdate, present)
 
 	t.mPeers.Lock()
 	peer, has := t.peers[peerID]
 	if !has {
-		t.mPeers.Unlock()
-		return fmt.Errorf("unexpected peer id: %s", peerID)
+		panic(fmt.Errorf("unexpected peer id: %s", peerID))
 	}
 	if peer.connected {
-		panic("peer already registered")
+		panic(fmt.Errorf("peer already registered: %s", peerID))
 	}
 	peer.connected = true
 	peer.protocolUpdateQueue = peerUpdateQueue
@@ -207,7 +207,9 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 	}
 
 	t.mPeers.Unlock()
-	t.protocolUpdatesMu.Unlock()
+	t.protocolUpdatesMu.RUnlock()
+
+	t.Logf("setup transport %s, registered", peerID)
 
 	err := t.srvHandler.Register(peerID)
 	if err != nil {
@@ -223,9 +225,11 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 				err := stream.Send(&api.ProtocolUpdate{ProtocolDescriptor: apiDesc, ProtocolStatus: api.ProtocolStatus(pu.Status)})
 				if err != nil {
 					done = true
+					t.Logf("setup transport %s, error while sending on stream: %s", peerID, err)
 				}
 			} else {
 				done = true
+				t.Logf("setup transport %s, updated queue closed", peerID)
 			}
 		case <-t.transportDone:
 			//done = true
@@ -242,9 +246,10 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 					done = true
 				}
 			}
+			t.Logf("setup transport %s, transport done", peerID)
 		case <-stream.Context().Done():
 			done = true
-
+			t.Logf("setup transport %s, stream context done, err = %s", peerID, stream.Context().Err())
 		}
 	}
 
@@ -252,6 +257,8 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 	close(peerUpdateQueue)
 	peer.connected = false
 	t.mPeers.Unlock()
+	t.Logf("setup transport %s, unregistered", peerID)
+
 	return t.srvHandler.Unregister(peerID)
 }
 
@@ -284,6 +291,10 @@ func (t *setupTransport) StreamShares(stream api.SetupService_StreamSharesServer
 
 func (t *setupTransport) Close() {
 	close(t.transportDone)
+}
+
+func (s *setupTransport) Logf(msg string, v ...any) {
+	log.Printf("%s | %s\n", s.id, fmt.Sprintf(msg, v...))
 }
 
 type setupServiceClientWrapper struct {

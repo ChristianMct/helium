@@ -157,15 +157,16 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 		return fmt.Errorf("client must specify node id for stream")
 	}
 
-	peerCircuitUpdateQueue := make(chan circuits.Update, peerCircuitUpdateQueueSize)
+	t.Logf("compute transport %s, connected", peerID)
 
 	t.mCircuitUpdates.RLock() // locks the updates while populating the past message queue
+	present := len(t.circuitUpdates)
+	peerCircuitUpdateQueue := make(chan circuits.Update, present)
 
 	t.mPeers.Lock() // updates the peer status to online, peer will recieve subsequent updates on its queue
 	peer, has := t.peers[peerID]
 	if !has {
-		t.mPeers.Unlock()
-		return fmt.Errorf("unexpected peer id: %s", peerID)
+		panic(fmt.Errorf("unexpected peer id: %s", peerID))
 	}
 	if peer.connected {
 		panic("peer already registered")
@@ -173,7 +174,6 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 	peer.connected = true
 	peer.circuitUpdateQueue = peerCircuitUpdateQueue
 
-	present := len(t.circuitUpdates)
 	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 	for _, cu := range t.circuitUpdates {
 		peerCircuitUpdateQueue <- cu
@@ -181,6 +181,8 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 
 	t.mPeers.Unlock()
 	t.mCircuitUpdates.RUnlock()
+
+	t.Logf("compute transport %s, registered", peerID)
 
 	err := t.srvHandler.Register(peerID)
 	if err != nil {
@@ -195,20 +197,35 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 				err := SendUpdate(cu, stream)
 				if err != nil {
 					done = true
+					t.Logf("compute transport %s, error while sending on stream: %s", peerID, err)
 				}
 			} else {
 				done = true
+				t.Logf("compute transport %s, updated queue closed", peerID)
 			}
 		case <-t.transportDone:
-			done = true
+			for !done {
+				select {
+				case cu := <-peerCircuitUpdateQueue:
+					err := SendUpdate(cu, stream)
+					if err != nil {
+						done = true
+					}
+				default:
+					done = true
+				}
+			}
+			t.Logf("compute transport %s, transport done", peerID)
 		case <-stream.Context().Done():
 			done = true
+			t.Logf("compute transport %s, stream context done, err = %s", peerID, stream.Context().Err())
 		}
 	}
 	t.mPeers.Lock()
 	close(peerCircuitUpdateQueue)
 	peer.connected = false
 	t.mPeers.Unlock()
+	t.Logf("compute transport %s, unregistered", peerID)
 	return t.srvHandler.Unregister(peerID)
 }
 
@@ -290,6 +307,10 @@ func (t *computeTransport) RegisterForComputeAt(ctx context.Context, peerID pkg.
 	}()
 
 	return descStream, present, nil
+}
+
+func (s *computeTransport) Logf(msg string, v ...any) {
+	log.Printf("%s | %s\n", s.id, fmt.Sprintf(msg, v...))
 }
 
 type computeServiceClientWrapper struct {
