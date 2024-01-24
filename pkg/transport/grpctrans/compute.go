@@ -157,26 +157,35 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 		return fmt.Errorf("client must specify node id for stream")
 	}
 
+	peerCircuitUpdateQueue := make(chan circuits.Update, peerCircuitUpdateQueueSize)
+
+	t.mCircuitUpdates.RLock() // locks the updates while populating the past message queue
+
+	t.mPeers.Lock() // updates the peer status to online, peer will recieve subsequent updates on its queue
+	peer, has := t.peers[peerID]
+	if !has {
+		t.mPeers.Unlock()
+		return fmt.Errorf("unexpected peer id: %s", peerID)
+	}
+	if peer.connected {
+		panic("peer already registered")
+	}
+	peer.connected = true
+	peer.circuitUpdateQueue = peerCircuitUpdateQueue
+
+	present := len(t.circuitUpdates)
+	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
+	for _, cu := range t.circuitUpdates {
+		peerCircuitUpdateQueue <- cu
+	}
+
+	t.mPeers.Unlock()
+	t.mCircuitUpdates.RUnlock()
+
 	err := t.srvHandler.Register(peerID)
 	if err != nil {
 		return err
 	}
-
-	peer := t.peers[peerID]
-
-	peerCircuitUpdateQueue := make(chan circuits.Update, peerCircuitUpdateQueueSize)
-
-	t.mCircuitUpdates.RLock() // locks the updates while populating the past message queue
-	present := len(t.circuitUpdates)
-	for _, cu := range t.circuitUpdates {
-		peerCircuitUpdateQueue <- cu
-	}
-	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
-	t.mPeers.Lock() // updates the peer status to online, peer will recieve subsequent updates on its queue
-	peer.circuitUpdateQueue = peerCircuitUpdateQueue
-	peer.connected = true
-	t.mPeers.Unlock()
-	t.mCircuitUpdates.RUnlock()
 
 	var done bool
 	for !done {
@@ -197,18 +206,10 @@ func (t *computeTransport) RegisterForCompute(_ *api.Void, stream api.ComputeSer
 		}
 	}
 	t.mPeers.Lock()
-	peer.connected = false
 	close(peerCircuitUpdateQueue)
-	t.mPeers.Unlock()
-
-	err = t.srvHandler.Unregister(peerID)
-	if err != nil {
-		return err
-	}
-	t.mPeers.Lock()
 	peer.connected = false
 	t.mPeers.Unlock()
-	return nil
+	return t.srvHandler.Unregister(peerID)
 }
 
 type ComputeTransportHandler struct {

@@ -195,11 +195,13 @@ func (t *setupTransport) RegisterForSetup(_ *api.Void, stream api.SetupService_R
 		t.mPeers.Unlock()
 		return fmt.Errorf("unexpected peer id: %s", peerID)
 	}
+	if peer.connected {
+		panic("peer already registered")
+	}
 	peer.connected = true
 	peer.protocolUpdateQueue = peerUpdateQueue
-	//peer.protoUpdateStream = stream
-	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 
+	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 	for _, pu := range t.protocolUpdates {
 		peerUpdateQueue <- pu
 	}

@@ -248,6 +248,7 @@ func (t *Transport) dialers() map[pkg.NodeID]transport.Dialer {
 type SetupPeer struct {
 	id                  pkg.NodeID
 	protocolUpdateQueue chan protocols.StatusUpdate
+	//peerReconnect       chan struct{}
 	//protoUpdateStream   api.SetupService_RegisterForSetupServer
 	//protoUpdateStreamDone chan bool
 	cli       api.SetupServiceClient
