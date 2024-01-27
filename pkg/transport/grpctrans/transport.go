@@ -170,6 +170,7 @@ func (t *Transport) ConnectWithDialers(lis net.Listener, dialers map[pkg.NodeID]
 				grpc.MaxCallSendMsgSize(MaxMsgSize)),
 			grpc.WithStatsHandler(&t.statsHandler),
 			grpc.WithChainUnaryInterceptor(interceptors...),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Second, Timeout: time.Minute}),
 		}
 
 		if !t.tlsSetup.withInsecureChannels {
