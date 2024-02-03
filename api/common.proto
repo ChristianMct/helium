@@ -55,6 +55,12 @@ enum ProtocolStatus {
 }
 
 
+message ComputeSignature {
+    string CircuitName = 1;
+    string CircuitID = 2;
+}
+
+
 /* ProtocolDescriptor is a message type to describe a protocol by its type
 and arguments. It should be sufficient for parties to instantiate a protocol
 within a given session */

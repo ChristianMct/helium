@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strconv"
 	"time"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -282,21 +281,4 @@ func (p *ComputePeer) ID() pkg.NodeID {
 type SignatureScheme struct {
 	Type api.SignatureType
 	sk   []byte // as generic as possible
-}
-
-func readPresentFromStream(stream grpc.ClientStream) (int, error) {
-	md, err := stream.Header()
-	if err != nil {
-		return 0, err
-	}
-	vals := md.Get("present")
-	if len(vals) != 1 {
-		return 0, fmt.Errorf("invalid stream header: present field not found")
-	}
-
-	present, err := strconv.Atoi(vals[0])
-	if err != nil {
-		return 0, fmt.Errorf("invalid stream header: bad value in present field: %s", vals[0])
-	}
-	return present, nil
 }

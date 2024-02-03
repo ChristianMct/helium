@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/ldsec/helium/pkg/circuits"
+	"github.com/ldsec/helium/pkg/coordinator"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
@@ -74,6 +75,11 @@ type ComputeServiceTransport interface {
 	ShareTransport
 
 	Close() // TODO: there should be a common interface for transports
+}
+
+type CoordinationTransport interface {
+	Register(context.Context) (events <-chan coordinator.Event, present int, err error)
+	Send(coordinator.Event) error
 }
 
 // ShareTransport is an interface for the transport of protocol shares.

@@ -32,11 +32,6 @@ message CiphertextRequest {
 }
 
 
-message ComputeSignature {
-    string CircuitName = 1;
-    string CircuitID = 2;
-}
-
 enum ComputeStatus {
     COMPLETED = 0;
     CREATED = 1;
