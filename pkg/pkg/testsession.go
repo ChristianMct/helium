@@ -1,12 +1,87 @@
 package pkg
 
 import (
+	"github.com/ldsec/helium/pkg/objectstore"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
 	"github.com/tuneinsight/lattigo/v4/utils/sampling"
 )
+
+type TestSession struct {
+	Params        bgv.Parameters
+	SkIdeal       *rlwe.SecretKey
+	NodeSessions  []*Session
+	HelperSession *Session
+}
+
+func NewTestSession(sp SessionParameters, helperId NodeID) (*TestSession, error) {
+	ts := new(TestSession)
+	var err error
+	ts.Params, err = bgv.NewParametersFromLiteral(sp.RLWEParams)
+	if err != nil {
+		panic(err)
+	}
+
+	ts.SkIdeal = rlwe.NewSecretKey(ts.Params)
+	ts.NodeSessions = make([]*Session, len(sp.Nodes))
+	for i, nid := range sp.Nodes {
+
+		os, err := objectstore.NewObjectStoreFromConfig(objectstore.Config{BackendName: "mem"})
+		if err != nil {
+			return nil, err
+		}
+
+		// computes the ideal secret-key for the test
+		ts.NodeSessions[i], err = NewSession(sp, nid, os)
+		if err != nil {
+			return nil, err
+		}
+		sk, err := ts.NodeSessions[i].GetSecretKey()
+		if err != nil {
+			return nil, err
+		}
+		ts.Params.RingQP().AtLevel(ts.SkIdeal.Value.Q.Level(), ts.SkIdeal.Value.P.Level()).Add(sk.Value, ts.SkIdeal.Value, ts.SkIdeal.Value)
+	}
+
+	os, err := objectstore.NewObjectStoreFromConfig(objectstore.Config{BackendName: "mem"})
+	if err != nil {
+		return nil, err
+	}
+
+	ts.HelperSession, err = NewSession(sp, helperId, os)
+
+	// // initialise key generation
+	// if config.SimSetup != nil {
+	// 	kg := rlwe.NewKeyGenerator(test.Params)
+	// 	sk := test.SkIdeal
+	// 	if config.SimSetup.Cpk != nil {
+	// 		cpk, err := kg.GenPublicKeyNew(sk)
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 		memPkBackend.PublicKey = cpk
+	// 	}
+	// 	for _, gkrec := range config.SimSetup.GaloisKeys {
+	// 		gk, err := kg.GenGaloisKeyNew(gkrec.GaloisEl, sk)
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 		memPkBackend.GaloisKeys[gk.GaloisElement] = gk
+
+	// 	}
+	// 	if config.SimSetup.Rlk != nil {
+	// 		rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 		memPkBackend.RelinearizationKey = rlk
+	// 	}
+	// }
+	return ts, nil
+}
 
 func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.SecretKey, tsk *drlwe.ShamirSecretShare, err error) {
 	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams.RLWEParametersLiteral())

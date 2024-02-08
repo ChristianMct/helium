@@ -2,6 +2,8 @@ syntax = "proto3";
 
 option go_package = "github.com/ldsec/helium/pkg/api";
 
+import "google/protobuf/timestamp.proto";
+
 package helium_proto;
 
 message ProtocolID {
@@ -22,6 +24,32 @@ message CiphertextID {
 
 message Void {
 }
+
+
+enum EventType {
+    Completed = 0;
+	Started = 1; 
+	Executing = 2;
+	Failed = 3;
+}
+
+message ProtocolEvent {
+    ProtocolDescriptor Descriptor = 1;
+    EventType Type = 2;
+}
+
+message CircuitEvent {
+    ComputeSignature Descriptor = 1;
+    EventType Type = 2;
+}
+
+message Event {
+    google.protobuf.Timestamp EventTime = 1;
+    optional ProtocolEvent ProtocolEvent = 2;
+    optional CircuitEvent CircuitEvent = 3;
+}
+
+
 
 /* SignatureType is a enumerate type for identifying protocol types */
 enum SignatureType {
@@ -96,4 +124,42 @@ message Share {
 
 message AggregationOutput {
     Share AggregatedShare = 2;
+}
+
+message Ciphertext {
+    bytes ciphertext = 1;
+    CiphertextMetadata metadata = 2;
+    optional Signature signature = 3;
+}
+
+/* CiphertextType is a enumerate type for identifying ciphertext types */
+enum CiphertextType {
+    UNSPECIFIED_CT_TYPE = 0;
+    BFV = 1; 
+    BGV = 2; 
+    CKKS = 3;
+    RGSW = 4;
+}
+
+message CiphertextMetadata {
+    optional CiphertextID id = 1;
+    optional CiphertextType type = 2;
+}
+
+message CiphertextRequest {
+    CiphertextID id = 1;
+    optional Signature signature = 2;
+}
+
+
+enum ComputeStatus {
+    COMPLETED = 0;
+    CREATED = 1;
+    EXECUTING = 2;
+}
+
+message ComputeUpdate {
+    ComputeSignature ComputeSignature = 1;
+    ComputeStatus ComputeStatus = 2;
+    optional ProtocolUpdate ProtocolUpdate = 3;
 }

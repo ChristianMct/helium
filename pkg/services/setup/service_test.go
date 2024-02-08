@@ -1,23 +1,21 @@
-package setup_test
+package setup
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"math"
 	"testing"
-	"time"
 
-	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 
 	"github.com/ldsec/helium/pkg/pkg"
-	"github.com/ldsec/helium/pkg/services/setup"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"golang.org/x/sync/errgroup"
 )
 
 var TestPN12QP109 = bgv.ParametersLiteral{
@@ -41,9 +39,114 @@ var testSettings = []testSetting{
 }
 
 type testnode struct {
-	*node.Node
-	*setup.Service
+	*Service
 	*pkg.Session
+	*testNodeTrans
+	*testCoordinator
+}
+
+type testTransport struct {
+	helperSrv   *Service
+	helperTrans *testNodeTrans
+}
+
+func (tt *testTransport) transportFor(nid pkg.NodeID) *testNodeTrans {
+	tnt := new(testNodeTrans)
+	tnt.helperSrv = tt.helperSrv
+	tnt.incoming = make(chan protocols.Share)
+	tnt.outgoing = make(chan protocols.Share)
+
+	go func() {
+		close(tnt.incoming)
+		for share := range tnt.outgoing {
+			tt.helperTrans.incoming <- share
+			log.Printf("trans | share from %s for %s sent to aggregator\n", nid, share.ProtocolID[:25])
+		}
+	}()
+
+	return tnt
+}
+
+type testNodeTrans struct {
+	helperSrv          *Service
+	incoming, outgoing chan protocols.Share
+}
+
+func (tt *testNodeTrans) GetAggregation(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	return tt.helperSrv.GetProtocolOutput(ctx, pd)
+}
+
+func (tt *testNodeTrans) IncomingShares() <-chan protocols.Share {
+	return tt.incoming
+}
+
+func (tt *testNodeTrans) OutgoingShares() chan<- protocols.Share {
+	return tt.outgoing
+}
+
+type testCoordinator struct {
+	helper                     pkg.NodeID
+	online                     utils.Set[pkg.NodeID]
+	started, completed, failed chan protocols.Descriptor
+}
+
+func (tc *testCoordinator) ReportStarted(pd protocols.Descriptor) {
+	tc.started <- pd
+	log.Printf("coord | got started report for %s\n", pd.HID())
+}
+
+func (tc *testCoordinator) ReportCompleted(pd protocols.Descriptor) {
+	tc.completed <- pd
+	log.Printf("coord | got completion report for %s\n", pd.HID())
+}
+
+func (tc *testCoordinator) ReportFailed(pd protocols.Descriptor) {
+	tc.failed <- pd
+	log.Printf("coord | got failure report for %s©", pd.HID())
+}
+
+func (tc *testCoordinator) Run(ctx context.Context, sigs SignatureList, sessParams pkg.SessionParameters, helper *testnode, sessNodes []testnode, t *testing.T) {
+
+	tc.started = make(chan protocols.Descriptor)
+	tc.completed = make(chan protocols.Descriptor)
+	tc.failed = make(chan protocols.Descriptor)
+
+	rkgDone := make(chan struct{}, 0)
+	go func() {
+
+		for {
+			var pd protocols.Descriptor
+			select {
+			case pd = <-tc.started:
+				for _, node := range sessNodes {
+					log.Printf("coord | running %s at %s \n", pd.HID(), node.self)
+					go node.RunProtocol(ctx, pd)
+				}
+			case pd = <-tc.completed:
+				if pd.Signature.Type == protocols.RKG_1 {
+					pdr2 := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_2}, Participants: pd.Participants, Aggregator: pd.Aggregator}
+					go helper.RunProtocol(ctx, pdr2)
+				}
+				if pd.Signature.Type == protocols.RKG_2 {
+					close(rkgDone)
+				}
+
+			case pd = <-tc.failed:
+				t.Fatal("coordinator reieved a failure")
+			}
+		}
+	}()
+
+	for _, sig := range sigs {
+		if sig.Type == protocols.RKG_2 {
+			continue
+		}
+		part := utils.GetRandomSetOfSize(sessParams.T, tc.online).Elements()
+		pd := protocols.Descriptor{Signature: sig, Participants: part, Aggregator: tc.helper} // TODO dynamic sets
+		log.Printf("coord | running %s at helper \n", pd.HID())
+		helper.RunProtocol(ctx, pd)
+	}
+	<-rkgDone
 }
 
 // TestCloudAssistedSetup tests the setup service in cloud-assisted mode with one helper and N light nodes.
@@ -56,143 +159,150 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				var sessParams = &pkg.SessionParameters{
+				nids := make([]pkg.NodeID, ts.N)
+				nspk := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
+				for i := range nids {
+					nids[i] = pkg.NodeID(fmt.Sprintf("node-%d", i))
+					nspk[nids[i]] = drlwe.ShamirPublicPoint(i + 1)
+				}
+
+				var sessParams = pkg.SessionParameters{
+					ID:         "testsess",
 					RLWEParams: literalParams,
 					T:          ts.T,
-				}
-				var testConfig = node.LocalTestConfig{
-					HelperNodes: 1, // the cloud
-					LightNodes:  ts.N,
-					Session:     sessParams,
-					//DoThresholdSetup: true, // no t-out-of-N TSK gen in the cloud-based model yet
+					Nodes:      nids,
+					ShamirPks:  nspk,
+					PublicSeed: []byte{'c', 'r', 's'},
 				}
 
-				localTest := node.NewLocalTest(testConfig)
-				defer func() {
-					err := localTest.Close()
-					if err != nil {
-						panic(err)
-					}
-				}()
+				hid := pkg.NodeID("helper")
 
-				var err error
-				var ok bool
-				clou := &testnode{Node: localTest.HelperNodes[0]}
-				clou.Service = clou.GetSetupService()
+				testSess, err := pkg.NewTestSession(sessParams, hid)
 				if err != nil {
-					t.Error(err)
-				}
-				clou.Session, ok = clou.GetSessionFromID("test-session")
-				if !ok {
-					t.Fatal("session should exist")
+					t.Fatal(err)
 				}
 
-				// initialise clients
-				allNodes := []*setup.Service{clou.Service}
+				ctx := pkg.NewContext(&sessParams.ID, nil)
+
+				coord := new(testCoordinator)
+				coord.helper = hid
+				coord.online = utils.NewSet(nids)
+
+				trans := &testTransport{helperTrans: &testNodeTrans{incoming: make(chan protocols.Share), outgoing: make(chan protocols.Share)}}
+
+				clou := new(testnode)
+				clou.testCoordinator = new(testCoordinator)
+				clou.Service, err = NewSetupService(hid, hid, testSess.HelperSession, trans.helperTrans, coord, testSess.HelperSession.ObjectStore)
+				if err != nil {
+					t.Fatal(err)
+				}
+				clou.RunService(ctx)
+				trans.helperSrv = clou.Service
+
 				clients := make([]testnode, ts.N)
-				sessionNodes := localTest.SessionNodes()
 				for i := range clients {
-					clients[i].Node = sessionNodes[i]
-					clients[i].Service = clients[i].GetSetupService()
-					clients[i].Session, ok = clients[i].GetSessionFromID("test-session")
-					if !ok {
-						t.Fatal("session should exist")
-					}
+					clients[i].Session = testSess.NodeSessions[i]
+					clients[i].Service, err = NewSetupService(sessParams.Nodes[i], hid, testSess.NodeSessions[i], trans.transportFor(nids[i]), coord, testSess.NodeSessions[i].ObjectStore)
 					if err != nil {
 						t.Fatal(err)
 					}
-					allNodes = append(allNodes, clients[i].Service)
+					clients[i].RunService(ctx)
 				}
 
-				setup := setup.Description{
-					Cpk: localTest.NodeIds(),
+				sd := Description{
+					Cpk: sessParams.Nodes,
 					GaloisKeys: []struct {
 						GaloisEl  uint64
 						Receivers []pkg.NodeID
 					}{
-						{5, []pkg.NodeID{clou.Node.ID()}},
-						{25, []pkg.NodeID{clou.Node.ID()}},
-						{125, []pkg.NodeID{clou.Node.ID()}},
+						{5, []pkg.NodeID{hid}},
+						{25, []pkg.NodeID{hid}},
+						{125, []pkg.NodeID{hid}},
 					},
-					//Rlk: []pkg.NodeID{clou.Node.ID()},
+					Rlk: []pkg.NodeID{hid},
 				}
 
-				localTest.Start()
+				sigList, _ := DescriptionToSignatureList(sd)
 
-				ctx := pkg.NewContext(&testConfig.Session.ID, nil)
+				coord.Run(ctx, sigList, sessParams, clou, clients, t)
 
-				// Start public key generation
-				t.Run("FullSetup", func(t *testing.T) {
+				for _, c := range clients {
+					checkKeyGenProt(ctx, t, testSess, sd, &c)
+				}
 
-					g := new(errgroup.Group)
+				// 	// Start public key generation
+				// 	t.Run("DelayedSetup", func(t *testing.T) {
 
-					// runs the cloud
-					g.Go(func() error {
-						errExec := clou.Execute(ctx, setup)
-						if errExec != nil {
-							errExec = fmt.Errorf("cloud (%s) error: %w", clou.Node.ID(), errExec)
-						}
-						return errExec
-					})
+				// 		g := new(errgroup.Group)
 
-					// This test simulate erratic light nodes that may not be online when the
-					// setup begins (but connect eventually).
-					nDelayed := ts.N - ts.T
-					if ts.N == ts.T {
-						nDelayed = 1
-					}
-					split := len(clients) - nDelayed
-					online, delayed := utils.NewSet(clients[:split]), utils.NewSet(clients[split:])
+				// 		// runs the cloud
+				// 		g.Go(func() error {
 
-					// runs the online clients
-					for c := range online {
-						c := c
-						g.Go(func() error {
-							errExec := c.Execute(ctx, setup)
-							if errExec != nil {
-								errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
-							}
-							return errExec
-						})
-					}
+				// 			errExec := clou.Service.RunProtocol(ctx, pd)
+				// 			if errExec != nil {
+				// 				errExec = fmt.Errorf("helper error: %w", errExec)
+				// 			}
+				// 			return errExec
+				// 		})
 
-					// if T < N, the online parties should be able to complete the setup
-					// by themselves, so we wait for them to finish and check their
-					// sessions. Otherwise, we wait for a bit before running the others.
-					if len(online) >= ts.T {
-						err = g.Wait()
-						if err != nil {
-							t.Fatal(err)
-						}
-						checkKeyGenProt(t, localTest, setup, clou)
-						for c := range online {
-							checkKeyGenProt(t, localTest, setup, &c)
-						}
-					} else {
-						<-time.After(time.Second >> 4)
-					}
+				// 		// This test simulate erratic light nodes that may not be online when the
+				// 		// setup begins (but connect eventually).
+				// 		nDelayed := ts.N - ts.T
+				// 		if ts.N == ts.T {
+				// 			nDelayed = 1
+				// 		}
+				// 		split := len(clients) - nDelayed
+				// 		online, delayed := utils.NewSet(clients[:split]), utils.NewSet(clients[split:])
 
-					// runs the delayed clients
-					for c := range delayed {
-						c := c
-						g.Go(func() error {
-							errExec := c.Execute(ctx, setup)
-							if errExec != nil {
-								errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
-							}
-							return errExec
-						})
-					}
-					err = g.Wait()
-					if err != nil {
-						t.Fatal(err)
-					}
+				// 		// runs the online clients
+				// 		for c := range online {
+				// 			c := c
+				// 			g.Go(func() error {
+				// 				errExec := c.Execute(ctx, sd)
+				// 				if errExec != nil {
+				// 					errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
+				// 				}
+				// 				return errExec
+				// 			})
+				// 		}
 
-					checkKeyGenProt(t, localTest, setup, clou)
-					for _, node := range clients {
-						checkKeyGenProt(t, localTest, setup, &node)
-					}
-				})
+				// 		// if T < N, the online parties should be able to complete the setup
+				// 		// by themselves, so we wait for them to finish and check their
+				// 		// sessions. Otherwise, we wait for a bit before running the others.
+				// 		if len(online) >= ts.T {
+				// 			err = g.Wait()
+				// 			if err != nil {
+				// 				t.Fatal(err)
+				// 			}
+				// 			checkKeyGenProt(t, localTest, sd, clou)
+				// 			for c := range online {
+				// 				checkKeyGenProt(t, localTest, sd, &c)
+				// 			}
+				// 		} else {
+				// 			<-time.After(time.Second >> 4)
+				// 		}
+
+				// 		// runs the delayed clients
+				// 		for c := range delayed {
+				// 			c := c
+				// 			g.Go(func() error {
+				// 				errExec := c.Execute(ctx, sd)
+				// 				if errExec != nil {
+				// 					errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
+				// 				}
+				// 				return errExec
+				// 			})
+				// 		}
+				// 		err = g.Wait()
+				// 		if err != nil {
+				// 			t.Fatal(err)
+				// 		}
+
+				// 		checkKeyGenProt(t, localTest, sd, clou)
+				// 		for _, node := range clients {
+				// 			checkKeyGenProt(t, localTest, sd, &node)
+				// 		}
+				// 	})
 			})
 		}
 	}
@@ -255,7 +365,7 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 // 		}
 // 		clients = append(clients, node_R)
 
-// 		setup := setup.Description{
+// 		setup := Description{
 // 			Cpk: localTest.SessionNodesIds(),
 // 			Pk: []struct {
 // 				Sender    pkg.NodeID
@@ -349,7 +459,7 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 // 		cloud := localTest.HelperNodes[0]
 // 		clients := localTest.SessionNodes()
 
-// 		setup := setup.Description{
+// 		setup := Description{
 // 			Cpk: localTest.SessionNodesIds(),
 // 			Rlk: []pkg.NodeID{cloud.ID()},
 // 			GaloisKeys: []struct {
@@ -461,7 +571,7 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 
 // 				params := localTest.Params
 // 				peerIds := localTest.NodeIds()
-// 				sd := setup.Description{
+// 				sd := Description{
 // 					Cpk: localTest.SessionNodesIds(),
 // 					GaloisKeys: []struct {
 // 						GaloisEl  uint64
@@ -540,16 +650,16 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 // }
 
 // Based on the session information, check if the protocol was performed correctly.
-func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, n *testnode, externalSk ...*rlwe.SecretKey) {
+func checkKeyGenProt(ctx context.Context, t *testing.T, lt *pkg.TestSession, setup Description, n *testnode) {
 
 	params := lt.Params
 	sk := lt.SkIdeal
-	nParties := len(lt.SessionNodes())
+	nParties := len(lt.HelperSession.Nodes)
 	sess := n.Session
 
 	// check CPK
-	if utils.NewSet(setup.Cpk).Contains(n.NodeID) {
-		cpk, err := n.Service.GetCollectivePublicKey()
+	if utils.NewSet(setup.Cpk).Contains(n.self) {
+		cpk, err := n.Service.GetCollectivePublicKey(ctx)
 		if err != nil {
 			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
@@ -560,7 +670,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 	// check RTG
 	for _, key := range setup.GaloisKeys {
 		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
-			rtk, err := n.Service.GetGaloisKey(key.GaloisEl)
+			rtk, err := n.Service.GetGaloisKey(ctx, key.GaloisEl)
 			if err != nil {
 				t.Fatalf("%s | %s", sess.NodeID, err)
 			}
@@ -573,7 +683,7 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 
 	// check RLK
 	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
-		rlk, err := n.Service.GetRelinearizationKey()
+		rlk, err := n.Service.GetRelinearizationKey(ctx)
 		if err != nil {
 			t.Fatalf("%s | %s", sess.NodeID, err)
 		}
@@ -582,19 +692,5 @@ func checkKeyGenProt(t *testing.T, lt *node.LocalTest, setup setup.Description, 
 		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
 
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
-	}
-
-	// check shared PK
-	for _, key := range setup.Pk {
-		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
-			pk, err := sess.GetOutputPkForNode(key.Sender)
-			if err != nil {
-				t.Fatalf("%s | %s", sess.NodeID, err)
-			}
-			if externalSk == nil || len(externalSk) == 0 {
-				t.Fatalf("%s | cannot check correctness of public key of %s", sess.NodeID, key.Sender)
-			}
-			require.Less(t, rlwe.NoisePublicKey(pk, externalSk[0], params.Parameters), params.NoiseFreshSK())
-		}
 	}
 }

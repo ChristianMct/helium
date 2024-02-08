@@ -1,14 +1,15 @@
 package setup
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
-func (s *Service) getKeyFromProto(sig protocols.Signature) (key interface{}, err error) {
-	sess, ok := s.sessions.GetSessionFromID("test-session")
+func (s *Service) getKeyFromProto(ctx context.Context, sig protocols.Signature) (key interface{}, err error) {
+	sess, ok := s.sessions.GetSessionFromContext(ctx)
 	if !ok {
 		return nil, fmt.Errorf("session does not exist")
 	}
@@ -52,24 +53,24 @@ func (s *Service) getKeyFromProto(sig protocols.Signature) (key interface{}, err
 	return out.Result, nil
 }
 
-func (s *Service) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
-	key, err := s.getKeyFromProto(protocols.Signature{Type: protocols.CKG})
+func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
+	key, err := s.getKeyFromProto(ctx, protocols.Signature{Type: protocols.CKG})
 	if err != nil {
 		return nil, err
 	}
 	return key.(*rlwe.PublicKey), nil
 }
 
-func (s *Service) GetGaloisKey(galEl uint64) (*rlwe.GaloisKey, error) {
-	key, err := s.getKeyFromProto(protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
+func (s *Service) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
+	key, err := s.getKeyFromProto(ctx, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
 	if err != nil {
 		return nil, err
 	}
 	return key.(*rlwe.GaloisKey), nil
 }
 
-func (s *Service) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
-	key, err := s.getKeyFromProto(protocols.Signature{Type: protocols.RKG_2})
+func (s *Service) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
+	key, err := s.getKeyFromProto(ctx, protocols.Signature{Type: protocols.RKG_2})
 	if err != nil {
 		return nil, err
 	}

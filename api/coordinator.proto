@@ -8,29 +8,6 @@ import "google/protobuf/timestamp.proto";
 
 package helium_proto;
 
-enum EventType {
-    Completed = 0;
-	Started = 1; 
-	Executing = 2;
-	Failed = 3;
-}
-
-message ProtocolEvent {
-    ProtocolDescriptor Descriptor = 1;
-    EventType Type = 2;
-}
-
-message CircuitEvent {
-    ComputeSignature Descriptor = 1;
-    EventType Type = 2;
-}
-
-message Event {
-    google.protobuf.Timestamp EventTime = 1;
-    optional ProtocolEvent ProtocolEvent = 2;
-    optional CircuitEvent CircuitEvent = 3;
-}
-
 service Coordinator {
     rpc Register(Void) returns (stream Event);
 }

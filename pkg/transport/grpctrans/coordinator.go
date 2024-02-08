@@ -25,9 +25,15 @@ type client struct {
 	sendQueue chan coordinator.Event
 }
 
-type coordinatorTransportServer struct {
+type coordinatorTransportClient struct {
+	api.CoordinatorClient
+}
+
+type coordinatorTransport struct {
 	*Transport
 	*api.UnimplementedCoordinatorServer
+
+	client coordinatorTransportClient
 
 	events   coordinator.Log
 	eventsMu sync.RWMutex
@@ -38,7 +44,13 @@ type coordinatorTransportServer struct {
 	closing chan struct{}
 }
 
-func (ct *coordinatorTransportServer) Send(event coordinator.Event) error {
+func newCoordinationServer() *coordinatorTransport {
+	csrv := new(coordinatorTransport)
+	csrv.nodes = make(map[pkg.NodeID]*client)
+	return csrv
+}
+
+func (ct *coordinatorTransport) Send(event coordinator.Event) error {
 	ct.eventsMu.Lock()
 	ct.events = append(ct.events, event)
 
@@ -57,7 +69,7 @@ func (ct *coordinatorTransportServer) Send(event coordinator.Event) error {
 	return nil
 }
 
-func (ct *coordinatorTransportServer) Register(_ *api.Void, stream api.Coordinator_RegisterServer) error {
+func (ct *coordinatorTransport) Register(_ *api.Void, stream api.Coordinator_RegisterServer) error {
 	nodeId := pkg.SenderIDFromIncomingContext(stream.Context())
 	if len(nodeId) == 0 {
 		return fmt.Errorf("caller must specify node id for stream")
@@ -70,10 +82,7 @@ func (ct *coordinatorTransportServer) Register(_ *api.Void, stream api.Coordinat
 	pastEvents := ct.events
 	ct.nodesMu.Lock()
 	node, has := ct.nodes[nodeId]
-	if !has {
-		panic(fmt.Errorf("unexpected peer id: %s", nodeId))
-	}
-	if node.sendQueue != nil {
+	if has {
 		panic(fmt.Errorf("peer already registered: %s", nodeId))
 	}
 	sendQueue := make(chan coordinator.Event, 100)
@@ -130,18 +139,20 @@ func (ct *coordinatorTransportServer) Register(_ *api.Void, stream api.Coordinat
 	return nil
 }
 
-func (ct *coordinatorTransportServer) Logf(msg string, v ...any) {
+func (ct *coordinatorTransport) Logf(msg string, v ...any) {
 	log.Printf("%s | [CoordTransport] %s\n", ct.id, fmt.Sprintf(msg, v...))
 }
 
-type coordinatorTransport struct {
-	*coordinatorTransportServer
-	api.CoordinatorClient
-
-	id pkg.NodeID
+func (ct *coordinatorTransport) connect() {
+	for _, peerCli := range ct.conns {
+		if ct.client.CoordinatorClient != nil {
+			panic("should be only one coordinator server") // TODO
+		}
+		ct.client.CoordinatorClient = api.NewCoordinatorClient(peerCli)
+	}
 }
 
-func (ct *coordinatorTransport) Register(ctx context.Context) (events <-chan coordinator.Event, present int, err error) {
+func (ct *coordinatorTransportClient) Register(ctx context.Context) (events <-chan coordinator.Event, present int, err error) {
 	stream, err := ct.CoordinatorClient.Register(ctx, &api.Void{})
 	if err != nil {
 		return nil, 0, err
@@ -159,7 +170,7 @@ func (ct *coordinatorTransport) Register(ctx context.Context) (events <-chan coo
 			if err != nil {
 				close(eventsStream)
 				if !errors.Is(err, io.EOF) {
-					ct.Logf("error on stream: %s", err)
+					panic(fmt.Errorf("error on stream: %s", err))
 				}
 				return
 			}
@@ -170,15 +181,8 @@ func (ct *coordinatorTransport) Register(ctx context.Context) (events <-chan coo
 	return
 }
 
-func (ct *coordinatorTransport) Send(event coordinator.Event) error {
-	if ct.coordinatorTransportServer == nil {
-		return fmt.Errorf("transport is not a server")
-	}
-	return ct.coordinatorTransportServer.Send(event)
-}
-
-func (ct *coordinatorTransport) Logf(msg string, v ...any) {
-	log.Printf("%s | [CoordTransport] %s\n", ct.id, fmt.Sprintf(msg, v...))
+func (ct *coordinatorTransportClient) Send(event coordinator.Event) error {
+	return fmt.Errorf("client cannot send")
 }
 
 func getEventFromAPI(apiEvent *api.Event) coordinator.Event {

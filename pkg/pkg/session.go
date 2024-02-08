@@ -22,6 +22,15 @@ type NodesList []struct {
 	DelegateID NodeID
 }
 
+func (nl NodesList) AddressOf(id NodeID) NodeAddress {
+	for _, node := range nl {
+		if node.NodeID == id {
+			return node.NodeAddress
+		}
+	}
+	return ""
+}
+
 func (nl NodesList) String() string {
 	str := "[ "
 	for _, node := range nl {
@@ -441,6 +450,26 @@ func (s *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
 
 func (s *Session) Contains(nodeID NodeID) bool {
 	return utils.NewSet(s.Nodes).Contains(nodeID)
+}
+
+func (s *Session) GetSessionFromID(sessionID SessionID) (*Session, bool) {
+	if s.ID == sessionID {
+		return s, true
+	}
+	return nil, false
+}
+
+func (s *Session) GetSessionFromContext(ctx context.Context) (*Session, bool) {
+	sessID, has := SessionIDFromContext(ctx)
+	if !has {
+		return nil, false
+	}
+	return s.GetSessionFromID(sessID)
+}
+
+func (s *Session) GetSessionFromIncomingContext(ctx context.Context) (*Session, bool) {
+	sessID := SessionIDFromIncomingContext(ctx) // TODO should have same interface as GetSessionFromContext
+	return s.GetSessionFromID(sessID)
 }
 
 func (s *Session) String() string {

@@ -38,6 +38,7 @@ type Transport struct {
 	grpcServer   *grpc.Server
 	statsHandler statsHandler
 
+	coord   *coordinatorTransport
 	setup   *setupTransport
 	compute *computeTransport
 
@@ -200,10 +201,15 @@ func (t *Transport) ConnectWithDialers(lis net.Listener, dialers map[pkg.NodeID]
 
 	log.Printf("%s | is connected to %d peers\n", t.id, conns)
 
+	t.coord.connect()
 	t.setup.connect()
 	t.compute.connect()
 
 	return nil
+}
+
+func (t *Transport) GetCoordinationTransport() transport.CoordinationTransport {
+	return &t.coord.client
 }
 
 func (t *Transport) GetSetupTransport() transport.SetupServiceTransport {

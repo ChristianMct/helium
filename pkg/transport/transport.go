@@ -27,6 +27,8 @@ type Transport interface {
 	// related queries received through the transport.
 	RegisterComputeService(ComputeServiceHandler)
 
+	GetCoordinationTransport() CoordinationTransport
+
 	// GetSetupTransport returns the SetupServiceTransport instance for the
 	// setup service to use.
 	GetSetupTransport() SetupServiceTransport
