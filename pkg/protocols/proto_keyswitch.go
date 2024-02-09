@@ -1,9 +1,8 @@
 package protocols
 
 import (
-	"context"
 	"fmt"
-	"log"
+	"slices"
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
@@ -11,17 +10,18 @@ import (
 )
 
 type keySwitchProtocol struct {
-	*protocol
-	proto     LattigoKeySwitchProtocol
+	protocol
 	target    pkg.NodeID
+	proto     LattigoKeySwitchProtocol
 	outputKey OutputKey
-	inputChan chan *rlwe.Ciphertext
 	input     *rlwe.Ciphertext
 }
 
-func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session) (KeySwitchInstance, error) {
+func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Instance, error) {
 
-	params := *sess.Params
+	if len(pd.Participants) < sess.T {
+		return nil, fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.T)
+	}
 
 	if _, hasArg := pd.Signature.Args["target"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: target")
@@ -30,119 +30,75 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session) (KeySwitchInstance, 
 	if !isString {
 		return nil, fmt.Errorf("invalid target type %T instead of %T", pd.Signature.Args["target"], target)
 	}
+	if len(input) == 0 {
+		return nil, fmt.Errorf("no input specified")
+	}
 
-	ks := new(keySwitchProtocol)
+	ks := &keySwitchProtocol{
+		protocol: protocol{ProtocolID: pd.ID(), Descriptor: pd, self: sess.NodeID},
+	}
 	ks.target = pkg.NodeID(target)
-	ks.inputChan = make(chan *rlwe.Ciphertext, 1)
+
+	if !ks.HasRole() {
+		return nil, fmt.Errorf("node has no role in the protocol")
+	}
+
+	var isCt bool
+	if ks.input, isCt = input[0].(*rlwe.Ciphertext); !isCt {
+		return nil, fmt.Errorf("keyswitch protocol require a rlwe.Ciphertext as input parameter")
+	}
 
 	var err error
-	ks.protocol, err = newProtocol(pd, sess)
-	if err != nil {
-		return nil, err
-	}
 	switch pd.Signature.Type {
 	case CKS:
-		return nil, fmt.Errorf("generic standalone CKS protocol not supported yet") // TODO
+		return nil, fmt.Errorf("standalone CKS protocol not supported yet") // TODO
 	case DEC:
-		ks.proto, err = NewCKSProtocol(params.Parameters, pd.Signature.Args)
-		ks.outputKey = rlwe.NewSecretKey(params) // target key is zero for decryption
-		ks.shareProviders.Remove(ks.target)      // target does not provide a share in decrypt
-	case PCKS:
-		ks.proto, err = NewPCKSProtocol(params.Parameters, pd.Signature.Args)
-		pk, err := sess.GetOutputPkForNode(pkg.NodeID(target))
-		if err != nil {
-			return nil, err
+		if !slices.Contains(pd.Participants, ks.target) {
+			return nil, fmt.Errorf("target must be a protocol participant in DEC")
 		}
-		ks.outputKey = pk
+		ks.proto, err = NewCKSProtocol(sess.Params.Parameters, pd.Signature.Args)
+		ks.outputKey = rlwe.NewSecretKey(sess.Params) // target key is zero for decryption // TODO caching of this value
+	case PCKS:
+		return nil, fmt.Errorf("PCKS not supported yet") // TODO
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	if ks.protocol.IsAggregator() {
-		ks.protocol.agg = *newShareAggregator(ks.protocol.shareProviders, Share{}, nil)
-	}
+	// TODO: below is same as keygen protocols
+	ks.pubrand = GetProtocolPublicRandomness(pd, sess)
 
-	if ks.shareProviders.Contains(ks.self) {
-		ks.sk, err = sess.GetSecretKeyForGroup(pd.Participants)
+	if ks.IsParticipant() {
+		ks.sk, err = sess.GetSecretKeyForGroup(pd.Participants) // TODO: could cache the group keys
 		if err != nil {
 			return nil, err
 		}
+		ks.privrand = GetProtocolPrivateRandomness(pd, sess)
 	}
 
+	if ks.IsAggregator() {
+		ks.agg = newShareAggregator(pd, ks.AllocateShare(), ks.proto.AggregatedShares) // TODO: could cache the shares
+	}
 	return ks, nil
 }
 
-func (p *keySwitchProtocol) Init(_ CRP) error {
-	return nil
-}
+func (p *keySwitchProtocol) GenShare(share *Share) error {
 
-func (p *keySwitchProtocol) ReadCRP() (CRP, error) {
-	panic("trying to read CRP from a keyswitch protocol")
-}
-
-func (p *keySwitchProtocol) Aggregate(ctx context.Context, env Transport) chan AggregationOutput {
-	agg := make(chan AggregationOutput, 1)
-	go func() {
-		agg <- p.aggregate(ctx, env)
-	}()
-	return agg
-}
-
-func (p *keySwitchProtocol) aggregate(ctx context.Context, env Transport) AggregationOutput {
-	p.Logf("started running with participants %v", p.Descriptor.Participants)
-
-	// part := utils.NewSet(p.Descriptor.Participants) // TODO: reads from protomap for now
-	// if p.Descriptor.Type == CKS || p.Descriptor.Type == DEC {
-	// 	part.Remove(p.target)
-	// }
-
-	p.input = <-p.inputChan
-
-	var share Share
-	if p.IsAggregator() || p.shareProviders.Contains(p.self) {
-		share = p.proto.AllocateShare()
-		share.ProtocolID = p.ID()
-		share.Type = p.Signature.Type
-		share.From = p.self
-		share.AggregateFor = utils.NewEmptySet[pkg.NodeID]()
-		share.Round = 1
+	if !p.IsParticipant() {
+		return fmt.Errorf("node is not a participant")
 	}
 
-	providesShare := p.shareProviders.Contains(p.self) && (p.self != p.target || p.Signature.Type != DEC)
-
-	if providesShare {
-		errGen := p.proto.GenShare(p.sk, p.outputKey, p.input, share)
-		if errGen != nil {
-			panic(errGen)
-		}
-		share.To = []pkg.NodeID{p.Desc().Aggregator}
-		share.AggregateFor.Add(p.self)
+	if p.Signature.Type == DEC && p.target == p.self {
+		return fmt.Errorf("node is decryption receiver")
 	}
 
-	if p.IsAggregator() {
-
-		p.agg.share = share
-		p.agg.aggFunc = p.proto.AggregatedShares
-
-		errAggr := p.aggregateShares(ctx, p.agg, env)
-		if errAggr != nil {
-			log.Printf("%s | [%s] failed: %s\n", p.self, p.HID(), errAggr)
-			return AggregationOutput{Error: errAggr}
-		}
-		share.AggregateFor = p.shareProviders.Copy()
-		return AggregationOutput{Share: share}
+	if p.input == nil {
+		return fmt.Errorf("no input provided to protocol")
 	}
 
-	if providesShare {
-		env.OutgoingShares() <- share
-	}
-	p.Logf("completed aggregation")
-	return AggregationOutput{}
-}
-
-func (p *keySwitchProtocol) Input(ct *rlwe.Ciphertext) {
-	p.inputChan <- ct
+	share.ProtocolID = p.ProtocolID
+	share.From = utils.NewSingletonSet(p.self)
+	return p.proto.GenShare(p.sk, p.outputKey, p.input, *share)
 }
 
 func (p *keySwitchProtocol) Output(agg AggregationOutput) chan Output {

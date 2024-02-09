@@ -1,14 +1,12 @@
-package protocols_test
+package protocols
 
 import (
-	"context"
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 
-	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/pkg"
-	. "github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
@@ -23,11 +21,8 @@ type testSetting struct {
 }
 
 var testSettings = []testSetting{
-	{N: 2},
 	{N: 3},
-	{N: 3, Helper: true},
 	{N: 3, T: 2},
-	{N: 3, T: 2, Helper: true},
 }
 
 var TestPN12QP109 = bgv.ParametersLiteral{
@@ -37,216 +32,176 @@ var TestPN12QP109 = bgv.ParametersLiteral{
 	T:    65537,
 }
 
-func TestProtocols(t *testing.T) {
-
-	t.Skip("protocols package tests are outdated") // TODO: fix these tests
+func TestKeyGenProtocols(t *testing.T) {
 
 	for _, ts := range testSettings {
 
-		te := newTestEnvironment(ts, TestPN12QP109)
+		if ts.T == 0 {
+			ts.T = ts.N
+		}
 
-		rkgPart := te.getParticipants(ts.T)
-		for _, pType := range []Type{
-			//SKG,
-			CKG,
-			RTG,
-			RKG_1,
-			RKG_2,
-		} {
+		params := TestPN12QP109
 
-			if pType == SKG && (ts.Helper || ts.T == 0) {
-				continue // Skips SKG with a helper ?
+		hid := pkg.NodeID("helper")
+		testSess, err := pkg.NewTestSession(ts.N, ts.T, params, hid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessParams := testSess.SessParams
+		nids := utils.NewSet(sessParams.Nodes)
+
+		encryptor, err := bgv.NewEncryptor(testSess.RlweParams, testSess.SkIdeal)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ct := encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
+
+		sigs := []Signature{
+			{Type: CKG},
+			{Type: RTG, Args: map[string]string{"GalEl": "5"}},
+			{Type: RKG_2},
+			{Type: DEC, Args: map[string]string{"target": "node-0", "smudging": "40"}},
+		}
+
+		for _, sig := range sigs {
+			parts, err := getParticipants(sig, nids, ts.T)
+			if err != nil {
+				t.Fatal(err)
 			}
+			pd := Descriptor{Signature: sig, Participants: parts, Aggregator: hid}
+			t.Run(fmt.Sprintf("N=%d/T=%d/Type=%s", ts.N, ts.T, pd.Signature.Type), func(t *testing.T) {
+				var input Input
+				switch pd.Signature.Type {
+				case CKG, RTG:
+				case RKG_2:
+					aggOutR1 := runProto(Descriptor{Signature: Signature{Type: RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator}, *testSess, nil, t)
+					if aggOutR1.Error != nil {
+						t.Fatal(aggOutR1.Error)
+					}
+					input = aggOutR1.Share
+				case DEC:
+					input = ct
+				default:
+					t.Fatal("unknown protocol type")
+				}
+				aggOut := runProto(pd, *testSess, input, t)
 
-			t.Run(fmt.Sprintf("Type=%s/N=%d/T=%d/Helper=%v", pType, ts.N, ts.T, ts.Helper), func(t *testing.T) {
-				pd := Descriptor{Signature: Signature{Type: pType}}
-				if pType == RTG {
-					pd.Signature.Args = map[string]string{"GalEl": "5"}
+				p, err := NewProtocol(pd, testSess.HelperSession, input)
+				if err != nil {
+					t.Fatal(err)
 				}
-				if pType == SKG {
-					pd.Participants = te.SessionNodesIds()
-				} else {
-					pd.Participants = te.getParticipants(ts.T)
-					pd.Aggregator = te.getAggregatorID()
-				}
-				if pType == RKG_1 || pType == RKG_2 {
-					pd.Participants = rkgPart
-				}
-				te.runAndCheck(pd, t)
+				out := <-p.Output(aggOut)
+				checkOutput(out, pd, *testSess, t)
 			})
 		}
 	}
 }
 
-type testEnvironment struct {
-	N, T int
-	*node.LocalTest
-	allOutgoingShares chan Share
-	incShareForParty  map[pkg.NodeID]chan Share
-	aggShareRkg1      AggregationOutput
-}
+func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T) AggregationOutput {
 
-func newTestEnvironment(ts testSetting, params bgv.ParametersLiteral) *testEnvironment {
-	te := new(testEnvironment)
-	te.N = ts.N
-	if ts.T == 0 {
-		te.T = ts.N
-	} else {
-		te.T = ts.T
-	}
-	tc := node.LocalTestConfig{
-		FullNodes: ts.N,
-		Session: &pkg.SessionParameters{
-			RLWEParams: params,
-			T:          ts.T,
-		},
-		//DoThresholdSetup: true,
-	}
-	if ts.Helper {
-		tc.HelperNodes = 1
-	}
-	te.LocalTest = node.NewLocalTest(tc)
-	te.allOutgoingShares = make(chan Share)
-	te.incShareForParty = make(map[pkg.NodeID]chan Share)
-	for _, node := range te.LocalTest.Nodes {
-		te.incShareForParty[node.ID()] = make(chan Share)
+	helperP, err := NewProtocol(pd, testSess.HelperSession, input)
+	if err != nil {
+		t.Fatal(err)
 	}
 
+	ctx := pkg.NewContext(&testSess.SessParams.ID, nil)
+	incoming := make(chan Share)
+	resc := make(chan AggregationOutput, 1)
+	errc := make(chan error, 1)
 	go func() {
-		for os := range te.allOutgoingShares {
-			for _, id := range os.To {
-				insh, exists := te.incShareForParty[id]
-				if !exists {
-					panic(fmt.Errorf("invalid outgoing share: %v", os))
-				}
-				insh <- os
-			}
+		aggOutC, err := helperP.Aggregate(ctx, incoming)
+		if err != nil {
+			errc <- err
 		}
+		resc <- <-aggOutC
 	}()
 
-	return te
-}
+	for nid, nodeSess := range testSess.NodeSessions {
+		nodeP, err := NewProtocol(pd, nodeSess, input)
 
-func (te *testEnvironment) runAndCheck(pd Descriptor, t *testing.T) {
-	aggOutputs := make(map[pkg.NodeID]chan AggregationOutput)
-	instances := make(map[pkg.NodeID]Instance)
+		if !(slices.Contains(pd.Participants, nid) || pd.Aggregator == nid) {
+			require.NotNil(t, err, "creating a protocol for non involved nodes should result in an error: nid=%s, parts=%s", nid, pd.Participants)
+			continue
+		}
 
-	var err error
-	for _, node := range te.LocalTest.Nodes {
-		sess, _ := node.GetSessionFromID("test-session")
-
-		instances[node.ID()], err = NewProtocol(pd, sess)
 		if err != nil {
-			panic(err)
+			t.Fatal(err)
 		}
 
-		nodeEnv := te.envForNode(sess.NodeID)
-		if pd.Signature.Type == RKG_2 {
-			go func() {
-				nodeEnv.incomingShares <- te.aggShareRkg1.Share
-			}()
+		share := nodeP.AllocateShare()
+		err = nodeP.GenShare(&share)
+		if pd.Signature.Type == DEC && pkg.NodeID(pd.Signature.Args["target"]) == nid {
+			require.NotNil(t, err, "decryption receiver should not generate a share")
+			continue
 		}
-		aggOutputs[node.ID()] = instances[node.ID()].Aggregate(context.Background(), nodeEnv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			incoming <- share
+		}()
+
 	}
 
-	for _, node := range te.Nodes {
-
-		aggOut := <-aggOutputs[node.ID()]
-		require.Nil(t, aggOut.Error)
-
-		isAggregator := pd.Signature.Type == SKG || pd.Aggregator == node.ID()
-
-		if !isAggregator {
-			require.Nil(t, aggOut.Share.MHEShare)
-		} else {
-
-			if pd.Signature.Type == RKG_1 {
-				require.NotNil(t, aggOut.Share)
-				te.aggShareRkg1 = aggOut
-			}
-
-			if pd.Signature.Type != RKG_1 {
-
-				out := <-instances[node.ID()].Output(aggOut)
-				require.NoError(t, out.Error)
-
-				nParties := len(te.SessionNodes())
-				sk := te.SkIdeal
-				params := te.Params
-				decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
-
-				switch pd.Signature.Type {
-				case SKG:
-					_, isShamirShare := out.Result.(*drlwe.ShamirSecretShare)
-					require.True(t, isShamirShare)
-					// TODO check SKG correct
-				case CKG:
-					pk, isPk := out.Result.(*rlwe.PublicKey)
-					require.True(t, isPk)
-
-					require.Less(t, rlwe.NoisePublicKey(pk, sk, te.Params.Parameters), math.Log2(math.Sqrt(float64(nParties))*te.Params.NoiseFreshSK())+1)
-				case RTG:
-					swk, isSwk := out.Result.(*rlwe.GaloisKey)
-					require.True(t, isSwk)
-
-					noise := rlwe.NoiseGaloisKey(swk, sk, params.Parameters)
-					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
-					require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
-				case RKG_2:
-					rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
-					require.True(t, isRlk)
-
-					noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
-					require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
-				default:
-					t.Fatalf("invalid protocol type")
-				}
-			}
+	var aggOut AggregationOutput
+	select {
+	case err := <-errc:
+		t.Fatal(fmt.Errorf("aggregator returned error instead of aggregating:%s", err))
+	case aggOut = <-resc:
+		if aggOut.Error != nil {
+			t.Fatal(fmt.Errorf("aggregator returned aggregation error: %s", aggOut.Error))
+		}
+		if aggOut.Share.MHEShare == nil {
+			t.Fatal("aggregator returned a nil share without error")
 		}
 	}
 
+	return aggOut
 }
 
-func (te *testEnvironment) getAggregatorID() pkg.NodeID {
-	if len(te.HelperNodes) > 0 {
-		return te.HelperNodes[0].ID()
+func checkOutput(out Output, pd Descriptor, testSess pkg.TestSession, t *testing.T) {
+
+	require.NoError(t, out.Error)
+
+	nParties := len(testSess.NodeSessions)
+	sk := testSess.SkIdeal
+	params := testSess.RlweParams
+	decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+
+	switch pd.Signature.Type {
+	case CKG:
+		pk, isPk := out.Result.(*rlwe.PublicKey)
+		require.True(t, isPk)
+		require.Less(t, rlwe.NoisePublicKey(pk, sk, params.Parameters), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
+	case RTG:
+		swk, isSwk := out.Result.(*rlwe.GaloisKey)
+		require.True(t, isSwk)
+
+		noise := rlwe.NoiseGaloisKey(swk, sk, params.Parameters)
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
+		require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
+	case RKG_2:
+		rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
+		require.True(t, isRlk)
+
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
+	case DEC:
+		recSk, err := testSess.NodeSessions[pkg.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec, err := rlwe.NewDecryptor(testSess.RlweParams, recSk)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ct, isCt := out.Result.(*rlwe.Ciphertext)
+		require.True(t, isCt)
+		std, _, _ := rlwe.Norm(ct, dec)
+		require.Less(t, std, testSess.RlweParams.NoiseFreshPK()) // TODO better bound
+	default:
+		t.Fatalf("invalid protocol type")
 	}
-	return te.Nodes[0].ID()
-}
-
-func (te *testEnvironment) getParticipants(t int) []pkg.NodeID {
-	if t == 0 || t > len(te.SessionNodes()) {
-		t = len(te.SessionNodes())
-	}
-	return utils.GetRandomSliceOfSize(t, te.SessionNodesIds())
-}
-
-func (te *testEnvironment) envForNode(nid pkg.NodeID) *testNodeEnvironment {
-	return &testNodeEnvironment{
-		outgoingShares: te.allOutgoingShares,
-		incomingShares: te.incShareForParty[nid],
-	}
-}
-
-type testNodeEnvironment struct {
-	incomingShares       chan Share
-	incomingShareQueries chan ShareQuery
-	outgoingShares       chan Share
-	outgoingShareQueries chan ShareQuery
-}
-
-func (te *testNodeEnvironment) ShareQuery(sq ShareQuery) {
-	te.outgoingShareQueries <- sq
-}
-
-func (te *testNodeEnvironment) OutgoingShares() chan<- Share {
-	return te.outgoingShares
-}
-
-func (te *testNodeEnvironment) IncomingShares() <-chan Share {
-	return te.incomingShares
-}
-
-func (te *testNodeEnvironment) IncomingShareQueries() <-chan ShareQuery {
-	return te.incomingShareQueries
 }

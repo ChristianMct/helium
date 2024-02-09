@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg/utils"
 )
 
 const protocolLogging = false
@@ -14,23 +15,7 @@ type ShareQuery struct {
 	Result chan Share
 }
 
-type Transport interface {
-	OutgoingShares() chan<- Share
-	IncomingShares() <-chan Share
-}
-
 type Status int32
-
-const (
-	OK Status = iota
-	Running
-	Failed
-)
-
-type StatusUpdate struct {
-	Descriptor
-	Status
-}
 
 type Descriptor struct {
 	Signature    Signature
@@ -60,4 +45,23 @@ func (pd Descriptor) MarshalBinary() (b []byte, err error) {
 
 func (pd *Descriptor) UnmarshalBinary(b []byte) (err error) {
 	return json.Unmarshal(b, &pd)
+}
+
+func getParticipants(sig Signature, onlineNodes utils.Set[pkg.NodeID], threshold int) ([]pkg.NodeID, error) {
+	if len(onlineNodes) < threshold {
+		return nil, fmt.Errorf("not enough online node")
+	}
+
+	available := onlineNodes.Copy()
+	selected := utils.NewEmptySet[pkg.NodeID]()
+	needed := threshold
+	if sig.Type == DEC {
+		target := pkg.NodeID(sig.Args["target"])
+		selected.Add(target)
+		available.Remove(target)
+		needed--
+	}
+	selected.AddAll(utils.GetRandomSetOfSize(needed, available))
+	return selected.Elements(), nil
+
 }

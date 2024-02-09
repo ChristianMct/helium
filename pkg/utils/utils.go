@@ -31,13 +31,19 @@ func NewSet[T comparable](els []T) Set[T] {
 	return s
 }
 
-func (s Set[T]) Add(el T) {
-	s[el] = Exists
+func (s *Set[T]) Add(el T) {
+	if *s == nil {
+		*s = NewEmptySet[T]()
+	}
+	(*s)[el] = Exists
 }
 
-func (s Set[T]) AddAll(el Set[T]) {
+func (s *Set[T]) AddAll(el Set[T]) {
+	if *s == nil {
+		*s = NewEmptySet[T]()
+	}
 	for el := range el {
-		s[el] = Exists
+		(*s)[el] = Exists
 	}
 }
 

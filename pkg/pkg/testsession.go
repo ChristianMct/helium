@@ -1,6 +1,8 @@
 package pkg
 
 import (
+	"fmt"
+
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
@@ -11,23 +13,48 @@ import (
 )
 
 type TestSession struct {
-	Params        bgv.Parameters
+	SessParams    SessionParameters
+	RlweParams    bgv.Parameters
 	SkIdeal       *rlwe.SecretKey
-	NodeSessions  []*Session
+	NodeSessions  map[NodeID]*Session
 	HelperSession *Session
 }
 
-func NewTestSession(sp SessionParameters, helperId NodeID) (*TestSession, error) {
+func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperId NodeID) (*TestSession, error) {
+	nids := make([]NodeID, N)
+	nspk := make(map[NodeID]drlwe.ShamirPublicPoint)
+	for i := range nids {
+		nids[i] = NodeID(fmt.Sprintf("node-%d", i))
+		nspk[nids[i]] = drlwe.ShamirPublicPoint(i + 1)
+	}
+
+	var sessParams = SessionParameters{
+		ID:         "testsess",
+		RLWEParams: rlweparams,
+		T:          T,
+		Nodes:      nids,
+		ShamirPks:  nspk,
+		PublicSeed: []byte{'c', 'r', 's'},
+	}
+
+	return NewTestSessionFromParams(sessParams, helperId)
+
+}
+
+func NewTestSessionFromParams(sp SessionParameters, helperId NodeID) (*TestSession, error) {
 	ts := new(TestSession)
+
+	ts.SessParams = sp
+
 	var err error
-	ts.Params, err = bgv.NewParametersFromLiteral(sp.RLWEParams)
+	ts.RlweParams, err = bgv.NewParametersFromLiteral(sp.RLWEParams)
 	if err != nil {
 		panic(err)
 	}
 
-	ts.SkIdeal = rlwe.NewSecretKey(ts.Params)
-	ts.NodeSessions = make([]*Session, len(sp.Nodes))
-	for i, nid := range sp.Nodes {
+	ts.SkIdeal = rlwe.NewSecretKey(ts.RlweParams)
+	ts.NodeSessions = make(map[NodeID]*Session, len(sp.Nodes))
+	for _, nid := range sp.Nodes {
 
 		os, err := objectstore.NewObjectStoreFromConfig(objectstore.Config{BackendName: "mem"})
 		if err != nil {
@@ -35,15 +62,15 @@ func NewTestSession(sp SessionParameters, helperId NodeID) (*TestSession, error)
 		}
 
 		// computes the ideal secret-key for the test
-		ts.NodeSessions[i], err = NewSession(sp, nid, os)
+		ts.NodeSessions[nid], err = NewSession(sp, nid, os)
 		if err != nil {
 			return nil, err
 		}
-		sk, err := ts.NodeSessions[i].GetSecretKey()
+		sk, err := ts.NodeSessions[nid].GetSecretKey()
 		if err != nil {
 			return nil, err
 		}
-		ts.Params.RingQP().AtLevel(ts.SkIdeal.Value.Q.Level(), ts.SkIdeal.Value.P.Level()).Add(sk.Value, ts.SkIdeal.Value, ts.SkIdeal.Value)
+		ts.RlweParams.RingQP().AtLevel(ts.SkIdeal.Value.Q.Level(), ts.SkIdeal.Value.P.Level()).Add(sk.Value, ts.SkIdeal.Value, ts.SkIdeal.Value)
 	}
 
 	os, err := objectstore.NewObjectStoreFromConfig(objectstore.Config{BackendName: "mem"})

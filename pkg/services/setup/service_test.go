@@ -159,33 +159,19 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
 
-				nids := make([]pkg.NodeID, ts.N)
-				nspk := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
-				for i := range nids {
-					nids[i] = pkg.NodeID(fmt.Sprintf("node-%d", i))
-					nspk[nids[i]] = drlwe.ShamirPublicPoint(i + 1)
-				}
-
-				var sessParams = pkg.SessionParameters{
-					ID:         "testsess",
-					RLWEParams: literalParams,
-					T:          ts.T,
-					Nodes:      nids,
-					ShamirPks:  nspk,
-					PublicSeed: []byte{'c', 'r', 's'},
-				}
-
 				hid := pkg.NodeID("helper")
 
-				testSess, err := pkg.NewTestSession(sessParams, hid)
+				testSess, err := pkg.NewTestSession(ts.N, ts.T, literalParams, hid)
 				if err != nil {
 					t.Fatal(err)
 				}
+				sessParams := testSess.SessParams
 
 				ctx := pkg.NewContext(&sessParams.ID, nil)
 
 				coord := new(testCoordinator)
 				coord.helper = hid
+				nids := sessParams.Nodes
 				coord.online = utils.NewSet(nids)
 
 				trans := &testTransport{helperTrans: &testNodeTrans{incoming: make(chan protocols.Share), outgoing: make(chan protocols.Share)}}
@@ -652,7 +638,7 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 // Based on the session information, check if the protocol was performed correctly.
 func checkKeyGenProt(ctx context.Context, t *testing.T, lt *pkg.TestSession, setup Description, n *testnode) {
 
-	params := lt.Params
+	params := lt.RlweParams
 	sk := lt.SkIdeal
 	nParties := len(lt.HelperSession.Nodes)
 	sess := n.Session

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	"github.com/ldsec/helium/pkg/pkg"
-	"github.com/ldsec/helium/pkg/protocols"
 )
 
 type Signature struct {
@@ -23,7 +22,7 @@ const (
 type Update struct {
 	Signature
 	Status
-	*protocols.StatusUpdate
+	//*protocols.StatusUpdate
 }
 
 func (u Update) String() string {

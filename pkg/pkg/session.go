@@ -2,8 +2,8 @@ package pkg
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
-	"log"
 
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
@@ -152,8 +152,8 @@ type Session struct {
 	//tsk      *drlwe.ShamirSecretShare
 	rlkEphSk *rlwe.SecretKey
 
-	PublicSeed []byte
-	Params     *bgv.Parameters
+	PublicSeed, PrivateSeed []byte
+	Params                  *bgv.Parameters
 
 	*CiphertextStore
 	objectstore.ObjectStore
@@ -188,6 +188,14 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 		sess.SPKS[id] = spk
 	}
 
+	if len(sessParams.PrivateSeed) == 0 {
+		sess.PrivateSeed = make([]byte, 32, 32)
+		_, err := rand.Read(sess.PrivateSeed)
+		if err != nil {
+			return nil, fmt.Errorf("could not create session private seed: %s", err)
+		}
+	}
+
 	params, err := bgv.NewParametersFromLiteral(sessParams.RLWEParams)
 	sess.Params = &params
 
@@ -204,7 +212,7 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 		tsk, errTsk := sess.GetThresholdSecretKey()
 
 		if errSk != nil || errTsk != nil {
-			log.Printf("%s | no sk and tsk found, node will generate them\n", sess.NodeID)
+			//log.Printf("%s | no sk and tsk found, node will generate them\n", sess.NodeID)
 			sk, tsk, err = GetTestSecretKeys(sessParams, nodeID) // TODO: local generation for testing
 			if err != nil {
 				panic(err)
