@@ -2,15 +2,14 @@ package setup
 
 import (
 	"fmt"
-	"net/url"
 	"sort"
 	"strconv"
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/ldsec/helium/pkg/services/compute"
+
+	//"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/bgv"
 )
 
 type Description struct {
@@ -70,67 +69,67 @@ func mergeReceivers(r1, r2 []pkg.NodeID) (rOut []pkg.NodeID) {
 	return els
 }
 
-// CircuitToSetupDescription converts a CircuitDescription into a setup.Description by
-// extractiong the keys needed for the correct circuit execution.
-func CircuitToSetupDescription(c compute.Circuit, params bgv.Parameters) (Description, error) {
-	sd := Description{}
+// // CircuitToSetupDescription converts a CircuitDescription into a setup.Description by
+// // extractiong the keys needed for the correct circuit execution.
+// func CircuitToSetupDescription(c compute.Circuit, params bgv.Parameters) (Description, error) {
+// 	sd := Description{}
 
-	cd, err := compute.ParseCircuit(c, "dummy-cid", params, nil)
-	if err != nil {
-		return Description{}, err
-	}
+// 	cd, err := compute.ParseCircuit(c, "dummy-cid", params, nil)
+// 	if err != nil {
+// 		return Description{}, err
+// 	}
 
-	// determine session nodes
-	sessionNodes := make([]pkg.NodeID, 0)
-	for client := range cd.InputSet {
-		nopl, err := url.Parse(string(client))
-		if err != nil {
-			panic(fmt.Errorf("invalid operand label: %s", client))
-		}
-		sessionNodes = append(sessionNodes, pkg.NodeID(nopl.Host))
-	}
-	// log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
+// 	// determine session nodes
+// 	sessionNodes := make([]pkg.NodeID, 0)
+// 	for client := range cd.InputSet {
+// 		nopl, err := url.Parse(string(client))
+// 		if err != nil {
+// 			panic(fmt.Errorf("invalid operand label: %s", client))
+// 		}
+// 		sessionNodes = append(sessionNodes, pkg.NodeID(nopl.Host))
+// 	}
+// 	// log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
 
-	// determine aggregators
-	aggregators := make([]pkg.NodeID, 0)
-	for _, ksSig := range cd.KeySwitchOps {
-		aggregators = append(aggregators, pkg.NodeID(ksSig.Args["aggregator"]))
-	}
-	// log.Printf("[Convert] Aggregators are %v\n", aggregators)
+// 	// determine aggregators
+// 	aggregators := make([]pkg.NodeID, 0)
+// 	for _, ksSig := range cd.KeySwitchOps {
+// 		aggregators = append(aggregators, pkg.NodeID(ksSig.Args["aggregator"]))
+// 	}
+// 	// log.Printf("[Convert] Aggregators are %v\n", aggregators)
 
-	// Collective Public Key
-	sd.Cpk = sessionNodes
+// 	// Collective Public Key
+// 	sd.Cpk = sessionNodes
 
-	// Relinearization Key
-	if cd.NeedRlk {
-		sd.Rlk = aggregators
-	}
+// 	// Relinearization Key
+// 	if cd.NeedRlk {
+// 		sd.Rlk = aggregators
+// 	}
 
-	// Rotation Keys
-	for GaloisEl := range cd.GaloisKeys {
-		keyField := struct {
-			GaloisEl  uint64
-			Receivers []pkg.NodeID
-		}{GaloisEl, aggregators}
-		sd.GaloisKeys = append(sd.GaloisKeys, keyField)
-	}
+// 	// Rotation Keys
+// 	for GaloisEl := range cd.GaloisKeys {
+// 		keyField := struct {
+// 			GaloisEl  uint64
+// 			Receivers []pkg.NodeID
+// 		}{GaloisEl, aggregators}
+// 		sd.GaloisKeys = append(sd.GaloisKeys, keyField)
+// 	}
 
-	// Public Keys of output receivers
-	for _, ksSig := range cd.KeySwitchOps {
-		// there is an external receiver
-		if ksSig.Type == protocols.PCKS {
-			sender := pkg.NodeID(ksSig.Args["target"])
-			receivers := append(aggregators, sessionNodes...)
-			keyField := struct {
-				Sender    pkg.NodeID
-				Receivers []pkg.NodeID
-			}{sender, receivers}
-			sd.Pk = append(sd.Pk, keyField)
-		}
-	}
+// 	// Public Keys of output receivers
+// 	for _, ksSig := range cd.KeySwitchOps {
+// 		// there is an external receiver
+// 		if ksSig.Type == protocols.PCKS {
+// 			sender := pkg.NodeID(ksSig.Args["target"])
+// 			receivers := append(aggregators, sessionNodes...)
+// 			keyField := struct {
+// 				Sender    pkg.NodeID
+// 				Receivers []pkg.NodeID
+// 			}{sender, receivers}
+// 			sd.Pk = append(sd.Pk, keyField)
+// 		}
+// 	}
 
-	return sd, nil
-}
+// 	return sd, nil
+// }
 
 type SignatureList []protocols.Signature
 type ReceiversMap map[string]utils.Set[pkg.NodeID]
@@ -156,10 +155,10 @@ func DescriptionToSignatureList(sd Description) (SignatureList, ReceiversMap) {
 
 	}
 	if len(sd.Rlk) > 0 {
-		sl = append(sl, protocols.Signature{Type: protocols.RKG_1}, protocols.Signature{Type: protocols.RKG_2})
+		sl = append(sl, protocols.Signature{Type: protocols.RKG})
 
 		rlkReceivers := utils.NewSet(sd.Rlk)
-		rm[protocols.Signature{Type: protocols.RKG_2}.String()] = rlkReceivers
+		rm[protocols.Signature{Type: protocols.RKG}.String()] = rlkReceivers
 	}
 	for _, pk := range sd.Pk {
 		if len(pk.Receivers) > 0 {

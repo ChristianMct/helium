@@ -59,7 +59,7 @@ const (
 	SKG
 	CKG
 	RKG_1
-	RKG_2
+	RKG
 	RTG
 	CKS
 	DEC
@@ -67,7 +67,7 @@ const (
 	PK
 )
 
-var typeToString = []string{"Unknown", "SKG", "CKG", "RKG_1", "RKG_2", "RTG", "CKS", "DEC", "PCKS", "PK"}
+var typeToString = []string{"Unknown", "SKG", "CKG", "RKG_1", "RKG", "RTG", "CKS", "DEC", "PCKS", "PK"}
 
 func (t Type) String() string {
 	if int(t) > len(typeToString) {
@@ -82,7 +82,7 @@ func (t Type) Share() LattigoShare {
 		return &drlwe.ShamirSecretShare{}
 	case CKG:
 		return &drlwe.PublicKeyGenShare{}
-	case RKG_1, RKG_2:
+	case RKG_1, RKG:
 		return &drlwe.RelinearizationKeyGenShare{}
 	case RTG:
 		return &drlwe.GaloisKeyGenShare{}
@@ -145,7 +145,7 @@ type cpkProtocol struct {
 
 func NewProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Instance, error) {
 	switch pd.Signature.Type {
-	case CKG, RTG, RKG_1, RKG_2:
+	case CKG, RTG, RKG_1, RKG:
 		return NewKeygenProtocol(pd, sess, inputs...)
 	case CKS, DEC, PCKS:
 		return NewKeyswitchProtocol(pd, sess, inputs...)
@@ -164,10 +164,6 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Insta
 		protocol: protocol{ProtocolID: pd.ID(), Descriptor: pd, self: sess.NodeID},
 	}
 
-	if !p.HasRole() {
-		return nil, fmt.Errorf("node has no role in the protocol")
-	}
-
 	var err error
 	switch pd.Signature.Type {
 	case CKG:
@@ -183,7 +179,7 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Insta
 			}
 		}
 		p.proto, err = NewRKGProtocol(*&sess.Params.Parameters, ephSk, 1, pd.Signature.Args)
-	case RKG_2:
+	case RKG:
 		var ephSk *rlwe.SecretKey
 		if p.IsParticipant() {
 			ephSk, err = sess.GetRLKEphemeralSecretKey()
@@ -193,12 +189,12 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Insta
 		}
 
 		if len(inputs) != 1 {
-			return nil, fmt.Errorf("protocol signature RKG_2 requires an input")
+			return nil, fmt.Errorf("protocol signature %s requires an input", pd.Signature.Type)
 		}
 
 		rkgR1Share, isShare := inputs[0].(Share)
 		if !isShare {
-			return nil, fmt.Errorf("protocol signature RKG_2 requires input of type %T", rkgR1Share)
+			return nil, fmt.Errorf("protocol signature %s requires input of type %T, got %T", pd.Signature.Type, rkgR1Share, inputs[0])
 		}
 
 		p.crp = rkgR1Share.MHEShare

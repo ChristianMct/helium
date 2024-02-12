@@ -32,7 +32,7 @@ var TestPN12QP109 = bgv.ParametersLiteral{
 	T:    65537,
 }
 
-func TestKeyGenProtocols(t *testing.T) {
+func TestProtocols(t *testing.T) {
 
 	for _, ts := range testSettings {
 
@@ -60,12 +60,12 @@ func TestKeyGenProtocols(t *testing.T) {
 		sigs := []Signature{
 			{Type: CKG},
 			{Type: RTG, Args: map[string]string{"GalEl": "5"}},
-			{Type: RKG_2},
+			{Type: RKG},
 			{Type: DEC, Args: map[string]string{"target": "node-0", "smudging": "40"}},
 		}
 
 		for _, sig := range sigs {
-			parts, err := getParticipants(sig, nids, ts.T)
+			parts, err := GetParticipants(sig, nids, ts.T)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,7 +74,7 @@ func TestKeyGenProtocols(t *testing.T) {
 				var input Input
 				switch pd.Signature.Type {
 				case CKG, RTG:
-				case RKG_2:
+				case RKG:
 					aggOutR1 := runProto(Descriptor{Signature: Signature{Type: RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator}, *testSess, nil, t)
 					if aggOutR1.Error != nil {
 						t.Fatal(aggOutR1.Error)
@@ -120,17 +120,18 @@ func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T
 	for nid, nodeSess := range testSess.NodeSessions {
 		nodeP, err := NewProtocol(pd, nodeSess, input)
 
-		if !(slices.Contains(pd.Participants, nid) || pd.Aggregator == nid) {
-			require.NotNil(t, err, "creating a protocol for non involved nodes should result in an error: nid=%s, parts=%s", nid, pd.Participants)
-			continue
-		}
-
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		share := nodeP.AllocateShare()
 		err = nodeP.GenShare(&share)
+
+		if !slices.Contains(pd.Participants, nid) {
+			require.NotNil(t, err, "non participants should not generate a share")
+			continue
+		}
+
 		if pd.Signature.Type == DEC && pkg.NodeID(pd.Signature.Args["target"]) == nid {
 			require.NotNil(t, err, "decryption receiver should not generate a share")
 			continue
@@ -181,7 +182,7 @@ func checkOutput(out Output, pd Descriptor, testSess pkg.TestSession, t *testing
 		noise := rlwe.NoiseGaloisKey(swk, sk, params.Parameters)
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
 		require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
-	case RKG_2:
+	case RKG:
 		rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
 		require.True(t, isRlk)
 

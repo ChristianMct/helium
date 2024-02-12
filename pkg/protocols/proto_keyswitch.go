@@ -39,10 +39,6 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 	}
 	ks.target = pkg.NodeID(target)
 
-	if !ks.HasRole() {
-		return nil, fmt.Errorf("node has no role in the protocol")
-	}
-
 	var isCt bool
 	if ks.input, isCt = input[0].(*rlwe.Ciphertext); !isCt {
 		return nil, fmt.Errorf("keyswitch protocol require a rlwe.Ciphertext as input parameter")

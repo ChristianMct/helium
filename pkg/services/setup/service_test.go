@@ -3,7 +3,6 @@ package setup
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"testing"
 
@@ -40,113 +39,16 @@ var testSettings = []testSetting{
 
 type testnode struct {
 	*Service
+	*protocols.Executor
 	*pkg.Session
-	*testNodeTrans
-	*testCoordinator
-}
-
-type testTransport struct {
-	helperSrv   *Service
-	helperTrans *testNodeTrans
-}
-
-func (tt *testTransport) transportFor(nid pkg.NodeID) *testNodeTrans {
-	tnt := new(testNodeTrans)
-	tnt.helperSrv = tt.helperSrv
-	tnt.incoming = make(chan protocols.Share)
-	tnt.outgoing = make(chan protocols.Share)
-
-	go func() {
-		close(tnt.incoming)
-		for share := range tnt.outgoing {
-			tt.helperTrans.incoming <- share
-			log.Printf("trans | share from %s for %s sent to aggregator\n", nid, share.ProtocolID[:25])
-		}
-	}()
-
-	return tnt
 }
 
 type testNodeTrans struct {
-	helperSrv          *Service
-	incoming, outgoing chan protocols.Share
+	helperSrv *Service
 }
 
 func (tt *testNodeTrans) GetAggregation(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
 	return tt.helperSrv.GetProtocolOutput(ctx, pd)
-}
-
-func (tt *testNodeTrans) IncomingShares() <-chan protocols.Share {
-	return tt.incoming
-}
-
-func (tt *testNodeTrans) OutgoingShares() chan<- protocols.Share {
-	return tt.outgoing
-}
-
-type testCoordinator struct {
-	helper                     pkg.NodeID
-	online                     utils.Set[pkg.NodeID]
-	started, completed, failed chan protocols.Descriptor
-}
-
-func (tc *testCoordinator) ReportStarted(pd protocols.Descriptor) {
-	tc.started <- pd
-	log.Printf("coord | got started report for %s\n", pd.HID())
-}
-
-func (tc *testCoordinator) ReportCompleted(pd protocols.Descriptor) {
-	tc.completed <- pd
-	log.Printf("coord | got completion report for %s\n", pd.HID())
-}
-
-func (tc *testCoordinator) ReportFailed(pd protocols.Descriptor) {
-	tc.failed <- pd
-	log.Printf("coord | got failure report for %s©", pd.HID())
-}
-
-func (tc *testCoordinator) Run(ctx context.Context, sigs SignatureList, sessParams pkg.SessionParameters, helper *testnode, sessNodes []testnode, t *testing.T) {
-
-	tc.started = make(chan protocols.Descriptor)
-	tc.completed = make(chan protocols.Descriptor)
-	tc.failed = make(chan protocols.Descriptor)
-
-	rkgDone := make(chan struct{}, 0)
-	go func() {
-
-		for {
-			var pd protocols.Descriptor
-			select {
-			case pd = <-tc.started:
-				for _, node := range sessNodes {
-					log.Printf("coord | running %s at %s \n", pd.HID(), node.self)
-					go node.RunProtocol(ctx, pd)
-				}
-			case pd = <-tc.completed:
-				if pd.Signature.Type == protocols.RKG_1 {
-					pdr2 := protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_2}, Participants: pd.Participants, Aggregator: pd.Aggregator}
-					go helper.RunProtocol(ctx, pdr2)
-				}
-				if pd.Signature.Type == protocols.RKG_2 {
-					close(rkgDone)
-				}
-
-			case pd = <-tc.failed:
-				t.Fatal("coordinator reieved a failure")
-			}
-		}
-	}()
-
-	for _, sig := range sigs {
-		if sig.Type == protocols.RKG_2 {
-			continue
-		}
-		part := utils.GetRandomSetOfSize(sessParams.T, tc.online).Elements()
-		pd := protocols.Descriptor{Signature: sig, Participants: part, Aggregator: tc.helper} // TODO dynamic sets
-		log.Printf("coord | running %s at helper \n", pd.HID())
-		helper.RunProtocol(ctx, pd)
-	}
-	<-rkgDone
 }
 
 // TestCloudAssistedSetup tests the setup service in cloud-assisted mode with one helper and N light nodes.
@@ -169,30 +71,37 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				ctx := pkg.NewContext(&sessParams.ID, nil)
 
-				coord := new(testCoordinator)
-				coord.helper = hid
-				nids := sessParams.Nodes
-				coord.online = utils.NewSet(nids)
+				nids := utils.NewSet(sessParams.Nodes)
 
-				trans := &testTransport{helperTrans: &testNodeTrans{incoming: make(chan protocols.Share), outgoing: make(chan protocols.Share)}}
+				coord := protocols.NewTestCoordinator()
+				protoTrans := protocols.NewTestTransport()
 
 				clou := new(testnode)
-				clou.testCoordinator = new(testCoordinator)
-				clou.Service, err = NewSetupService(hid, hid, testSess.HelperSession, trans.helperTrans, coord, testSess.HelperSession.ObjectStore)
+
+				clou.Executor, err = protocols.NewExectutor(hid, testSess.HelperSession, protoTrans)
+				require.Nil(t, err)
+				clou.Executor.RunService(ctx)
+				clou.Service, err = NewSetupService(hid, clou.Executor, nil, coord, testSess.HelperSession.ObjectStore)
 				if err != nil {
 					t.Fatal(err)
 				}
-				clou.RunService(ctx)
-				trans.helperSrv = clou.Service
+				clou.Service.RunService(ctx)
 
-				clients := make([]testnode, ts.N)
-				for i := range clients {
-					clients[i].Session = testSess.NodeSessions[i]
-					clients[i].Service, err = NewSetupService(sessParams.Nodes[i], hid, testSess.NodeSessions[i], trans.transportFor(nids[i]), coord, testSess.NodeSessions[i].ObjectStore)
+				srvTrans := &testNodeTrans{helperSrv: clou.Service}
+
+				clients := make(map[pkg.NodeID]*testnode, ts.N)
+				for nid := range nids {
+					cli := &testnode{}
+					cli.Session = testSess.NodeSessions[nid]
+					cli.Executor, err = protocols.NewExectutor(nid, testSess.NodeSessions[nid], protoTrans.TransportFor(nid))
+					require.Nil(t, err)
+					cli.Executor.RunService(ctx)
+					cli.Service, err = NewSetupService(nid, cli.Executor, srvTrans, coord.NewNodeCoordinator(nid), testSess.NodeSessions[nid].ObjectStore)
 					if err != nil {
 						t.Fatal(err)
 					}
-					clients[i].RunService(ctx)
+					cli.Service.RunService(ctx)
+					clients[nid] = cli
 				}
 
 				sd := Description{
@@ -209,11 +118,16 @@ func TestCloudAssistedSetup(t *testing.T) {
 				}
 
 				sigList, _ := DescriptionToSignatureList(sd)
-
-				coord.Run(ctx, sigList, sessParams, clou, clients, t)
+				for _, sig := range sigList {
+					parts, err := protocols.GetParticipants(sig, nids, sessParams.T)
+					require.Nil(t, err)
+					pd := protocols.Descriptor{Signature: sig, Participants: parts, Aggregator: hid}
+					err = clou.Service.RunProtocol(ctx, pd)
+					require.Nil(t, err)
+				}
 
 				for _, c := range clients {
-					checkKeyGenProt(ctx, t, testSess, sd, &c)
+					checkKeyGenProt(ctx, t, testSess, sd, c)
 				}
 
 				// 	// Start public key generation

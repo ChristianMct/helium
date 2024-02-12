@@ -47,7 +47,7 @@ func (pd *Descriptor) UnmarshalBinary(b []byte) (err error) {
 	return json.Unmarshal(b, &pd)
 }
 
-func getParticipants(sig Signature, onlineNodes utils.Set[pkg.NodeID], threshold int) ([]pkg.NodeID, error) {
+func GetParticipants(sig Signature, onlineNodes utils.Set[pkg.NodeID], threshold int) ([]pkg.NodeID, error) {
 	if len(onlineNodes) < threshold {
 		return nil, fmt.Errorf("not enough online node")
 	}

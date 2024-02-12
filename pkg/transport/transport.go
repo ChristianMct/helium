@@ -31,7 +31,7 @@ type Transport interface {
 
 	// GetSetupTransport returns the SetupServiceTransport instance for the
 	// setup service to use.
-	GetSetupTransport() SetupServiceTransport
+	// GetSetupTransport() SetupServiceTransport
 
 	// GetComputeTransport returns the ComputeServiceTransport instance for the
 	// compute service to use.
@@ -44,23 +44,23 @@ type Transport interface {
 	ResetNetworkStats()
 }
 
-// SetupServiceTransport is an interface for the transport layer supporting the setup service.
-type SetupServiceTransport interface {
+// // SetupServiceTransport is an interface for the transport layer supporting the setup service.
+// type SetupServiceTransport interface {
 
-	// RegisterForSetupAt register the caller as a node ready to perform the setup. It returns
-	// a stream of protocol status updates on which it can synchronize.
-	RegisterForSetupAt(context.Context, pkg.NodeID) (<-chan protocols.StatusUpdate, int, error)
+// 	// RegisterForSetupAt register the caller as a node ready to perform the setup. It returns
+// 	// a stream of protocol status updates on which it can synchronize.
+// 	RegisterForSetupAt(context.Context, pkg.NodeID) (<-chan protocols.StatusUpdate, int, error)
 
-	PutProtocolUpdate(protocols.StatusUpdate) (seq int, err error)
+// 	PutProtocolUpdate(protocols.StatusUpdate) (seq int, err error)
 
-	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
-	// aggregated share of the designated protocol.
-	GetAggregationFrom(context.Context, pkg.NodeID, protocols.Descriptor) (*protocols.AggregationOutput, error)
+// 	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
+// 	// aggregated share of the designated protocol.
+// 	GetAggregationFrom(context.Context, pkg.NodeID, protocols.Descriptor) (*protocols.AggregationOutput, error)
 
-	ShareTransport
+// 	ShareTransport
 
-	Close() // TODO: there should be a common interface for transports
-}
+// 	Close() // TODO: there should be a common interface for transports
+// }
 
 // ComputeServiceTransport is an interface for the transport layer supporting the compute service.
 type ComputeServiceTransport interface {
@@ -108,7 +108,7 @@ type SetupServiceHandler interface {
 	PeerRegisteringHandler
 
 	// GetProtocolStatus returns the node's list of protocol along with their status.
-	GetProtocolStatus() []protocols.StatusUpdate
+	//GetProtocolStatus() []protocols.StatusUpdate
 
 	// GetProtocolOutput returns the aggregation output for the designated protocol
 	// or an error if such output does not exist.
