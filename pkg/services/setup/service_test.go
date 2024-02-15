@@ -47,7 +47,7 @@ type testNodeTrans struct {
 	helperSrv *Service
 }
 
-func (tt *testNodeTrans) GetAggregation(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+func (tt *testNodeTrans) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
 	return tt.helperSrv.GetProtocolOutput(ctx, pd)
 }
 
@@ -81,11 +81,11 @@ func TestCloudAssistedSetup(t *testing.T) {
 				clou.Executor, err = protocols.NewExectutor(hid, testSess.HelperSession, protoTrans)
 				require.Nil(t, err)
 				clou.Executor.RunService(ctx)
-				clou.Service, err = NewSetupService(hid, clou.Executor, nil, coord, testSess.HelperSession.ObjectStore)
+				clou.Service, err = NewSetupService(hid, clou.Executor, nil, testSess.HelperSession.ObjectStore)
 				if err != nil {
 					t.Fatal(err)
 				}
-				clou.Service.RunService(ctx)
+				clou.Service.RunService(ctx, coord)
 
 				srvTrans := &testNodeTrans{helperSrv: clou.Service}
 
@@ -96,11 +96,11 @@ func TestCloudAssistedSetup(t *testing.T) {
 					cli.Executor, err = protocols.NewExectutor(nid, testSess.NodeSessions[nid], protoTrans.TransportFor(nid))
 					require.Nil(t, err)
 					cli.Executor.RunService(ctx)
-					cli.Service, err = NewSetupService(nid, cli.Executor, srvTrans, coord.NewNodeCoordinator(nid), testSess.NodeSessions[nid].ObjectStore)
+					cli.Service, err = NewSetupService(nid, cli.Executor, srvTrans, testSess.NodeSessions[nid].ObjectStore)
 					if err != nil {
 						t.Fatal(err)
 					}
-					cli.Service.RunService(ctx)
+					cli.Service.RunService(ctx, coord.NewNodeCoordinator(nid))
 					clients[nid] = cli
 				}
 

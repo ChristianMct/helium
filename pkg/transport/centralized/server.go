@@ -2,6 +2,7 @@ package centralized
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -25,11 +26,19 @@ const (
 	KeepaliveTimeout = time.Second
 )
 
+type NodeWatcher interface {
+	// Register is called by the transport when a new peer register itself for the setup.
+	Register(pkg.NodeID) error
+
+	// Unregister is called by the transport when a peer is unregistered from the setup.
+	Unregister(pkg.NodeID) error
+}
+
 type ProtocolHandler interface {
 	// GetProtocolOutput returns the aggregation output for the designated protocol
 	// or an error if such output does not exist.
-	PutShare(protocols.Share) error
-	GetProtocolOutput(protocols.Descriptor) (*protocols.AggregationOutput, error)
+	PutShare(context.Context, protocols.Share) error
+	GetProtocolOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
 type CiphertextHandler interface {
@@ -45,23 +54,25 @@ type HeliumServer struct {
 	id pkg.NodeID
 
 	// synchronization
-	events   coordinator.Log
-	eventsMu sync.RWMutex
-	nodes    map[pkg.NodeID]*client
-	nodesMu  sync.RWMutex
-	closing  chan struct{}
+	events       coordinator.Log
+	eventsClosed bool
+	eventsMu     sync.RWMutex
+	nodes        map[pkg.NodeID]*client
+	nodesMu      sync.RWMutex
+	closing      chan struct{}
 
 	// service API
 	protocolHandler   ProtocolHandler
 	ciphertextHandler CiphertextHandler
+	watchers          []NodeWatcher
 
 	// grpc API
 	*grpc.Server
-	api.UnimplementedHeliumHelperServer
+	*api.UnimplementedHeliumHelperServer
 	statsHandler statsHandler
 }
 
-func NewHeliumServer(id pkg.NodeID, na pkg.NodeAddress, nl pkg.NodesList) *HeliumServer {
+func NewHeliumServer(id pkg.NodeID, na pkg.NodeAddress, nl pkg.NodesList, protoHandler ProtocolHandler) *HeliumServer {
 	hsv := new(HeliumServer)
 	hsv.id = id
 
@@ -83,13 +94,56 @@ func NewHeliumServer(id pkg.NodeID, na pkg.NodeAddress, nl pkg.NodesList) *Heliu
 	hsv.Server = grpc.NewServer(serverOpts...)
 	hsv.Server.RegisterService(&api.HeliumHelper_ServiceDesc, hsv)
 
+	hsv.protocolHandler = protoHandler
+	hsv.watchers = make([]NodeWatcher, 0)
+
+	hsv.nodes = make(map[pkg.NodeID]*client)
+	for _, n := range nl {
+		hsv.nodes[n.NodeID] = &client{}
+	}
+
 	return hsv
 }
 
-func (ct *HeliumServer) Register(_ *api.Void, stream api.Coordinator_RegisterServer) error {
+func (ct *HeliumServer) SendEvent(event coordinator.Event) error {
+	ct.eventsMu.Lock()
+	ct.events = append(ct.events, event)
+
+	ct.nodesMu.RLock()
+	for nodeId, node := range ct.nodes {
+		if node.sendQueue != nil {
+			select {
+			case node.sendQueue <- event:
+			default:
+				panic(fmt.Errorf("node %s has full send queue", nodeId)) // TODO: handle this by closing stream instead
+			}
+		}
+	}
+	ct.nodesMu.RUnlock()
+	ct.eventsMu.Unlock()
+	return nil
+}
+
+func (ct *HeliumServer) CloseEvents() {
+	ct.eventsMu.Lock()
+	if ct.eventsClosed {
+		panic("events already closed")
+	}
+	ct.nodesMu.RLock()
+	ct.eventsClosed = true
+	for _, c := range ct.nodes {
+		if c.sendQueue != nil {
+			close(c.sendQueue)
+		}
+	}
+	ct.nodesMu.RUnlock()
+	ct.eventsMu.Unlock()
+}
+
+func (ct *HeliumServer) Register(_ *api.Void, stream api.HeliumHelper_RegisterServer) error {
 	nodeId := pkg.SenderIDFromIncomingContext(stream.Context())
 	if len(nodeId) == 0 {
-		return fmt.Errorf("caller must specify node id for stream")
+		return status.Error(codes.FailedPrecondition, "caller must specify node id for stream")
 	}
 
 	ct.Logf("connected %s", nodeId)
@@ -97,20 +151,29 @@ func (ct *HeliumServer) Register(_ *api.Void, stream api.Coordinator_RegisterSer
 	ct.eventsMu.RLock()
 	present := len(ct.events)
 	pastEvents := ct.events
+
 	ct.nodesMu.Lock()
 	node, has := ct.nodes[nodeId]
-	if has {
-		panic(fmt.Errorf("peer already registered: %s", nodeId))
+	if !has {
+		panic(fmt.Errorf("invalid node id: %s", nodeId))
 	}
 	sendQueue := make(chan coordinator.Event, 100)
 	node.sendQueue = sendQueue
 	ct.nodesMu.Unlock()
 	ct.eventsMu.RUnlock() // all events after pastEvents will go on the sendQueue
 
+	err := ct.NotifyRegister(nodeId)
+	if err != nil {
+		panic(err)
+	}
 	ct.Logf("registered %s", nodeId)
 
+	err = stream.SendHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
+	if err != nil {
+		panic(err)
+	}
+
 	var done bool
-	stream.SetHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 	for _, ev := range pastEvents {
 		err := stream.Send(getApiEvent(ev))
 		if err != nil {
@@ -122,7 +185,7 @@ func (ct *HeliumServer) Register(_ *api.Void, stream api.Coordinator_RegisterSer
 
 	// Processes the node's sendQueue. The sendQueue channel is closed when exiting the loop
 	cancelled := stream.Context().Done()
-	for !done {
+	for !done && !ct.eventsClosed {
 		select {
 		// received an event to send or closed the queue
 		case evt, more := <-sendQueue:
@@ -153,6 +216,11 @@ func (ct *HeliumServer) Register(_ *api.Void, stream api.Coordinator_RegisterSer
 	node.sendQueue = nil
 	ct.nodesMu.Unlock()
 
+	err = ct.NotifyUnregister(nodeId)
+	if err != nil {
+		panic(err)
+	}
+
 	return nil
 }
 
@@ -161,16 +229,16 @@ func (ct *HeliumServer) Register(_ *api.Void, stream api.Coordinator_RegisterSer
 func (hsv *HeliumServer) PutShare(ctx context.Context, apiShare *api.Share) (*api.Void, error) {
 	s, err := getShareFromAPI(apiShare)
 	if err != nil {
-		hsv.Logf("got an invalid share") // TODO add details
+		hsv.Logf("got an invalid share: %s", err) // TODO add details
 		return nil, err
 	}
 
-	return &api.Void{}, hsv.protocolHandler.PutShare(s)
+	return &api.Void{}, hsv.protocolHandler.PutShare(ctx, s)
 }
 
 func (hsv *HeliumServer) GetAggregationOutput(ctx context.Context, apipd *api.ProtocolDescriptor) (*api.AggregationOutput, error) {
 	pd := getProtocolDescFromAPI(apipd)
-	out, err := hsv.protocolHandler.GetProtocolOutput(*pd)
+	out, err := hsv.protocolHandler.GetProtocolOutput(ctx, *pd)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s", pd.HID())
 	}
@@ -205,6 +273,24 @@ func (hsv *HeliumServer) PutCiphertext(ctx context.Context, apict *api.Ciphertex
 		return nil, err
 	}
 	return ct.ID.ToGRPC(), nil
+}
+
+func (hsv *HeliumServer) RegisterWatcher(nw NodeWatcher) {
+	hsv.watchers = append(hsv.watchers, nw)
+}
+
+func (hsv *HeliumServer) NotifyRegister(node pkg.NodeID) (err error) {
+	for _, w := range hsv.watchers {
+		err = errors.Join(w.Register(node))
+	}
+	return
+}
+
+func (hsv *HeliumServer) NotifyUnregister(node pkg.NodeID) (err error) {
+	for _, w := range hsv.watchers {
+		err = errors.Join(w.Unregister(node))
+	}
+	return
 }
 
 func (ct *HeliumServer) Logf(msg string, v ...any) {

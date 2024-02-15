@@ -33,7 +33,7 @@ type CircuitEvent struct {
 
 type Event struct {
 	time.Time
-	*ProtocolEvent
+	ProtocolEvent *protocols.Event
 	*CircuitEvent
 }
 

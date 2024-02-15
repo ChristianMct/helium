@@ -12,10 +12,8 @@ import (
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport/centralized"
-	"github.com/ldsec/helium/pkg/transport/grpctrans"
 	"github.com/ldsec/helium/pkg/utils"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -35,7 +33,7 @@ type Node struct {
 
 	sessions *pkg.SessionStore
 	objectstore.ObjectStore
-	pkBackend compute.PublicKeyBackend
+	//pkBackend compute.PublicKeyBackend
 
 	// coordination
 	connectedNodes map[pkg.NodeID]utils.Set[pkg.ProtocolID]
@@ -43,17 +41,16 @@ type Node struct {
 	C              sync.Cond
 
 	//transport transport.Transport
-	srv       *centralized.HeliumServer
-	cli       *centralized.HeliumClient
-	outshares chan protocols.Share
+	srv                 *centralized.HeliumServer
+	cli                 *centralized.HeliumClient
+	outshares, inshares chan protocols.Share
 
 	// services
-	setupServiceCoordinator, computeServiceCoordinator serviceCoordinator
-	setup                                              *setup.Service
-	compute                                            *compute.Service
+	setup *setup.Service
+	//compute *compute.Service
 
-	postsetupHandler  func(*pkg.SessionStore, compute.PublicKeyBackend) error
-	precomputeHandler func(*pkg.SessionStore, compute.PublicKeyBackend) error
+	// postsetupHandler  func(*pkg.SessionStore, compute.PublicKeyBackend) error
+	// precomputeHandler func(*pkg.SessionStore, compute.PublicKeyBackend) error
 
 	setupDone   chan struct{}
 	computeDone chan struct{}
@@ -65,7 +62,7 @@ type Config struct {
 	HelperID          pkg.NodeID
 	SessionParameters []pkg.SessionParameters
 	ObjectStoreConfig objectstore.Config
-	TLSConfig         grpctrans.TLSConfig
+	TLSConfig         centralized.TLSConfig
 }
 
 type lightNodeServiceTransport struct {
@@ -91,40 +88,6 @@ func (lst *lightNodeServiceTransport) OutgoingShares() chan<- protocols.Share {
 	return lst.outgoingShares
 }
 
-type serviceCoordinator struct {
-	triggers, reports chan coordinator.Event
-}
-
-func (sc *serviceCoordinator) ReportStarted(pd protocols.Descriptor) {
-	sc.reports <- coordinator.Event{
-		Time: time.Now(),
-		ProtocolEvent: &coordinator.ProtocolEvent{
-			EventType:  coordinator.Started,
-			Descriptor: pd,
-		},
-	}
-}
-
-func (sc *serviceCoordinator) ReportCompleted(pd protocols.Descriptor) {
-	sc.reports <- coordinator.Event{
-		Time: time.Now(),
-		ProtocolEvent: &coordinator.ProtocolEvent{
-			EventType:  coordinator.Completed,
-			Descriptor: pd,
-		},
-	}
-}
-
-func (sc *serviceCoordinator) ReportFailed(pd protocols.Descriptor) {
-	sc.reports <- coordinator.Event{
-		Time: time.Now(),
-		ProtocolEvent: &coordinator.ProtocolEvent{
-			EventType:  coordinator.Failed,
-			Descriptor: pd,
-		},
-	}
-}
-
 // NewNode creates a new Helium node from the provided config and node list.
 func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	node = new(Node)
@@ -142,7 +105,7 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	node.nodeList = nodeList
 
 	// object store
-	os, err := objectstore.NewObjectStoreFromConfig(config.ObjectStoreConfig)
+	node.ObjectStore, err = objectstore.NewObjectStoreFromConfig(config.ObjectStoreConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -150,34 +113,44 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	// session
 	node.sessions = pkg.NewSessionStore()
 	for _, sp := range config.SessionParameters {
-		_, err = node.CreateNewSession(sp, os)
+		_, err = node.CreateNewSession(sp, node.ObjectStore)
 		if err != nil {
 			panic(err)
 		}
 	}
 
+	// transport
+	if node.HasAddress() {
+		node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node)
+		node.srv.RegisterWatcher(node)
+	} else {
+		node.cli = centralized.NewHeliumClient(node.id, node.helperId, node.nodeList.AddressOf(node.helperId))
+	}
+	node.inshares = make(chan protocols.Share)
+	node.outshares = make(chan protocols.Share)
+
+	// Executor
+	executor, err := protocols.NewExectutor(node.id, node, node)
+	executor.RunService(context.Background())
+
 	// services
-	var serviceTransport setup.Transport
-	node.setup, err = setup.NewSetupService(node.id, node.helperId, node, serviceTransport, &node.setupServiceCoordinator, os)
+	node.setup, err = setup.NewSetupService(node.id, executor, node.cli, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
 
-	node.pkBackend = compute.NewCachedPublicKeyBackend(node.setup)
+	//node.pkBackend = compute.NewCachedPublicKeyBackend(node.setup)
 	// node.compute, err = compute.NewComputeService(node.id, node.helperId, node, node.transport.GetComputeTransport(), node.pkBackend)
 	// if err != nil {
 	// 	return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	// }
 
-	// transport
-	if node.HasAddress() {
-		node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList)
-	}
-	node.cli = centralized.NewHeliumClient(node.id, node.helperId, node.nodeList.AddressOf(node.helperId))
+	node.connectedNodes = make(map[pkg.NodeID]utils.Set[pkg.ProtocolID])
+	node.C = *sync.NewCond(&node.L)
 
 	// internal
-	node.postsetupHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
-	node.precomputeHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
+	// node.postsetupHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
+	// node.precomputeHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
 	node.setupDone = make(chan struct{})
 	node.computeDone = make(chan struct{})
 
@@ -239,7 +212,32 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 // 	return node, nil
 // }
 
-func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
+type helperProtocolCoordinator struct {
+	outgoing chan protocols.Event
+}
+
+func (hcp *helperProtocolCoordinator) Incoming() <-chan protocols.Event {
+	return nil
+}
+
+func (hcp *helperProtocolCoordinator) Outgoing() chan<- protocols.Event {
+	return hcp.outgoing
+}
+
+type nodeProtocolCoordinator struct {
+	incoming chan protocols.Event
+}
+
+func (hcp *nodeProtocolCoordinator) Incoming() <-chan protocols.Event {
+	return hcp.incoming
+}
+
+func (hcp *nodeProtocolCoordinator) Outgoing() chan<- protocols.Event {
+	return nil
+}
+
+// func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
+func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan interface{}, err error) {
 
 	// recovers the session
 	sess, exists := node.GetSessionFromContext(ctx)
@@ -248,53 +246,97 @@ func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signa
 	}
 
 	// registers the app's circuits and infer the setup description
-	for cName, circuit := range app.Circuits {
-		compute.RegisterCircuit(cName, circuit)
-	}
+	// for cName, circuit := range app.Circuits {
+	// 	compute.RegisterCircuit(cName, circuit)
+	// }
 	setupDesc, err := getSetupDescription(app, sess)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	sigList, sigToReceiverSet := setup.DescriptionToSignatureList(setupDesc)
+	//sigList, sigToReceiverSet := setup.DescriptionToSignatureList(setupDesc)
+	sigList, _ := setup.DescriptionToSignatureList(setupDesc)
 
 	if node.IsFullNode() {
 
-		go node.setup.RunService(ctx)
+		coord := &helperProtocolCoordinator{make(chan protocols.Event)}
+
+		go func() {
+			for ev := range coord.outgoing {
+				pev := ev
+				node.srv.SendEvent(coordinator.Event{Time: time.Now(), ProtocolEvent: &pev})
+			}
+			node.srv.CloseEvents()
+		}()
+
+		node.setup.RunService(ctx, coord)
+
 		// TODO: load and verify state from persistent storage
 		for _, sig := range sigList {
-			pd := node.getProtocolDescriptor(sig, sess.T)
-			node.setup.RunProtocol(ctx, pd)
+			sig := sig
+			pdc := make(chan protocols.Descriptor)
+			go func() {
+				pdc <- node.getProtocolDescriptor(sig, sess.T)
+			}()
+			select {
+			case pd := <-pdc:
+				err = node.setup.RunProtocol(ctx, pd)
+				if err != nil {
+					return nil, nil, err
+				}
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+
 		}
+
+		node.Logf("all signatures run, closing")
+		close(coord.outgoing)
 
 	} else {
 		events, present, err := node.cli.Register(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		completedProto, runningProto, completedCirc, runningCirc, err := recoverPresentState(events, present)
+
+		//completedProto, runningProto, completedCirc, runningCirc, err := recoverPresentState(events, present)
+		_, _, _, _, err = recoverPresentState(events, present)
+		if err != nil {
+			return nil, nil, err
+		}
 
 		go node.sendShares(ctx)
-		go node.setup.RunService(ctx)
 
+		coord := &nodeProtocolCoordinator{incoming: make(chan protocols.Event)}
+		node.setup.RunService(ctx, coord)
 		for ev := range events {
-			if ev.IsComputeEvent() {
-				node.computeServiceCoordinator.triggers <- ev
-			} else {
-				switch ev.ProtocolEvent.EventType {
-				case coordinator.Started:
-					node.setup.RunProtocol(ctx, ev.Descriptor)
-				case coordinator.Completed:
-					if sigToReceiverSet[ev.Descriptor.Signature.String()].Contains(node.id) {
-						_, err = node.setup.GetProtocolOutput(ctx, ev.Descriptor) // caches the output
-					}
-				}
+			if ev.IsSetupEvent() {
+				pev := *ev.ProtocolEvent
+				coord.incoming <- pev
 			}
 		}
+
+		node.Logf("helper closed the event log, closing")
 	}
 
-	close(outs)
 	return
+}
+
+func (n *Node) PutShare(_ context.Context, s protocols.Share) error {
+	n.inshares <- s
+	return nil
+}
+
+func (n *Node) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	return n.setup.GetProtocolOutput(ctx, pd)
+}
+
+func (n *Node) IncomingShares() <-chan protocols.Share {
+	return n.inshares
+}
+
+func (n *Node) OutgoingShares() chan<- protocols.Share {
+	return n.outshares
 }
 
 // Register is called by the transport when a new peer register itself for the setup.
@@ -309,7 +351,7 @@ func (s *Node) Register(peer pkg.NodeID) error {
 
 	s.connectedNodes[peer] = make(utils.Set[pkg.ProtocolID])
 
-	s.Logf("setup service registered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	s.Logf("[Node] registered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 
@@ -327,7 +369,7 @@ func (s *Node) Unregister(peer pkg.NodeID) error {
 	delete(s.connectedNodes, peer)
 	s.L.Unlock()
 
-	s.Logf("setup unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	s.Logf("[Node] unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 
@@ -353,7 +395,8 @@ func (s *Node) getProtocolDescriptor(sig protocols.Signature, threshold int) pro
 	selected := utils.GetRandomSetOfSize(threshold, available)
 	pd.Participants = selected.Elements()
 	for nid := range selected {
-		s.connectedNodes[nid].Add(pd.ID())
+		nodeProto := s.connectedNodes[nid]
+		nodeProto.Add(pd.ID())
 	}
 	s.L.Unlock()
 
@@ -404,20 +447,20 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 		if ev.IsProtocolEvent() {
 			pid := ev.ProtocolEvent.ID()
 			switch ev.ProtocolEvent.EventType {
-			case coordinator.Started:
+			case protocols.Started:
 				runProto[pid] = ev.ProtocolEvent.Descriptor
-			case coordinator.Executing:
+			case protocols.Executing:
 				if _, has := runProto[pid]; !has {
 					err = fmt.Errorf("inconsisted state, protocol %s execution event before start", ev.ProtocolEvent.HID())
 					return
 				}
-			case coordinator.Completed, coordinator.Failed:
+			case protocols.Completed, protocols.Failed:
 				if _, has := runProto[pid]; !has {
-					fmt.Errorf("inconsisted state, protocol %s termination event before start", ev.ProtocolEvent.HID())
+					err = fmt.Errorf("inconsisted state, protocol %s termination event before start", ev.ProtocolEvent.HID())
 					return
 				}
 				delete(runProto, pid)
-				if ev.ProtocolEvent.EventType == coordinator.Completed {
+				if ev.ProtocolEvent.EventType == protocols.Completed {
 					completedProto = append(completedProto, ev.ProtocolEvent.Descriptor)
 				}
 			}
@@ -436,16 +479,18 @@ func getSetupDescription(app App, sess *pkg.Session) (sd setup.Description, err 
 	// creates a setup.Description from the config and provided circuits
 	if app.SetupDescription != nil {
 		sd = setup.MergeSetupDescriptions(sd, *app.SetupDescription)
+	} else {
+		return setup.Description{}, fmt.Errorf("must provide a setup description") // TODO re enable setup inference
 	}
-	for _, cs := range app.Circuits {
-		// infer setup description
-		compSd, err := setup.CircuitToSetupDescription(cs, *sess.Params)
-		if err != nil {
-			return setup.Description{}, fmt.Errorf("error while converting circuit to setup description: %w", err)
-		}
-		// adds the circuit's required eval keys to the app's setup description
-		sd = setup.MergeSetupDescriptions(sd, compSd)
-	}
+	// for _, cs := range app.Circuits {
+	// 	// infer setup description
+	// 	compSd, err := setup.CircuitToSetupDescription(cs, *sess.Params)
+	// 	if err != nil {
+	// 		return setup.Description{}, fmt.Errorf("error while converting circuit to setup description: %w", err)
+	// 	}
+	// 	// adds the circuit's required eval keys to the app's setup description
+	// 	sd = setup.MergeSetupDescriptions(sd, compSd)
+	// }
 	return sd, nil
 }
 
@@ -531,9 +576,9 @@ func (node *Node) GetSetupService() *setup.Service {
 	return node.setup
 }
 
-func (node *Node) GetComputeService() *compute.Service {
-	return node.compute
-}
+// func (node *Node) GetComputeService() *compute.Service {
+// 	return node.compute
+// }
 
 func (node *Node) NodeList() pkg.NodesList {
 	return node.nodeList // TODO copy
@@ -571,8 +616,6 @@ func (node *Node) CreateNewSession(sessParams pkg.SessionParameters, objstore ob
 	if err != nil {
 		return sess, err
 	}
-
-	log.Printf("Node %s | created rlwe session with id: %s and nodes: %s \n", node.id, sess.ID, sess.Nodes)
 
 	return sess, nil
 }
@@ -644,13 +687,13 @@ func (node *Node) Logf(msg string, v ...any) {
 // 	node.transport.ResetNetworkStats()
 // }
 
-func (node *Node) RegisterPostsetupHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
-	node.postsetupHandler = h
-}
+// func (node *Node) RegisterPostsetupHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
+// 	node.postsetupHandler = h
+// }
 
-func (node *Node) RegisterPrecomputeHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
-	node.precomputeHandler = h
-}
+// func (node *Node) RegisterPrecomputeHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
+// 	node.precomputeHandler = h
+// }
 
 type Context struct {
 	C context.Context

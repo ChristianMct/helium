@@ -33,9 +33,22 @@ const (
 	Failed
 )
 
+var evtypeToString = []string{"COMPLETED", "STARTED", "EXECUTING", "FAILED"}
+
+func (t EventType) String() string {
+	if int(t) > len(evtypeToString) {
+		t = 0
+	}
+	return evtypeToString[t]
+}
+
 type Event struct {
 	EventType
 	Descriptor
+}
+
+func (ev Event) String() string {
+	return fmt.Sprintf("%s: %s", ev.EventType, ev.Descriptor)
 }
 
 type Executor struct {
@@ -84,36 +97,6 @@ func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Transpor
 }
 
 func (s *Executor) RunService(ctx context.Context) {
-
-	// // processes incoming events from the coordinator
-	// go func() {
-	// 	for ev := range s.coordinator.Incoming() {
-	// 		s.Logf("new coordination event: %s", ev)
-	// 		switch ev.EventType {
-	// 		case Started:
-	// 			var input Input
-	// 			if ev.Descriptor.Signature.Type == RKG {
-	// 				r1Desc := ev.Descriptor
-	// 				r1Desc.Signature.Type = RKG_1
-	// 				aggR1, err := s.transport.GetAggregation(ctx, r1Desc)
-	// 				if err != nil {
-	// 					panic(err)
-	// 				}
-	// 				if aggR1.Error != nil {
-	// 					panic(err)
-	// 				}
-	// 				input = aggR1.Share
-	// 			}
-	// 			s.RunProtocol(ctx, ev.Descriptor, input)
-	// 		case Completed:
-	// 			s.completedProtos = append(s.completedProtos, ev.Descriptor)
-	// 		case Failed:
-
-	// 		default:
-	// 			panic("unkown event type")
-	// 		}
-	// 	}
-	// }()
 
 	// processes incoming shares from the transport
 	go func() {

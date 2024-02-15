@@ -1,331 +1,318 @@
 package node
 
-import (
-	"fmt"
-	"math"
-	"strconv"
-	"sync"
+// // TestCircuits is a map mapping a circuitID string to each circuit function.
+// var TestCircuits = map[string]compute.Circuit{
+// 	// "identity-1": func(ec compute.EvaluationContext) error {
+// 	// 	opIn := ec.Input("//node-0/in-0")
 
-	"github.com/ldsec/helium/pkg/pkg"
-	"github.com/ldsec/helium/pkg/services/compute"
-	"github.com/ldsec/helium/pkg/utils"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
-)
+// 	// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
 
-// TestCircuits is a map mapping a circuitID string to each circuit function.
-var TestCircuits = map[string]compute.Circuit{
-	// "identity-1": func(ec compute.EvaluationContext) error {
-	// 	opIn := ec.Input("//node-0/in-0")
+// 	// 	params := ec.Parameters().Parameters
+// 	// 	opOut, err := ec.DEC(opRes, map[string]string{
+// 	// 		"target":   "node-0",
+// 	// 		"lvl":      strconv.Itoa(params.MaxLevel()),
+// 	// 		"smudging": "1.0",
+// 	// 	})
+// 	// 	if err != nil {
+// 	// 		return err
+// 	// 	}
 
-	// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: opIn.Ciphertext}
+// 	// 	ec.Output(opOut, "node-0")
+// 	// 	return nil
+// 	// },
+// 	// "psi-2": func(ec compute.EvaluationContext) error {
+// 	// 	return psiN(2, ec)
+// 	// },
+// 	// "psi-4": func(ec compute.EvaluationContext) error {
+// 	// 	return psiN(4, ec)
+// 	// },
+// 	// "psi-8": func(ec compute.EvaluationContext) error {
+// 	// 	return psiN(8, ec)
+// 	// },
+// 	// "psi-2-PCKS": func(ec compute.EvaluationContext) error {
+// 	// 	opIn1 := ec.Input("//node-0/in-0")
+// 	// 	opIn2 := ec.Input("//node-1/in-0")
 
-	// 	params := ec.Parameters().Parameters
-	// 	opOut, err := ec.DEC(opRes, map[string]string{
-	// 		"target":   "node-0",
-	// 		"lvl":      strconv.Itoa(params.MaxLevel()),
-	// 		"smudging": "1.0",
-	// 	})
-	// 	if err != nil {
-	// 		return err
-	// 	}
+// 	// 	res, _ := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
+// 	// 	ec.Relinearize(res, res)
+// 	// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
 
-	// 	ec.Output(opOut, "node-0")
-	// 	return nil
-	// },
-	// "psi-2": func(ec compute.EvaluationContext) error {
-	// 	return psiN(2, ec)
-	// },
-	// "psi-4": func(ec compute.EvaluationContext) error {
-	// 	return psiN(4, ec)
-	// },
-	// "psi-8": func(ec compute.EvaluationContext) error {
-	// 	return psiN(8, ec)
-	// },
-	// "psi-2-PCKS": func(ec compute.EvaluationContext) error {
-	// 	opIn1 := ec.Input("//node-0/in-0")
-	// 	opIn2 := ec.Input("//node-1/in-0")
+// 	// 	params := ec.Parameters().Parameters
+// 	// 	opOut, err := ec.PCKS(opRes, map[string]string{
+// 	// 		"target":   "node-R",
+// 	// 		"lvl":      strconv.Itoa(params.MaxLevel()),
+// 	// 		"smudging": "1.0",
+// 	// 	})
+// 	// 	if err != nil {
+// 	// 		return err
+// 	// 	}
 
-	// 	res, _ := ec.MulNew(opIn1.Ciphertext, opIn2.Ciphertext)
-	// 	ec.Relinearize(res, res)
-	// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: res}
+// 	// 	ec.Output(opOut, "node-R")
+// 	// 	return nil
+// 	// },
+// 	// "pir-3": func(ec compute.EvaluationContext) error {
+// 	// 	return pirN(3, ec)
+// 	// },
+// 	// "pir-5": func(ec compute.EvaluationContext) error {
+// 	// 	return pirN(5, ec)
+// 	// },
+// 	// "pir-9": func(ec compute.EvaluationContext) error {
+// 	// 	return pirN(9, ec)
+// 	// },
 
-	// 	params := ec.Parameters().Parameters
-	// 	opOut, err := ec.PCKS(opRes, map[string]string{
-	// 		"target":   "node-R",
-	// 		"lvl":      strconv.Itoa(params.MaxLevel()),
-	// 		"smudging": "1.0",
-	// 	})
-	// 	if err != nil {
-	// 		return err
-	// 	}
+// 	"mul4-dec": func(e compute.EvaluationContext) error {
 
-	// 	ec.Output(opOut, "node-R")
-	// 	return nil
-	// },
-	// "pir-3": func(ec compute.EvaluationContext) error {
-	// 	return pirN(3, ec)
-	// },
-	// "pir-5": func(ec compute.EvaluationContext) error {
-	// 	return pirN(5, ec)
-	// },
-	// "pir-9": func(ec compute.EvaluationContext) error {
-	// 	return pirN(9, ec)
-	// },
+// 		inputs := make(chan pkg.Operand, 4)
+// 		inOpls := utils.NewSet([]pkg.OperandLabel{"//light-0/in-0", "//light-1/in-0", "//light-2/in-0", "//light-3/in-0"})
+// 		for inOpl := range inOpls {
+// 			inOpl := inOpl
+// 			go func() {
+// 				inputs <- e.Input(inOpl)
+// 			}()
+// 		}
 
-	"mul4-dec": func(e compute.EvaluationContext) error {
+// 		op0 := <-inputs
+// 		op1 := <-inputs
 
-		inputs := make(chan pkg.Operand, 4)
-		inOpls := utils.NewSet([]pkg.OperandLabel{"//light-0/in-0", "//light-1/in-0", "//light-2/in-0", "//light-3/in-0"})
-		for inOpl := range inOpls {
-			inOpl := inOpl
-			go func() {
-				inputs <- e.Input(inOpl)
-			}()
-		}
+// 		lvl2 := make(chan *rlwe.Ciphertext, 2)
+// 		go func() {
+// 			ev := e.NewEvaluator()
+// 			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
+// 			ev.Relinearize(res, res)
+// 			lvl2 <- res
+// 		}()
 
-		op0 := <-inputs
-		op1 := <-inputs
+// 		op2 := <-inputs
+// 		op3 := <-inputs
 
-		lvl2 := make(chan *rlwe.Ciphertext, 2)
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op0.Ciphertext, op1.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
+// 		go func() {
+// 			ev := e.NewEvaluator()
+// 			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
+// 			ev.Relinearize(res, res)
+// 			lvl2 <- res
+// 		}()
 
-		op2 := <-inputs
-		op3 := <-inputs
+// 		res1, res2 := <-lvl2, <-lvl2
+// 		res, _ := e.MulNew(res1, res2)
+// 		e.Relinearize(res, res)
 
-		go func() {
-			ev := e.NewEvaluator()
-			res, _ := ev.MulNew(op2.Ciphertext, op3.Ciphertext)
-			ev.Relinearize(res, res)
-			lvl2 <- res
-		}()
+// 		params := e.Parameters().Parameters
+// 		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: res}
+// 		opout, err := e.DEC(opres, map[string]string{
+// 			"target":   "helper-0",
+// 			"lvl":      strconv.Itoa(params.MaxLevel()),
+// 			"smudging": "40.0",
+// 		})
+// 		if err != nil {
+// 			return err
+// 		}
 
-		res1, res2 := <-lvl2, <-lvl2
-		res, _ := e.MulNew(res1, res2)
-		e.Relinearize(res, res)
+// 		e.Output(opout, "helper-0")
 
-		params := e.Parameters().Parameters
-		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: res}
-		opout, err := e.DEC(opres, map[string]string{
-			"target":   "helper-0",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": "40.0",
-		})
-		if err != nil {
-			return err
-		}
+// 		return nil
+// 	},
 
-		e.Output(opout, "helper-0")
+// 	"matmul4-dec": func(e compute.EvaluationContext) error {
+// 		params := e.Parameters()
 
-		return nil
-	},
+// 		m := params.PlaintextDimensions().Cols
 
-	"matmul4-dec": func(e compute.EvaluationContext) error {
-		params := e.Parameters()
+// 		vecOp := e.Input(pkg.OperandLabel("//light-0/vec"))
 
-		m := params.PlaintextDimensions().Cols
+// 		matOps := make(map[int]pkg.Operand)
+// 		diagGalEl := make(map[int]uint64)
+// 		for k := 0; k < m; k++ {
+// 			matOps[k] = e.Load(pkg.OperandLabel(fmt.Sprintf("//helper-0/mat-diag-%d", k)))
+// 			diagGalEl[k] = params.GaloisElement(k)
+// 		}
 
-		vecOp := e.Input(pkg.OperandLabel("//light-0/vec"))
+// 		if vecOp.Ciphertext == nil { //TODO: this is only for the circuit parser to pass...
+// 			vecOp.Ciphertext = bgv.NewCiphertext(params, 1, params.MaxLevelQ())
+// 		}
 
-		matOps := make(map[int]pkg.Operand)
-		diagGalEl := make(map[int]uint64)
-		for k := 0; k < m; k++ {
-			matOps[k] = e.Load(pkg.OperandLabel(fmt.Sprintf("//helper-0/mat-diag-%d", k)))
-			diagGalEl[k] = params.GaloisElement(k)
-		}
+// 		vecDecom := e.NewDecompQPBuffer()
+// 		vecRotated := bgv.NewCiphertext(params, 1, params.MaxLevelQ())
+// 		e.DecomposeNTT(params.MaxLevelQ(), params.MaxLevelP(), params.PCount(), vecOp.Value[1], true, vecDecom)
+// 		ctres := rlwe.NewCiphertext(params, 2, params.MaxLevel())
+// 		for di, d := range matOps {
+// 			if err := e.AutomorphismHoisted(vecOp.LevelQ(), vecOp.Ciphertext, vecDecom, diagGalEl[di], vecRotated); err != nil {
+// 				return err
+// 			}
+// 			e.MulThenAdd(vecRotated, d.Ciphertext, ctres)
+// 		}
+// 		if err := e.Relinearize(ctres, ctres); err != nil {
+// 			return err
+// 		}
 
-		if vecOp.Ciphertext == nil { //TODO: this is only for the circuit parser to pass...
-			vecOp.Ciphertext = bgv.NewCiphertext(params, 1, params.MaxLevelQ())
-		}
+// 		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: ctres}
+// 		opout, err := e.DEC(opres, map[string]string{
+// 			"target":   "helper-0",
+// 			"lvl":      strconv.Itoa(params.MaxLevel()),
+// 			"smudging": fmt.Sprintf("%f", float64(1<<40)),
+// 		})
+// 		if err != nil {
+// 			return err
+// 		}
 
-		vecDecom := e.NewDecompQPBuffer()
-		vecRotated := bgv.NewCiphertext(params, 1, params.MaxLevelQ())
-		e.DecomposeNTT(params.MaxLevelQ(), params.MaxLevelP(), params.PCount(), vecOp.Value[1], true, vecDecom)
-		ctres := rlwe.NewCiphertext(params, 2, params.MaxLevel())
-		for di, d := range matOps {
-			if err := e.AutomorphismHoisted(vecOp.LevelQ(), vecOp.Ciphertext, vecDecom, diagGalEl[di], vecRotated); err != nil {
-				return err
-			}
-			e.MulThenAdd(vecRotated, d.Ciphertext, ctres)
-		}
-		if err := e.Relinearize(ctres, ctres); err != nil {
-			return err
-		}
+// 		e.Output(opout, "helper-0")
+// 		return nil
+// 	},
+// }
 
-		opres := pkg.Operand{OperandLabel: "//helper-0/res-0", Ciphertext: ctres}
-		opout, err := e.DEC(opres, map[string]string{
-			"target":   "helper-0",
-			"lvl":      strconv.Itoa(params.MaxLevel()),
-			"smudging": fmt.Sprintf("%f", float64(1<<40)),
-		})
-		if err != nil {
-			return err
-		}
+// var pirN = func(N int, ec compute.EvaluationContext) error {
+// 	params := ec.Parameters()
 
-		e.Output(opout, "helper-0")
-		return nil
-	},
-}
+// 	inops := make(chan struct {
+// 		i    int
+// 		op   pkg.Operand
+// 		mask *rlwe.Plaintext
+// 	}, N)
 
-var pirN = func(N int, ec compute.EvaluationContext) error {
-	params := ec.Parameters()
+// 	reqOpChan := make(chan pkg.Operand, 1)
 
-	inops := make(chan struct {
-		i    int
-		op   pkg.Operand
-		mask *rlwe.Plaintext
-	}, N)
+// 	inWorkers := &sync.WaitGroup{}
+// 	inWorkers.Add(N)
+// 	for i := 0; i < N; i++ {
+// 		// each input is provided by a goroutine
+// 		go func(i int) {
+// 			encoder := bgv.NewEncoder(params)
+// 			maskCoeffs := make([]uint64, params.N())
+// 			maskCoeffs[i] = 1
+// 			mask := bgv.NewPlaintext(params, params.MaxLevelQ())
+// 			encoder.Encode(maskCoeffs, mask)
 
-	reqOpChan := make(chan pkg.Operand, 1)
+// 			opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
 
-	inWorkers := &sync.WaitGroup{}
-	inWorkers.Add(N)
-	for i := 0; i < N; i++ {
-		// each input is provided by a goroutine
-		go func(i int) {
-			encoder := bgv.NewEncoder(params)
-			maskCoeffs := make([]uint64, params.N())
-			maskCoeffs[i] = 1
-			mask := bgv.NewPlaintext(params, params.MaxLevelQ())
-			encoder.Encode(maskCoeffs, mask)
+// 			if i != 0 {
+// 				inops <- struct {
+// 					i    int
+// 					op   pkg.Operand
+// 					mask *rlwe.Plaintext
+// 				}{i, opIn, mask}
+// 			} else {
+// 				reqOpChan <- opIn
+// 			}
+// 			inWorkers.Done()
+// 		}(i)
+// 	}
 
-			opIn := ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
+// 	// close input channel when all input operands have been provided
+// 	go func() {
+// 		inWorkers.Wait()
+// 		close(inops)
+// 	}()
 
-			if i != 0 {
-				inops <- struct {
-					i    int
-					op   pkg.Operand
-					mask *rlwe.Plaintext
-				}{i, opIn, mask}
-			} else {
-				reqOpChan <- opIn
-			}
-			inWorkers.Done()
-		}(i)
-	}
+// 	// wait for the query ciphertext to be generated
+// 	reqOp := <-reqOpChan
 
-	// close input channel when all input operands have been provided
-	go func() {
-		inWorkers.Wait()
-		close(inops)
-	}()
+// 	// each received input operand can be processed by one of the NGoRoutine
+// 	NGoRoutine := 8
+// 	maskedOps := make(chan pkg.Operand, N)
+// 	maskWorkers := &sync.WaitGroup{}
+// 	maskWorkers.Add(NGoRoutine)
+// 	for i := 0; i < NGoRoutine; i++ {
+// 		go func() {
+// 			evaluator := ec.NewEvaluator() // creates a shallow evaluator copy for this goroutine
+// 			tmp := bgv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
+// 			for op := range inops {
+// 				// 1) Multiplication of the query with the plaintext mask
+// 				evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
 
-	// wait for the query ciphertext to be generated
-	reqOp := <-reqOpChan
+// 				// 2) Inner sum (populate all the slots with the sum of all the slots)
+// 				evaluator.InnerSum(tmp, 1, params.PlaintextSlots(), tmp)
 
-	// each received input operand can be processed by one of the NGoRoutine
-	NGoRoutine := 8
-	maskedOps := make(chan pkg.Operand, N)
-	maskWorkers := &sync.WaitGroup{}
-	maskWorkers.Add(NGoRoutine)
-	for i := 0; i < NGoRoutine; i++ {
-		go func() {
-			evaluator := ec.NewEvaluator() // creates a shallow evaluator copy for this goroutine
-			tmp := bgv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
-			for op := range inops {
-				// 1) Multiplication of the query with the plaintext mask
-				evaluator.Mul(reqOp.Ciphertext, op.mask, tmp)
+// 				// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
+// 				maskedCt, _ := evaluator.MulNew(tmp, op.op.Ciphertext)
+// 				maskedOps <- pkg.Operand{Ciphertext: maskedCt}
+// 			}
+// 			maskWorkers.Done()
+// 		}()
+// 	}
 
-				// 2) Inner sum (populate all the slots with the sum of all the slots)
-				evaluator.InnerSum(tmp, 1, params.PlaintextSlots(), tmp)
+// 	// close input processing channel when all input have been processed
+// 	go func() {
+// 		maskWorkers.Wait()
+// 		close(maskedOps)
+// 	}()
 
-				// 3) Multiplication of 2) with the i-th ciphertext stored in the cloud
-				maskedCt, _ := evaluator.MulNew(tmp, op.op.Ciphertext)
-				maskedOps <- pkg.Operand{Ciphertext: maskedCt}
-			}
-			maskWorkers.Done()
-		}()
-	}
+// 	evaluator := ec.NewEvaluator()
+// 	tmpAdd := bgv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
+// 	c := 0
+// 	for maskedOp := range maskedOps {
+// 		evaluator.Add(maskedOp.Ciphertext, tmpAdd, tmpAdd)
+// 		c++
+// 	}
 
-	// close input processing channel when all input have been processed
-	go func() {
-		maskWorkers.Wait()
-		close(maskedOps)
-	}()
+// 	ctRes := bgv.NewCiphertext(params, 1, tmpAdd.Level())
+// 	evaluator.Relinearize(ctRes, tmpAdd)
+// 	// output encrypted under CPK
+// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: ctRes}
 
-	evaluator := ec.NewEvaluator()
-	tmpAdd := bgv.NewCiphertext(ec.Parameters(), 2, ec.Parameters().MaxLevel())
-	c := 0
-	for maskedOp := range maskedOps {
-		evaluator.Add(maskedOp.Ciphertext, tmpAdd, tmpAdd)
-		c++
-	}
+// 	opOut, err := ec.DEC(opRes, map[string]string{
+// 		"target":   "node-0",
+// 		"lvl":      strconv.Itoa(params.MaxLevel()),
+// 		"smudging": "1.0",
+// 	})
+// 	if err != nil {
+// 		return err
+// 	}
 
-	ctRes := bgv.NewCiphertext(params, 1, tmpAdd.Level())
-	evaluator.Relinearize(ctRes, tmpAdd)
-	// output encrypted under CPK
-	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: ctRes}
+// 	// output encrypted under node-a public key
+// 	ec.Output(opOut, "node-0")
+// 	return nil
+// }
 
-	opOut, err := ec.DEC(opRes, map[string]string{
-		"target":   "node-0",
-		"lvl":      strconv.Itoa(params.MaxLevel()),
-		"smudging": "1.0",
-	})
-	if err != nil {
-		return err
-	}
+// // psiN computes the Private Set Intersection among N parties where N is a power of two.
+// var psiN = func(N int, ec compute.EvaluationContext) error {
+// 	log2N := math.Log2(float64(N))
+// 	if log2N != float64(int(log2N)) {
+// 		return fmt.Errorf("psiN only implemented for powers of two, N = %d", N)
+// 	}
 
-	// output encrypted under node-a public key
-	ec.Output(opOut, "node-0")
-	return nil
-}
+// 	inOps := make(chan pkg.Operand, N)
+// 	for i := 0; i < N; i++ {
+// 		i := i
+// 		go func() {
+// 			inOps <- ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
+// 		}()
+// 	}
 
-// psiN computes the Private Set Intersection among N parties where N is a power of two.
-var psiN = func(N int, ec compute.EvaluationContext) error {
-	log2N := math.Log2(float64(N))
-	if log2N != float64(int(log2N)) {
-		return fmt.Errorf("psiN only implemented for powers of two, N = %d", N)
-	}
+// 	// multiplication depth
+// 	numLevels := int(log2N)
 
-	inOps := make(chan pkg.Operand, N)
-	for i := 0; i < N; i++ {
-		i := i
-		go func() {
-			inOps <- ec.Input(pkg.OperandLabel(fmt.Sprintf("//node-%d/in-0", i)))
-		}()
-	}
+// 	chanForLevel := make([]chan pkg.Operand, numLevels+1)
+// 	chanForLevel[0] = inOps
+// 	// previousLevelChan := inOps
 
-	// multiplication depth
-	numLevels := int(log2N)
+// 	for level := 1; level <= numLevels; level++ {
+// 		level := level
+// 		numMulForLevel := int(math.Pow(2, float64((numLevels-1)-(level-1))))
+// 		chanForLevel[level] = make(chan pkg.Operand, numMulForLevel)
+// 		for i := 0; i < numMulForLevel; i++ {
+// 			go func() {
+// 				ev1 := ec.NewEvaluator()
+// 				op1 := <-chanForLevel[level-1]
+// 				op2 := <-chanForLevel[level-1]
+// 				res, _ := ev1.MulNew(op1.Ciphertext, op2.Ciphertext)
+// 				ev1.Relinearize(res, res)
+// 				chanForLevel[level] <- pkg.Operand{Ciphertext: res}
+// 			}()
+// 		}
+// 	}
 
-	chanForLevel := make([]chan pkg.Operand, numLevels+1)
-	chanForLevel[0] = inOps
-	// previousLevelChan := inOps
+// 	resOp := <-chanForLevel[numLevels]
+// 	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: resOp.Ciphertext}
 
-	for level := 1; level <= numLevels; level++ {
-		level := level
-		numMulForLevel := int(math.Pow(2, float64((numLevels-1)-(level-1))))
-		chanForLevel[level] = make(chan pkg.Operand, numMulForLevel)
-		for i := 0; i < numMulForLevel; i++ {
-			go func() {
-				ev1 := ec.NewEvaluator()
-				op1 := <-chanForLevel[level-1]
-				op2 := <-chanForLevel[level-1]
-				res, _ := ev1.MulNew(op1.Ciphertext, op2.Ciphertext)
-				ev1.Relinearize(res, res)
-				chanForLevel[level] <- pkg.Operand{Ciphertext: res}
-			}()
-		}
-	}
+// 	params := ec.Parameters().Parameters
+// 	opOut, err := ec.DEC(opRes, map[string]string{
+// 		"target":   "node-0",
+// 		"lvl":      strconv.Itoa(params.MaxLevel()),
+// 		"smudging": "1.0",
+// 	})
+// 	if err != nil {
+// 		return err
+// 	}
 
-	resOp := <-chanForLevel[numLevels]
-	opRes := pkg.Operand{OperandLabel: "//cloud/out-0", Ciphertext: resOp.Ciphertext}
-
-	params := ec.Parameters().Parameters
-	opOut, err := ec.DEC(opRes, map[string]string{
-		"target":   "node-0",
-		"lvl":      strconv.Itoa(params.MaxLevel()),
-		"smudging": "1.0",
-	})
-	if err != nil {
-		return err
-	}
-
-	ec.Output(opOut, "node-0")
-	return nil
-}
+// 	ec.Output(opOut, "node-0")
+// 	return nil
+// }

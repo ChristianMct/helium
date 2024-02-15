@@ -16,13 +16,11 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
-	"github.com/ldsec/helium/pkg/transport"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 
 	"github.com/ldsec/helium/pkg/pkg"
-	"github.com/ldsec/helium/pkg/transport/grpctrans"
+	"github.com/ldsec/helium/pkg/transport/centralized"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -57,14 +55,14 @@ type LocalTest struct {
 	SkIdeal     *rlwe.SecretKey
 	NodeConfigs []Config
 	pkg.NodesList
-	compute.PublicKeyBackend
+	//compute.PublicKeyBackend
 }
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
 func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 	test = new(LocalTest)
-	memPkBackend := &compute.MemoryKeyBackend{}
-	test.PublicKeyBackend = memPkBackend
+	//memPkBackend := &compute.MemoryKeyBackend{}
+	//test.PublicKeyBackend = memPkBackend
 	test.NodeConfigs, test.NodesList = genNodeConfigs(config)
 	test.Nodes = make([]*Node, config.FullNodes+config.LightNodes+config.HelperNodes+config.ExternalNodes)
 	for i, nc := range test.NodeConfigs {
@@ -100,36 +98,36 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 		}
 
 		// initialise key generation
-		if config.SimSetup != nil {
-			kg := rlwe.NewKeyGenerator(test.Params)
-			sk := test.SkIdeal
-			if config.SimSetup.Cpk != nil {
-				cpk, err := kg.GenPublicKeyNew(sk)
-				if err != nil {
-					panic(err)
-				}
-				memPkBackend.PublicKey = cpk
-			}
-			for _, gkrec := range config.SimSetup.GaloisKeys {
-				gk, err := kg.GenGaloisKeyNew(gkrec.GaloisEl, sk)
-				if err != nil {
-					panic(err)
-				}
-				memPkBackend.GaloisKeys[gk.GaloisElement] = gk
+		// if config.SimSetup != nil {
+		// 	kg := rlwe.NewKeyGenerator(test.Params)
+		// 	sk := test.SkIdeal
+		// 	if config.SimSetup.Cpk != nil {
+		// 		cpk, err := kg.GenPublicKeyNew(sk)
+		// 		if err != nil {
+		// 			panic(err)
+		// 		}
+		// 		memPkBackend.PublicKey = cpk
+		// 	}
+		// 	for _, gkrec := range config.SimSetup.GaloisKeys {
+		// 		gk, err := kg.GenGaloisKeyNew(gkrec.GaloisEl, sk)
+		// 		if err != nil {
+		// 			panic(err)
+		// 		}
+		// 		memPkBackend.GaloisKeys[gk.GaloisElement] = gk
 
-			}
-			if config.SimSetup.Rlk != nil {
-				rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
-				if err != nil {
-					panic(err)
-				}
-				memPkBackend.RelinearizationKey = rlk
-			}
+		// 	}
+		// 	if config.SimSetup.Rlk != nil {
+		// 		rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
+		// 		if err != nil {
+		// 			panic(err)
+		// 		}
+		// 		memPkBackend.RelinearizationKey = rlk
+		// 	}
 
-			for _, node := range test.Nodes {
-				node.GetComputeService().SetPublicKeyBackend(memPkBackend)
-			}
-		}
+		// 	for _, node := range test.Nodes {
+		// 		node.GetComputeService().SetPublicKeyBackend(memPkBackend)
+		// 	}
+		// }
 
 		// if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {
 		// 	shares := make(map[pkg.NodeID]map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
@@ -191,7 +189,8 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	for i := 0; i < config.LightNodes; i++ {
 		nodeID := pkg.NodeID("light-" + strconv.Itoa(i))
 		nc := Config{
-			ID: nodeID,
+			ID:       nodeID,
+			HelperID: "helper-0",
 		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
@@ -208,8 +207,9 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	for i := 0; i < config.HelperNodes; i++ {
 		nodeID := pkg.NodeID("helper-" + strconv.Itoa(i))
 		nc := Config{
-			ID:      nodeID,
-			Address: pkg.NodeAddress("local"),
+			ID:       nodeID,
+			Address:  pkg.NodeAddress("local"),
+			HelperID: "helper-0",
 		}
 		ncs = append(ncs, nc)
 		nl = append(nl, struct {
@@ -272,13 +272,13 @@ type nodeCrypto struct {
 	cert   x509.Certificate
 }
 
-func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[pkg.NodeID]grpctrans.TLSConfig, error) {
+func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[pkg.NodeID]centralized.TLSConfig, error) {
 
-	tlsConfigs := make(map[pkg.NodeID]grpctrans.TLSConfig, len(nodeList))
+	tlsConfigs := make(map[pkg.NodeID]centralized.TLSConfig, len(nodeList))
 
 	if testConfig.InsecureChannels {
 		for _, n := range nodeList {
-			tlsConfigs[n.NodeID] = grpctrans.TLSConfig{InsecureChannels: true}
+			tlsConfigs[n.NodeID] = centralized.TLSConfig{InsecureChannels: true}
 		}
 		return tlsConfigs, nil
 	}
@@ -398,7 +398,7 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList pkg.NodesList) (map[p
 			peerCerts[otherNodeID] = string(peerCertPem)
 		}
 
-		tlsConfigs[nodeID] = grpctrans.TLSConfig{
+		tlsConfigs[nodeID] = centralized.TLSConfig{
 			OwnSk:     string(skPem),
 			OwnPk:     string(pkPem),
 			OwnCert:   string(certPem),
@@ -415,23 +415,16 @@ const buffConBufferSize = 65 * 1024 * 1024
 // Start creates some in-memory connections between the nodes and returns
 // when all nodes are connected.
 func (lc LocalTest) Start() {
-	ls := make(map[pkg.NodeID]net.Listener)
-	ds := make(map[pkg.NodeID]transport.Dialer)
-	for _, node := range lc.NodesList {
-		if node.NodeAddress != "" {
-			lis := bufconn.Listen(buffConBufferSize)
-			ls[node.NodeID] = lis
-			ds[node.NodeID] = func(context.Context, string) (net.Conn, error) { return lis.Dial() }
-		}
-	}
+	lis := bufconn.Listen(buffConBufferSize)
+
+	go lc.HelperNodes[0].srv.Server.Serve(lis)
 
 	var wg sync.WaitGroup
-	for _, node := range lc.Nodes {
-		lis := ls[node.id]
+	for _, node := range lc.SessionNodes() {
 		node := node
 		wg.Add(1)
 		go func() {
-			err := node.GetTransport().(*grpctrans.Transport).ConnectWithDialers(lis, ds)
+			err := node.cli.ConnectWithDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() })
 			if err != nil {
 				log.Printf("node %s failed to connect: %v", node.ID(), err)
 				return

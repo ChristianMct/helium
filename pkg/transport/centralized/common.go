@@ -46,8 +46,8 @@ func getEventFromAPI(apiEvent *api.Event) coordinator.Event {
 		}
 	}
 	if apiEvent.ProtocolEvent != nil {
-		event.ProtocolEvent = &coordinator.ProtocolEvent{
-			EventType:  coordinator.EventType(apiEvent.ProtocolEvent.Type),
+		event.ProtocolEvent = &protocols.Event{
+			EventType:  protocols.EventType(apiEvent.ProtocolEvent.Type),
 			Descriptor: *getProtocolDescFromAPI(apiEvent.ProtocolEvent.Descriptor_),
 		}
 	}
@@ -93,23 +93,18 @@ func getAPIShare(s *protocols.Share) (*api.Share, error) {
 	apiShare := &api.Share{
 		Desc: &api.ShareDescriptor{
 			ProtocolID:   &api.ProtocolID{ProtocolID: string(s.ProtocolID)},
-			ProtocolType: api.ProtocolType(s.Type),
-			Round:        &s.Round,
-			Sender:       &api.NodeID{NodeId: string(s.From)},
-			Receivers:    make([]*api.NodeID, 0, len(s.To)),
-			AggregateFor: make([]*api.NodeID, 0, len(s.AggregateFor)),
+			ProtocolType: api.ProtocolType(s.ShareDescriptor.Type),
+			AggregateFor: make([]*api.NodeID, 0, len(s.From)),
 		},
 		Share: outShareBytes,
 	}
-	for _, nID := range s.To {
-		apiShare.Desc.Receivers = append(apiShare.Desc.Receivers, &api.NodeID{NodeId: string(nID)})
-	}
-	for nID := range s.AggregateFor {
+	for nID := range s.From {
 		apiShare.Desc.AggregateFor = append(apiShare.Desc.AggregateFor, &api.NodeID{NodeId: string(nID)})
 	}
 	return apiShare, nil
 }
 
+// TODO: revamp proto type
 func getShareFromAPI(s *api.Share) (protocols.Share, error) {
 	desc := s.GetDesc()
 	pID := pkg.ProtocolID(desc.GetProtocolID().GetProtocolID())
@@ -120,20 +115,14 @@ func getShareFromAPI(s *api.Share) (protocols.Share, error) {
 	}
 	ps := protocols.Share{
 		ShareDescriptor: protocols.ShareDescriptor{
-			ProtocolID:   pID,
-			Type:         pType,
-			Round:        desc.GetRound(),
-			From:         pkg.NodeID(desc.GetSender().GetNodeId()),
-			To:           make([]pkg.NodeID, 0, len(desc.GetReceivers())),
-			AggregateFor: make(utils.Set[pkg.NodeID]),
+			ProtocolID: pID,
+			Type:       pType,
+			From:       make(utils.Set[pkg.NodeID]),
 		},
 		MHEShare: share,
 	}
-	for _, nid := range desc.GetReceivers() {
-		ps.To = append(ps.To, pkg.NodeID(nid.NodeId))
-	}
 	for _, nid := range desc.AggregateFor {
-		ps.AggregateFor.Add(pkg.NodeID(nid.NodeId))
+		ps.From.Add(pkg.NodeID(nid.NodeId))
 	}
 
 	err := ps.MHEShare.UnmarshalBinary(s.GetShare())

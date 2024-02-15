@@ -32,54 +32,58 @@ type Service struct {
 type Transport interface {
 	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
 	// aggregated share of the designated protocol.
-	GetAggregation(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
+	GetAggregationOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
-func NewSetupService(ownId pkg.NodeID, executor *protocols.Executor, trans Transport, coordinator protocols.Coordinator, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownId pkg.NodeID, executor *protocols.Executor, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownId
 	s.Executor = executor
 	s.transport = trans
-	s.coordinator = coordinator
 	s.ResultBackend = newObjStoreResultBackend(backend)
 	s.completed = make(map[string]protocols.Descriptor)
 
 	return s, nil
 }
 
-func (s *Service) RunService(ctx context.Context) {
+func (s *Service) RunService(ctx context.Context, coord protocols.Coordinator) {
+
+	s.coordinator = coord
 
 	// processes incoming events from the coordinator
-	go func() {
-		for ev := range s.coordinator.Incoming() {
-			s.Logf("new coordination event: %s", ev)
-			switch ev.EventType {
-			case protocols.Started:
-				var input protocols.Input
-				if ev.Descriptor.Signature.Type == protocols.RKG {
-					r1Desc := ev.Descriptor
-					r1Desc.Signature.Type = protocols.RKG_1
-					aggR1, err := s.transport.GetAggregation(ctx, r1Desc)
-					if err != nil {
-						panic(err)
+	if s.coordinator.Incoming() != nil { // TODO need a better way
+		go func() {
+			for ev := range s.coordinator.Incoming() {
+				s.Logf("new coordination event: %s", ev)
+				switch ev.EventType {
+				case protocols.Started:
+					var input protocols.Input
+					if ev.Descriptor.Signature.Type == protocols.RKG {
+						r1Desc := ev.Descriptor
+						r1Desc.Signature.Type = protocols.RKG_1
+						aggR1, err := s.transport.GetAggregationOutput(ctx, r1Desc)
+						if err != nil {
+							panic(err)
+						}
+						if aggR1.Error != nil {
+							panic(err)
+						}
+						input = aggR1.Share
 					}
-					if aggR1.Error != nil {
-						panic(err)
-					}
-					input = aggR1.Share
+					s.Executor.RunProtocol(ctx, ev.Descriptor, input)
+				case protocols.Completed:
+					s.l.Lock()
+					s.completed[ev.Signature.String()] = ev.Descriptor
+					s.l.Unlock()
+				case protocols.Failed:
+				default:
+					panic("unkown event type")
 				}
-				s.Executor.RunProtocol(ctx, ev.Descriptor, input)
-			case protocols.Completed:
-				s.l.Lock()
-				s.completed[ev.Signature.String()] = ev.Descriptor
-				s.l.Unlock()
-			case protocols.Failed:
-			default:
-				panic("unkown event type")
 			}
-		}
-	}()
+		}()
+	}
+
 }
 
 // As helper
@@ -100,10 +104,12 @@ func (s *Service) RunProtocol(ctx context.Context, pd protocols.Descriptor) erro
 			if a.Error != nil {
 				return a.Error
 			}
+
 			aggR1 = &a
 			if err := s.ResultBackend.Put(pdR1, a.Share); err != nil {
 				return err
 			}
+			s.coordinator.Outgoing() <- protocols.Event{EventType: protocols.Completed, Descriptor: pdR1}
 		}
 		input = aggR1.Share
 	}
@@ -112,6 +118,7 @@ func (s *Service) RunProtocol(ctx context.Context, pd protocols.Descriptor) erro
 	if err != nil {
 		return err
 	}
+
 	s.coordinator.Outgoing() <- protocols.Event{EventType: protocols.Started, Descriptor: pd}
 	aggOut := <-aggOutChan
 	if aggOut.Error != nil {
@@ -133,6 +140,8 @@ func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor
 	lattigoShare := pd.Signature.Type.Share()
 	err = s.ResultBackend.GetShare(pd.Signature, lattigoShare)
 	share.MHEShare = lattigoShare
+	share.Type = pd.Signature.Type
+	share.ProtocolID = pd.ID()
 
 	// otherwise, query the aggregator
 	if err != nil {
@@ -140,7 +149,7 @@ func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor
 			return nil, fmt.Errorf("node is aggregator but has error on backend: %s", err)
 		}
 
-		if out, err = s.transport.GetAggregation(ctx, pd); err != nil {
+		if out, err = s.transport.GetAggregationOutput(ctx, pd); err != nil {
 			return nil, err
 		}
 		s.Logf("queried aggregation for %s", pd.HID())

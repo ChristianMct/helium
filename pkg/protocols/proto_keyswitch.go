@@ -94,6 +94,7 @@ func (p *keySwitchProtocol) GenShare(share *Share) error {
 
 	share.ProtocolID = p.ProtocolID
 	share.From = utils.NewSingletonSet(p.self)
+	share.Type = p.Signature.Type
 	return p.proto.GenShare(p.sk, p.outputKey, p.input, *share)
 }
 

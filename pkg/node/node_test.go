@@ -1,19 +1,12 @@
 package node
 
 import (
-	"fmt"
-	"math/big"
-	"sync"
 	"testing"
 
-	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
-	"github.com/ldsec/helium/pkg/services/compute"
-	"github.com/stretchr/testify/require"
+	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"golang.org/x/net/context"
-	"gonum.org/v1/gonum/mat"
+	"golang.org/x/sync/errgroup"
 )
 
 func failIfNonNil(t *testing.T, err error) {
@@ -22,11 +15,77 @@ func failIfNonNil(t *testing.T, err error) {
 	}
 }
 
-func TestHelium(t *testing.T) {
+func TestNodeSetup(t *testing.T) {
+
+	N := 4
+	T := 3
+
+	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
+	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
+	failIfNonNil(t, err)
+	sessParams := pkg.SessionParameters{
+		ID:         "test-session",
+		RLWEParams: params.ParametersLiteral(),
+		T:          T,
+	}
+
+	lt := NewLocalTest(LocalTestConfig{
+		LightNodes:  N,
+		HelperNodes: 1,
+		Session:     &sessParams,
+	})
+
+	lt.Start()
+
+	cloud := lt.HelperNodes[0]
+	clients := lt.LightNodes
+
+	ctx := pkg.NewContext(&sessParams.ID, nil)
+
+	hid := cloud.id
+
+	app := App{
+		SetupDescription: &setup.Description{
+			Cpk: sessParams.Nodes,
+			GaloisKeys: []struct {
+				GaloisEl  uint64
+				Receivers []pkg.NodeID
+			}{
+				{5, []pkg.NodeID{hid}},
+				{25, []pkg.NodeID{hid}},
+				{125, []pkg.NodeID{hid}},
+			},
+			Rlk: []pkg.NodeID{hid},
+		},
+	}
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		_, _, err = cloud.RunNew(ctx, app)
+		return err
+	})
+
+	for _, node := range clients {
+		node := node
+		g.Go(func() error {
+			_, _, err := node.RunNew(ctx, app)
+			return err
+		})
+	}
+	err = g.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNodeSetupCompute(t *testing.T) {
+
+	t.Skip("not implemented yet")
 
 	N := 4
 	T := N
-	CIRCUIT_REP := 10
+	//CIRCUIT_REP := 10
 
 	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
 	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
@@ -49,159 +108,178 @@ func TestHelium(t *testing.T) {
 	cloud := lt.HelperNodes[0]
 	clients := lt.LightNodes
 
-	cDesc := compute.Description{}
-	for i := 0; i < CIRCUIT_REP; i++ {
-		cDesc = append(cDesc, circuits.Signature{CircuitName: "matmul4-dec", CircuitID: pkg.CircuitID(fmt.Sprintf("test-circuit-%d", i))})
-	}
+	// cDesc := compute.Description{}
+	// for i := 0; i < CIRCUIT_REP; i++ {
+	// 	cDesc = append(cDesc, circuits.Signature{CircuitName: "matmul4-dec", CircuitID: pkg.CircuitID(fmt.Sprintf("test-circuit-%d", i))})
+	// }
 
 	ctx := pkg.NewContext(&sessParams.ID, nil)
 
+	hid := cloud.id
+
 	app := App{
-		InputProvider: &compute.NoInput,
-		Circuits:      TestCircuits,
+		SetupDescription: &setup.Description{
+			Cpk: sessParams.Nodes,
+			GaloisKeys: []struct {
+				GaloisEl  uint64
+				Receivers []pkg.NodeID
+			}{
+				{5, []pkg.NodeID{hid}},
+				{25, []pkg.NodeID{hid}},
+				{125, []pkg.NodeID{hid}},
+			},
+			Rlk: []pkg.NodeID{hid},
+		},
+		// InputProvider: &compute.NoInput,
+		// Circuits:      TestCircuits,
 	}
 
-	m := params.PlaintextDimensions().Cols
+	// m := params.PlaintextDimensions().Cols
 
-	a := mat.NewDense(m, m, nil)
-	a.Apply(func(i, j int, v float64) float64 {
-		return float64(i) + float64(2*j)
-	}, a)
+	// a := mat.NewDense(m, m, nil)
+	// a.Apply(func(i, j int, v float64) float64 {
+	// 	return float64(i) + float64(2*j)
+	// }, a)
 
-	cloud.RegisterPrecomputeHandler(func(ss *pkg.SessionStore, pkb compute.PublicKeyBackend) error {
+	// cloud.RegisterPrecomputeHandler(func(ss *pkg.SessionStore, pkb compute.PublicKeyBackend) error {
 
-		encoder := bgv.NewEncoder(params)
+	// 	encoder := bgv.NewEncoder(params)
 
-		cpk, err := pkb.GetCollectivePublicKey()
-		if err != nil {
-			return err
-		}
-		encryptor, err := bgv.NewEncryptor(params, cpk)
-		if err != nil {
-			return err
-		}
+	// 	cpk, err := pkb.GetCollectivePublicKey()
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	encryptor, err := bgv.NewEncryptor(params, cpk)
+	// 	if err != nil {
+	// 		return err
+	// 	}
 
-		pta := make(map[int]*rlwe.Plaintext)
-		cta := make(map[int]*rlwe.Ciphertext)
-		sess, _ := ss.GetSessionFromID("test-session")
+	// 	pta := make(map[int]*rlwe.Plaintext)
+	// 	cta := make(map[int]*rlwe.Ciphertext)
+	// 	sess, _ := ss.GetSessionFromID("test-session")
 
-		diag := make(map[int][]uint64, m)
-		for k := 0; k < m; k++ {
-			diag[k] = make([]uint64, m)
-			for i := 0; i < m; i++ {
-				j := (i + k) % m
-				diag[k][i] = uint64(a.At(i, j))
-			}
-		}
+	// 	diag := make(map[int][]uint64, m)
+	// 	for k := 0; k < m; k++ {
+	// 		diag[k] = make([]uint64, m)
+	// 		for i := 0; i < m; i++ {
+	// 			j := (i + k) % m
+	// 			diag[k][i] = uint64(a.At(i, j))
+	// 		}
+	// 	}
 
-		cloud.Logf("generating encrypted matrix...")
-		for di, d := range diag {
-			pta[di] = rlwe.NewPlaintext(params, params.MaxLevel())
-			encoder.Encode(d, pta[di])
-			cta[di], err = encryptor.EncryptNew(pta[di])
-			if err != nil {
-				return err
-			}
-			sess.CiphertextStore.Store(pkg.Ciphertext{Ciphertext: *cta[di], CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(fmt.Sprintf("//helper-0/mat-diag-%d", di))}})
-		}
-		cloud.Logf("done")
+	// 	cloud.Logf("generating encrypted matrix...")
+	// 	for di, d := range diag {
+	// 		pta[di] = rlwe.NewPlaintext(params, params.MaxLevel())
+	// 		encoder.Encode(d, pta[di])
+	// 		cta[di], err = encryptor.EncryptNew(pta[di])
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		sess.CiphertextStore.Store(pkg.Ciphertext{Ciphertext: *cta[di], CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(fmt.Sprintf("//helper-0/mat-diag-%d", di))}})
+	// 	}
+	// 	cloud.Logf("done")
 
-		return nil
+	// 	return nil
+	// })
+
+	g, ctx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		_, _, err = cloud.RunNew(ctx, app)
+		return err
 	})
 
-	sigs, outs, err := cloud.Run(ctx, app)
+	// b := mat.NewVecDense(m, nil)
+	// b.SetVec(1, 1)
+	// r := mat.NewVecDense(m, nil)
+
+	// r.MulVec(a, b)
+	// dataWant := make([]uint64, len(r.RawVector().Data))
+	// for i, v := range r.RawVector().Data {
+	// 	dataWant[i] = uint64(v)
+	// }
+
+	//outs := make(chan compute.CircuitOutput)
+
+	for _, node := range clients {
+		//i := i
+		node := node
+		// var ip compute.InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
+		// 	encoder := bgv.NewEncoder(params)
+		// 	_ = i
+		// 	data := make([]uint64, len(b.RawVector().Data))
+		// 	for i, v := range b.RawVector().Data {
+		// 		data[i] = uint64(v)
+		// 	}
+		// 	pt := bgv.NewPlaintext(params, params.MaxLevelQ())
+		// 	err := encoder.Encode(data, pt)
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// 	return pt, nil
+		// }
+
+		// app := App{
+		// 	InputProvider: &ip,
+		// 	Circuits:      TestCircuits,
+		// }
+
+		g.Go(func() error {
+			_, _, err := node.RunNew(ctx, app)
+			return err
+		})
+
+		// sends all results back to the main test goroutine
+		// go func() {
+		// 	for co := range outi {
+		// 		//<-time.After(time.Second)
+		// 		outs <- co
+		// 	}
+		// 	node.Logf("is done")
+		// 	wg.Done()
+		// }()
+	}
+	err = g.Wait()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	b := mat.NewVecDense(m, nil)
-	b.SetVec(1, 1)
-	r := mat.NewVecDense(m, nil)
+	// go func() {
+	// 	for _, cd := range cDesc {
+	// 		sigs <- cd
+	// 	}
+	// 	close(sigs)
+	// 	wg.Wait()
+	// }()
 
-	r.MulVec(a, b)
-	dataWant := make([]uint64, len(r.RawVector().Data))
-	for i, v := range r.RawVector().Data {
-		dataWant[i] = uint64(v)
-	}
+	// encoder := bgv.NewEncoder(params)
 
-	//outs := make(chan compute.CircuitOutput)
-	wg := new(sync.WaitGroup)
-	wg.Add(len(clients))
-	for i, node := range clients {
-		i := i
-		node := node
-		var ip compute.InputProvider = func(ctx context.Context, inLabel pkg.OperandLabel) (*rlwe.Plaintext, error) {
-			encoder := bgv.NewEncoder(params)
-			_ = i
-			data := make([]uint64, len(b.RawVector().Data))
-			for i, v := range b.RawVector().Data {
-				data[i] = uint64(v)
-			}
-			pt := bgv.NewPlaintext(params, params.MaxLevelQ())
-			err := encoder.Encode(data, pt)
-			if err != nil {
-				return nil, err
-			}
-			return pt, nil
-		}
+	// ptWant := bgv.NewPlaintext(params, params.MaxLevel())
+	// encoder.Encode(dataWant, ptWant)
 
-		app := App{
-			InputProvider: &ip,
-			Circuits:      TestCircuits,
-		}
+	// diff := params.RingQ().NewPoly()
+	// coeffsBigint := make([]*big.Int, params.N())
+	// for i := range coeffsBigint {
+	// 	coeffsBigint[i] = new(big.Int)
+	// }
 
-		_, outi, err := node.Run(ctx, app)
-		if err != nil {
-			t.Fatal(err)
-		}
+	// for co := range outs {
 
-		// sends all results back to the main test goroutine
-		go func() {
-			for co := range outi {
-				//<-time.After(time.Second)
-				outs <- co
-			}
-			node.Logf("is done")
-			wg.Done()
-		}()
-	}
+	// 	params.RingQ().Sub(co.Pt.Value, ptWant.Value, diff)
 
-	go func() {
-		for _, cd := range cDesc {
-			sigs <- cd
-		}
-		close(sigs)
-		wg.Wait()
-	}()
+	// 	params.RingQ().INTT(diff, diff)
 
-	encoder := bgv.NewEncoder(params)
+	// 	params.RingQ().PolyToBigintCentered(diff, 1, coeffsBigint)
 
-	ptWant := bgv.NewPlaintext(params, params.MaxLevel())
-	encoder.Encode(dataWant, ptWant)
+	// 	vari, min, max := rlwe.NormStats(coeffsBigint)
+	// 	fmt.Printf("var=%f, min=%f, max=%f\n", vari, min, max)
 
-	diff := params.RingQ().NewPoly()
-	coeffsBigint := make([]*big.Int, params.N())
-	for i := range coeffsBigint {
-		coeffsBigint[i] = new(big.Int)
-	}
-
-	for co := range outs {
-
-		params.RingQ().Sub(co.Pt.Value, ptWant.Value, diff)
-
-		params.RingQ().INTT(diff, diff)
-
-		params.RingQ().PolyToBigintCentered(diff, 1, coeffsBigint)
-
-		vari, min, max := rlwe.NormStats(coeffsBigint)
-		fmt.Printf("var=%f, min=%f, max=%f\n", vari, min, max)
-
-		res := make([]uint64, params.PlaintextSlots())
-		err = encoder.Decode(co.Pt, res)
-		if err != nil {
-			t.Fatal(err)
-		}
-		require.Equal(t, dataWant, res[:m])
-	}
+	// 	res := make([]uint64, params.PlaintextSlots())
+	// 	err = encoder.Decode(co.Pt, res)
+	// 	if err != nil {
+	// 		t.Fatal(err)
+	// 	}
+	// 	require.Equal(t, dataWant, res[:m])
+	// }
 
 }

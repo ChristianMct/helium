@@ -71,7 +71,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer transport.Dialer) error {
 }
 
 func (hc *HeliumClient) Register(ctx context.Context) (events <-chan coordinator.Event, present int, err error) {
-	stream, err := hc.HeliumHelperClient.Register(ctx, &api.Void{})
+	stream, err := hc.HeliumHelperClient.Register(hc.outgoingContext(ctx), &api.Void{})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -104,12 +104,12 @@ func (hc *HeliumClient) PutShare(ctx context.Context, share protocols.Share) err
 	if err != nil {
 		return err
 	}
-	_, err = hc.HeliumHelperClient.PutShare(ctx, apiShare)
+	_, err = hc.HeliumHelperClient.PutShare(hc.outgoingContext(ctx), apiShare)
 	return err
 }
 
 func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-	apiOut, err := hc.HeliumHelperClient.GetAggregationOutput(ctx, getAPIProtocolDesc(&pd))
+	apiOut, err := hc.HeliumHelperClient.GetAggregationOutput(hc.outgoingContext(ctx), getAPIProtocolDesc(&pd))
 	if err != nil {
 		return nil, err
 	}
@@ -122,18 +122,20 @@ func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.D
 }
 
 func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
-	outCtx := pkg.GetOutgoingContext(ctx, hc.ownId)
-	apiCt, err := hc.HeliumHelperClient.GetCiphertext(outCtx, &api.CiphertextRequest{Id: ctID.ToGRPC()})
+	apiCt, err := hc.HeliumHelperClient.GetCiphertext(hc.outgoingContext(ctx), &api.CiphertextRequest{Id: ctID.ToGRPC()})
 	if err != nil {
 		return nil, err
 	}
 	return pkg.NewCiphertextFromGRPC(apiCt)
 }
 
-func (env *HeliumClient) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
-	ctx = pkg.GetOutgoingContext(ctx, env.ownId)
-	_, err := env.HeliumHelperClient.PutCiphertext(ctx, ct.ToGRPC())
+func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
+	_, err := hc.HeliumHelperClient.PutCiphertext(hc.outgoingContext(ctx), ct.ToGRPC())
 	return err
+}
+
+func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
+	return pkg.GetOutgoingContext(ctx, hc.ownId)
 }
 
 func readPresentFromStream(stream grpc.ClientStream) (int, error) {
@@ -143,7 +145,7 @@ func readPresentFromStream(stream grpc.ClientStream) (int, error) {
 	}
 	vals := md.Get("present")
 	if len(vals) != 1 {
-		return 0, fmt.Errorf("invalid stream header: present field not found")
+		return 0, nil
 	}
 
 	present, err := strconv.Atoi(vals[0])

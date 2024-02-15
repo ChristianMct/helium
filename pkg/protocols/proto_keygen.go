@@ -17,6 +17,7 @@ import (
 
 type ShareDescriptor struct {
 	pkg.ProtocolID
+	Type
 	From utils.Set[pkg.NodeID]
 }
 
@@ -281,6 +282,7 @@ func (p *cpkProtocol) GenShare(share *Share) error {
 	p.Logf("[%s] generating share", p.HID())
 	share.ProtocolID = p.ProtocolID
 	share.From = utils.NewSingletonSet(p.self)
+	share.Type = p.Signature.Type
 	return p.proto.GenShare(p.sk, p.crp, *share)
 }
 
@@ -313,6 +315,7 @@ func (p *protocol) Aggregate(ctx context.Context, incoming <-chan Share) (chan A
 		if err == nil {
 			aggOut.Share = p.agg.share
 			aggOut.Share.ProtocolID = p.ProtocolID
+			aggOut.Share.Type = p.Signature.Type
 			p.Logf("[%s] aggregation done", p.HID())
 		} else {
 			aggOut.Error = err
