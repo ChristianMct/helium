@@ -73,9 +73,9 @@ func (u *URL) NodeID() NodeID {
 	return NodeID(u.Host)
 }
 
-func (u *URL) CircuitID() CircuitID {
+func (u *URL) CircuitID() string {
 	if dir, _ := path.Split(u.Path); len(dir) > 0 { // ctid belongs to a circuit
-		return CircuitID(strings.SplitN(strings.Trim(dir, "/"), "/", 2)[0])
+		return strings.SplitN(strings.Trim(dir, "/"), "/", 2)[0]
 	}
 	return ""
 }

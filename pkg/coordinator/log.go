@@ -26,15 +26,10 @@ type ProtocolEvent struct {
 	protocols.Descriptor
 }
 
-type CircuitEvent struct {
-	EventType
-	circuits.Signature
-}
-
 type Event struct {
 	time.Time
 	ProtocolEvent *protocols.Event
-	*CircuitEvent
+	CircuitEvent  *circuits.Event
 }
 
 func (ev Event) IsProtocolEvent() bool {

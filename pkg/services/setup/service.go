@@ -8,13 +8,8 @@ import (
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
-
-const parallelAggregation int = 10
-const parallelParticipation int = 10
-const numProtoPerNode int = 3
 
 type Service struct {
 	self pkg.NodeID
@@ -233,35 +228,35 @@ func (s *Service) filterSignatureList(sl SignatureList) (noResult, hasResult Sig
 	return
 }
 
-// storeProtocolOutput stores the protocol's output in the ObjectStore of the node.
-func (s *Service) storeProtocolOutput(outputs chan struct {
-	protocols.Descriptor
-	protocols.Output
-}, sess *pkg.Session) {
-	for output := range outputs {
-		// s.Logf("[Store] Storing output for protocol %s under %s", output.Descriptor.ID, output.Signature.String())
+// // storeProtocolOutput stores the protocol's output in the ObjectStore of the node.
+// func (s *Service) storeProtocolOutput(outputs chan struct {
+// 	protocols.Descriptor
+// 	protocols.Output
+// }, sess *pkg.Session) {
+// 	for output := range outputs {
+// 		// s.Logf("[Store] Storing output for protocol %s under %s", output.Descriptor.ID, output.Signature.String())
 
-		if output.Result != nil {
-			switch res := output.Result.(type) {
-			case *rlwe.PublicKey:
-				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-					s.Logf("error on Public Key store: %s", err)
-				}
-			case *rlwe.RelinearizationKey:
-				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-					s.Logf("error on Relinearization Key store: %s", err)
-				}
-			case *rlwe.GaloisKey:
-				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-					s.Logf("error on Rotation Key Store: %s", err)
-				}
-			case *drlwe.RelinearizationKeyGenShare:
-				if err := sess.ObjectStore.Store(output.Signature.Type.String(), res); err != nil {
-					s.Logf("error on Relinearization Key Share store: %s", err)
-				}
-			default:
-				s.Logf("got output for protocol %s: %v", output.ID(), output)
-			}
-		}
-	}
-}
+// 		if output.Result != nil {
+// 			switch res := output.Result.(type) {
+// 			case *rlwe.PublicKey:
+// 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+// 					s.Logf("error on Public Key store: %s", err)
+// 				}
+// 			case *rlwe.RelinearizationKey:
+// 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+// 					s.Logf("error on Relinearization Key store: %s", err)
+// 				}
+// 			case *rlwe.GaloisKey:
+// 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
+// 					s.Logf("error on Rotation Key Store: %s", err)
+// 				}
+// 			case *drlwe.RelinearizationKeyGenShare:
+// 				if err := sess.ObjectStore.Store(output.Signature.Type.String(), res); err != nil {
+// 					s.Logf("error on Relinearization Key Share store: %s", err)
+// 				}
+// 			default:
+// 				s.Logf("got output for protocol %s: %v", output.ID(), output)
+// 			}
+// 		}
+// 	}
+// }
