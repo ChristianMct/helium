@@ -15,8 +15,10 @@ type Service struct {
 	self pkg.NodeID
 
 	*protocols.Executor
-	transport   Transport
-	coordinator protocols.Coordinator
+	transport Transport
+
+	// protocols.Coordinator
+	incoming, outgoing chan protocols.Event
 
 	ResultBackend
 
@@ -25,48 +27,38 @@ type Service struct {
 }
 
 type Transport interface {
+	protocols.Transport
 	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
 	// aggregated share of the designated protocol.
 	GetAggregationOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
-func NewSetupService(ownId pkg.NodeID, executor *protocols.Executor, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownId
-	s.Executor = executor
+	s.Executor, err = protocols.NewExectutor(s.self, sessions, s, s.GetInputs, s, trans)
 	s.transport = trans
 	s.ResultBackend = newObjStoreResultBackend(backend)
 	s.completed = make(map[string]protocols.Descriptor)
+
+	s.incoming = make(chan protocols.Event)
+	s.outgoing = make(chan protocols.Event)
 
 	return s, nil
 }
 
 func (s *Service) RunService(ctx context.Context, coord protocols.Coordinator) {
 
-	s.coordinator = coord
+	s.Executor.RunService(ctx)
 
 	// processes incoming events from the coordinator
-	if s.coordinator.Incoming() != nil { // TODO need a better way
+	if coord.Incoming() != nil { // TODO need a better way
 		go func() {
-			for ev := range s.coordinator.Incoming() {
+			for ev := range coord.Incoming() {
 				s.Logf("new coordination event: %s", ev)
 				switch ev.EventType {
 				case protocols.Started:
-					var input protocols.Input
-					if ev.Descriptor.Signature.Type == protocols.RKG {
-						r1Desc := ev.Descriptor
-						r1Desc.Signature.Type = protocols.RKG_1
-						aggR1, err := s.transport.GetAggregationOutput(ctx, r1Desc)
-						if err != nil {
-							panic(err)
-						}
-						if aggR1.Error != nil {
-							panic(err)
-						}
-						input = aggR1.Share
-					}
-					s.Executor.RunProtocol(ctx, ev.Descriptor, input)
 				case protocols.Completed:
 					s.l.Lock()
 					s.completed[ev.Signature.String()] = ev.Descriptor
@@ -75,58 +67,76 @@ func (s *Service) RunService(ctx context.Context, coord protocols.Coordinator) {
 				default:
 					panic("unkown event type")
 				}
+				s.incoming <- ev
 			}
 		}()
 	}
 
+	// process outgoing events
+
+	go func() {
+		for ev := range s.outgoing {
+			coord.Outgoing() <- ev
+		}
+	}()
+
 }
 
 // As helper
-func (s *Service) RunProtocol(ctx context.Context, pd protocols.Descriptor) error {
+func (s *Service) RunProtocol(ctx context.Context, sig protocols.Signature) error {
 
-	var input protocols.Input
-	if pd.Signature.Type == protocols.RKG {
-		aggR1, err := s.GetProtocolOutput(ctx, pd)
-		if err != nil { // no r1 share
-			pdR1 := pd
-			pdR1.Signature.Type = protocols.RKG_1
-			aggR1Chan, err := s.Executor.RunProtocol(ctx, pdR1)
-			if err != nil {
-				return err
-			}
-			s.coordinator.Outgoing() <- protocols.Event{EventType: protocols.Started, Descriptor: pdR1}
-			a := <-aggR1Chan
-			if a.Error != nil {
-				return a.Error
-			}
-
-			aggR1 = &a
-			if err := s.ResultBackend.Put(pdR1, a.Share); err != nil {
-				return err
-			}
-			s.coordinator.Outgoing() <- protocols.Event{EventType: protocols.Completed, Descriptor: pdR1}
-		}
-		input = aggR1.Share
-	}
-
-	aggOutChan, err := s.Executor.RunProtocol(ctx, pd, input)
+	aggOut, err := s.Executor.RunSignatureAsAggregator(ctx, sig)
 	if err != nil {
 		return err
 	}
 
-	s.coordinator.Outgoing() <- protocols.Event{EventType: protocols.Started, Descriptor: pd}
-	aggOut := <-aggOutChan
-	if aggOut.Error != nil {
-		return aggOut.Error
+	return (<-aggOut).Error
+}
+
+func (s *Service) GetInputs(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
+
+	if pd.Signature.Type != protocols.RKG {
+		return nil, nil
 	}
 
-	if err := s.ResultBackend.Put(pd, aggOut.Share); err != nil {
-		return err
+	r1pd := pd
+	r1pd.Signature.Type = protocols.RKG_1
+
+	var aggOutR1 *protocols.AggregationOutput
+	var err error
+	if pd.Aggregator != s.self {
+		if aggOutR1, err = s.transport.GetAggregationOutput(ctx, r1pd); err != nil {
+			return nil, fmt.Errorf("error when retrieving aggregation output: %w", err)
+		}
+	} else {
+		aggOutC, err := s.Executor.RunDescriptorAsAggregator(ctx, r1pd)
+		if err != nil {
+			return nil, err
+		}
+		aggOut := <-aggOutC
+		aggOutR1 = &aggOut
 	}
 
-	s.coordinator.Outgoing() <- protocols.Event{EventType: protocols.Completed, Descriptor: pd}
+	return aggOutR1.Share, nil
+}
 
-	return nil
+// Reszlts and Backend // TODO messy
+
+func (s *Service) Put(ctx context.Context, aggOut protocols.AggregationOutput) error {
+	return s.ResultBackend.Put(aggOut.Descriptor, aggOut.Share)
+}
+
+func (s *Service) Get(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	share := protocols.Share{}
+	lattigoShare := pd.Signature.Type.Share()
+	err := s.ResultBackend.GetShare(pd.Signature, lattigoShare)
+	if err != nil {
+		return nil, err
+	}
+	share.MHEShare = lattigoShare
+	share.Type = pd.Signature.Type
+	share.ProtocolID = pd.ID()
+	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
 }
 
 func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor) (out *protocols.AggregationOutput, err error) {
@@ -153,7 +163,7 @@ func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor
 		s.ResultBackend.Put(pd, out.Share)
 	}
 
-	return &protocols.AggregationOutput{Share: share}, nil
+	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
 }
 
 func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) protocols.Output {
@@ -169,18 +179,7 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) 
 		return protocols.Output{Error: fmt.Errorf("could not retrieve aggrgation output for %s", pd.HID())}
 	}
 
-	var input protocols.Input
-	if sig.Type == protocols.RKG {
-		r1pd := pd
-		r1pd.Signature.Type = protocols.RKG_1
-		aggOut, err := s.GetProtocolOutput(ctx, pd)
-		if err != nil {
-			return protocols.Output{Error: fmt.Errorf("could not retrieve aggrgation output for %s", pd.HID())}
-		}
-		input = aggOut.Share
-	}
-
-	return s.Executor.GetOutput(ctx, pd, *aggOut, input)
+	return s.Executor.GetOutput(ctx, *aggOut)
 }
 
 func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
@@ -209,6 +208,14 @@ func (s *Service) GetRelinearizationKey(ctx context.Context) (*rlwe.Relinearizat
 
 func (s *Service) NodeID() pkg.NodeID {
 	return s.self
+}
+
+func (s *Service) Incoming() <-chan protocols.Event {
+	return s.incoming
+}
+
+func (s *Service) Outgoing() chan<- protocols.Event {
+	return s.outgoing
 }
 
 // filterSignatureList splits a SignatureList into two lists based on the presence of the protocol's output in the ObjectStore.

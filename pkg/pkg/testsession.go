@@ -18,6 +18,10 @@ type TestSession struct {
 	SkIdeal       *rlwe.SecretKey
 	NodeSessions  map[NodeID]*Session
 	HelperSession *Session
+
+	Encoder   *bgv.Encoder
+	Encryptor *rlwe.Encryptor
+	Decrpytor *rlwe.Decryptor
 }
 
 func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperId NodeID) (*TestSession, error) {
@@ -80,34 +84,14 @@ func NewTestSessionFromParams(sp SessionParameters, helperId NodeID) (*TestSessi
 
 	ts.HelperSession, err = NewSession(sp, helperId, os)
 
-	// // initialise key generation
-	// if config.SimSetup != nil {
-	// 	kg := rlwe.NewKeyGenerator(test.Params)
-	// 	sk := test.SkIdeal
-	// 	if config.SimSetup.Cpk != nil {
-	// 		cpk, err := kg.GenPublicKeyNew(sk)
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		memPkBackend.PublicKey = cpk
-	// 	}
-	// 	for _, gkrec := range config.SimSetup.GaloisKeys {
-	// 		gk, err := kg.GenGaloisKeyNew(gkrec.GaloisEl, sk)
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		memPkBackend.GaloisKeys[gk.GaloisElement] = gk
+	ts.Encoder = bgv.NewEncoder(ts.RlweParams)
+	ts.Encryptor, err = bgv.NewEncryptor(ts.RlweParams, ts.SkIdeal)
+	if err != nil {
+		return nil, err
+	}
+	ts.Decrpytor, err = bgv.NewDecryptor(ts.RlweParams, ts.SkIdeal)
 
-	// 	}
-	// 	if config.SimSetup.Rlk != nil {
-	// 		rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		memPkBackend.RelinearizationKey = rlk
-	// 	}
-	// }
-	return ts, nil
+	return ts, err
 }
 
 func GetTestSecretKeys(sessParams SessionParameters, nodeid NodeID) (sk *rlwe.SecretKey, tsk *drlwe.ShamirSecretShare, err error) {

@@ -39,11 +39,12 @@ var testSettings = []testSetting{
 
 type testnode struct {
 	*Service
-	*protocols.Executor
+	//*protocols.Executor
 	*pkg.Session
 }
 
 type testNodeTrans struct {
+	protocols.Transport
 	helperSrv *Service
 }
 
@@ -78,29 +79,30 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				clou := new(testnode)
 
-				clou.Executor, err = protocols.NewExectutor(hid, testSess.HelperSession, protoTrans)
+				//clou.Executor, err = protocols.NewExectutor(hid, testSess.HelperSession, protoTrans)
 				require.Nil(t, err)
-				clou.Executor.RunService(ctx)
-				clou.Service, err = NewSetupService(hid, clou.Executor, nil, testSess.HelperSession.ObjectStore)
+				//clou.Executor.RunService(ctx)
+				srvTrans := &testNodeTrans{Transport: protoTrans}
+				clou.Service, err = NewSetupService(hid, testSess.HelperSession, srvTrans, testSess.HelperSession.ObjectStore)
 				if err != nil {
 					t.Fatal(err)
 				}
 				clou.Service.RunService(ctx, coord)
 
-				srvTrans := &testNodeTrans{helperSrv: clou.Service}
-
 				clients := make(map[pkg.NodeID]*testnode, ts.N)
 				for nid := range nids {
 					cli := &testnode{}
 					cli.Session = testSess.NodeSessions[nid]
-					cli.Executor, err = protocols.NewExectutor(nid, testSess.NodeSessions[nid], protoTrans.TransportFor(nid))
+					//cli.Executor, err = protocols.NewExectutor(nid, testSess.NodeSessions[nid], protoTrans.TransportFor(nid))
 					require.Nil(t, err)
-					cli.Executor.RunService(ctx)
-					cli.Service, err = NewSetupService(nid, cli.Executor, srvTrans, testSess.NodeSessions[nid].ObjectStore)
+					//cli.Executor.RunService(ctx)
+					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
+					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], srvTrans, testSess.NodeSessions[nid].ObjectStore)
 					if err != nil {
 						t.Fatal(err)
 					}
 					cli.Service.RunService(ctx, coord.NewNodeCoordinator(nid))
+					clou.Executor.Register(nid)
 					clients[nid] = cli
 				}
 
@@ -119,10 +121,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				sigList, _ := DescriptionToSignatureList(sd)
 				for _, sig := range sigList {
-					parts, err := protocols.GetParticipants(sig, nids, sessParams.T)
-					require.Nil(t, err)
-					pd := protocols.Descriptor{Signature: sig, Participants: parts, Aggregator: hid}
-					err = clou.Service.RunProtocol(ctx, pd)
+					err = clou.Service.RunProtocol(ctx, sig)
 					require.Nil(t, err)
 				}
 

@@ -1,6 +1,7 @@
 package protocols
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -31,52 +32,110 @@ func TestExecutor(t *testing.T) {
 
 		executors := make(map[pkg.NodeID]*Executor, len(nids))
 		testTrans := NewTestTransport()
-		//testCoord := newTestCoordinator()
-		helper, err := NewExectutor(hid, testSess.HelperSession, testTrans)
+		testCoord := NewTestCoordinator()
+		testAggBackend := NewTestAggregationOutputBackend()
+
+		ct := testSess.Encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
+
+		var helper *Executor
+		var hip InputProvider = func(ctx context.Context, pd Descriptor) (Input, error) {
+			switch pd.Signature.Type {
+			case RKG:
+				r1Pd := pd
+				r1Pd.Signature.Type = RKG_1
+
+				rkg1AggOutp, err := testAggBackend.Get(ctx, r1Pd)
+				if err == nil {
+					return rkg1AggOutp.Share, nil
+				}
+
+				aggOutC, err := helper.RunDescriptorAsAggregator(ctx, r1Pd)
+				if err != nil {
+					return nil, err
+				}
+				rkg1AggOut := <-aggOutC
+				if rkg1AggOut.Error != nil {
+					return nil, rkg1AggOut.Error
+				}
+				return rkg1AggOut.Share, nil
+			case DEC:
+				return ct, nil
+			}
+			return nil, nil
+		}
+
+		var pip InputProvider = func(ctx context.Context, pd Descriptor) (Input, error) {
+			switch pd.Signature.Type {
+			case RKG:
+				r1pd := pd
+				r1pd.Signature.Type = RKG_1
+				rkg1AggOut, err := testAggBackend.Get(ctx, r1pd)
+				if err != nil {
+					return nil, err
+				}
+				return rkg1AggOut.Share, nil
+			case DEC:
+				return ct, nil
+			}
+			return nil, nil
+		}
+
+		helper, err = NewExectutor(hid, testSess.HelperSession, testCoord, hip, testAggBackend, testTrans)
 		require.Nil(t, err)
 		go helper.RunService(ctx)
 		for nid := range nids {
-			executors[nid], err = NewExectutor(nid, testSess.NodeSessions[nid], testTrans.TransportFor(nid))
+			executors[nid], err = NewExectutor(nid, testSess.NodeSessions[nid], testCoord.NewNodeCoordinator(nid), pip, nil, testTrans.TransportFor(nid))
 			require.Nil(t, err)
 			go executors[nid].RunService(ctx)
+			err = helper.Register(nid)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		sigs := []Signature{
 			{Type: CKG},
 			{Type: RTG, Args: map[string]string{"GalEl": "5"}},
+			{Type: RTG, Args: map[string]string{"GalEl": "25"}},
 			{Type: RKG},
-			//{Type: DEC, Args: map[string]string{"target": "node-0", "smudging": "40"}},
+			{Type: DEC, Args: map[string]string{"target": "node-0", "smudging": "40"}},
 		}
 
 		for _, sig := range sigs {
-			parts, err := GetParticipants(sig, nids, ts.T)
-			if err != nil {
-				t.Fatal(err)
-			}
-			pd := Descriptor{Signature: sig, Participants: parts, Aggregator: hid}
-			t.Run(fmt.Sprintf("N=%d/T=%d/Sig=%s", ts.N, ts.T, pd.Signature), func(t *testing.T) {
-				var input Input
-				if pd.Signature.Type == RKG {
-					r1pd := pd
-					r1pd.Signature.Type = RKG_1
-					aggOutR1C, err := helper.RunProtocol(ctx, r1pd)
-					for _, exec := range executors {
-						go exec.RunProtocol(ctx, r1pd)
-					}
-					aggOutR1 := <-aggOutR1C
-					require.Nil(t, err)
-					require.Nil(t, aggOutR1.Error)
-					input = aggOutR1.Share
-				}
-				aggOutC, err := helper.RunProtocol(ctx, pd, input)
-				for _, exec := range executors {
-					go exec.RunProtocol(ctx, pd, input)
-				}
+			t.Run(fmt.Sprintf("N=%d/T=%d/Sig=%s", ts.N, ts.T, sig), func(t *testing.T) {
+				aggOutC, err := helper.RunSignatureAsAggregator(ctx, sig)
 				require.Nil(t, err)
 				aggOut := <-aggOutC
-				out := helper.GetOutput(ctx, pd, aggOut, input)
-				checkOutput(out, pd, *testSess, t)
+				out := helper.GetOutput(ctx, aggOut)
+				checkOutput(out, aggOut.Descriptor, *testSess, t)
 			})
 		}
 	}
+}
+
+type TestAggregationOutputBackend struct {
+	bk map[string]*AggregationOutput
+}
+
+func NewTestAggregationOutputBackend() *TestAggregationOutputBackend {
+	return &TestAggregationOutputBackend{
+		bk: make(map[string]*AggregationOutput),
+	}
+}
+
+func (agbk *TestAggregationOutputBackend) Put(ctx context.Context, aggOut AggregationOutput) error {
+	pid := string(aggOut.Descriptor.ID())
+	if _, has := agbk.bk[pid]; has {
+		return fmt.Errorf("backend already has aggregation output for %s", pid)
+	}
+	agbk.bk[pid] = &aggOut
+	return nil
+}
+
+func (agbk *TestAggregationOutputBackend) Get(ctx context.Context, pd Descriptor) (*AggregationOutput, error) {
+	pid := string(pd.ID())
+	if aggOut, has := agbk.bk[pid]; has {
+		return aggOut, nil
+	}
+	return nil, fmt.Errorf("backend has no aggregation output for %s", pid)
 }

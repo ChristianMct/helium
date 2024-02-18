@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 )
 
-const parallelAggregation int = 10
-const parallelParticipation int = 10
+const numProtoPerNode = 5
 
 type Transport interface {
 	OutgoingShares() chan<- Share
@@ -22,6 +20,13 @@ type Transport interface {
 type Coordinator interface {
 	Incoming() <-chan Event
 	Outgoing() chan<- Event
+}
+
+type InputProvider func(ctx context.Context, pd Descriptor) (Input, error)
+
+type AggregationOutputBackend interface {
+	Put(context.Context, AggregationOutput) error
+	Get(context.Context, Descriptor) (*AggregationOutput, error)
 }
 
 type EventType int32
@@ -54,12 +59,20 @@ func (ev Event) String() string {
 type Executor struct {
 	self pkg.NodeID
 
-	sessions  pkg.SessionProvider
-	transport Transport
-	//coordinator Coordinator
+	sessions      pkg.SessionProvider
+	transport     Transport
+	coordinator   Coordinator
+	inputProvider InputProvider
+	aggOutBackend AggregationOutputBackend
 
-	L             sync.RWMutex
-	runningProtos map[pkg.ProtocolID]struct {
+	// node tracking
+	connectedNodes     map[pkg.NodeID]utils.Set[pkg.ProtocolID]
+	connectedNodesMu   sync.RWMutex
+	connectedNodesCond sync.Cond
+
+	// protocol tracking
+	runningProtoMu sync.RWMutex
+	runningProtos  map[pkg.ProtocolID]struct {
 		pd           Descriptor
 		incoming     chan Share
 		disconnected chan pkg.NodeID
@@ -73,19 +86,24 @@ type Executor struct {
 	// rkgRound1Results map[pkg.ProtocolID]Share // TODO remove
 }
 
-func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Transport) (*Executor, error) {
+func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordinator, ip InputProvider, agbk AggregationOutputBackend, trans Transport) (*Executor, error) {
 	s := new(Executor)
 	s.self = ownId
 	s.sessions = sessions
 
-	//s.coordinator = coord
+	s.coordinator = coord
 	s.transport = trans
+	s.inputProvider = ip
+	s.aggOutBackend = agbk
 
 	s.runningProtos = make(map[pkg.ProtocolID]struct {
 		pd           Descriptor
 		incoming     chan Share
 		disconnected chan pkg.NodeID
 	})
+
+	s.connectedNodes = make(map[pkg.NodeID]utils.Set[pkg.ProtocolID])
+	s.connectedNodesCond = *sync.NewCond(&s.connectedNodesMu)
 
 	s.completedProtos = make([]Descriptor, 0)
 
@@ -98,13 +116,37 @@ func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Transpor
 
 func (s *Executor) RunService(ctx context.Context) {
 
+	// processes incoming coordinator events
+	go func() {
+		for ev := range s.coordinator.Incoming() {
+
+			if ev.EventType != Started {
+				continue
+			}
+
+			if !s.isParticipantFor(ev.Descriptor) {
+				continue
+			}
+
+			if s.isKeySwitchReceiver(ev.Descriptor) {
+				continue
+			}
+
+			err := s.RunProtocolAsParticipant(ctx, ev.Descriptor)
+			if err != nil {
+				panic(err)
+			}
+
+		}
+	}()
+
 	// processes incoming shares from the transport
 	go func() {
 		inc := s.transport.IncomingShares()
 		for incShare := range inc {
-			s.L.RLock()
+			s.runningProtoMu.RLock()
 			proto, protoExists := s.runningProtos[incShare.ProtocolID]
-			s.L.RUnlock()
+			s.runningProtoMu.RUnlock()
 			if !protoExists {
 				s.Logf("dropped share from sender %s: protocol %s is not running", incShare.From, incShare.ProtocolID)
 				continue
@@ -116,52 +158,45 @@ func (s *Executor) RunService(ctx context.Context) {
 	}()
 }
 
-func (s *Executor) RunProtocol(ctx context.Context, pd Descriptor, input ...Input) (aggOut chan AggregationOutput, err error) {
+func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd Descriptor) (aggOut chan AggregationOutput, err error) {
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
-	if !has {
-		panic(fmt.Errorf("session could not extract session from context"))
+	input, err := s.inputProvider(ctx, pd)
+	if err != nil {
+		return nil, err
 	}
 
-	if !s.hasRoleIn(pd) {
-		s.Logf("not running %s, no role in the protocol", pd.HID())
-		return nil, nil
-	}
-
-	s.Logf("started running %s", pd.HID())
-
-	// creating the protocol resources
-
-	proto, err := NewProtocol(pd, sess, input...)
+	proto, err := NewProtocol(pd, sess, input)
 	if err != nil {
 		panic(err)
 	}
 	pid := pd.ID()
 
+	// registers the protocol
 	var aggregation chan AggregationOutput
 	var disconnected chan pkg.NodeID
-	if s.isAggregatorFor(pd) {
-		// registers the protocol
-		s.L.Lock()
-		incoming := make(chan Share)
-		disconnected = make(chan pkg.NodeID, len(pd.Participants))
-		s.runningProtos[pid] = struct {
-			pd           Descriptor
-			incoming     chan Share
-			disconnected chan pkg.NodeID
-		}{
-			pd:           pd,
-			incoming:     incoming,
-			disconnected: disconnected,
-		}
-		s.L.Unlock()
-		// runs the aggregation
-		aggregation, err = proto.Aggregate(ctx, incoming)
-		if err != nil {
-			panic(err)
-		}
-		//s.coordinator.Outgoing() <- Event{EventType: Started, Descriptor: pd}
+	s.runningProtoMu.Lock()
+	incoming := make(chan Share)
+	disconnected = make(chan pkg.NodeID, len(pd.Participants))
+	s.runningProtos[pid] = struct {
+		pd           Descriptor
+		incoming     chan Share
+		disconnected chan pkg.NodeID
+	}{
+		pd:           pd,
+		incoming:     incoming,
+		disconnected: disconnected,
 	}
+	s.runningProtoMu.Unlock()
+
+	// runs the aggregation
+	aggregation, err = proto.Aggregate(ctx, incoming)
+	if err != nil {
+		panic(err)
+	}
+
+	s.Logf("started protocol %s with input %T", pd, input)
+
+	s.coordinator.Outgoing() <- Event{EventType: Started, Descriptor: pd}
 
 	if s.isParticipantFor(pd) {
 		// runs the share generation and sending to aggregator
@@ -171,114 +206,123 @@ func (s *Executor) RunProtocol(ctx context.Context, pd Descriptor, input ...Inpu
 		s.Logf("completed participation for %s", pd.HID())
 	}
 
-	if s.isAggregatorFor(pd) {
-		// waits for the result or failures
+	aggOut = make(chan AggregationOutput)
+	go func() {
+		var agg AggregationOutput
+		agg.Descriptor = pd
+		abort := make(chan pkg.NodeID)
+		for done := false; !done; {
+			select {
+			case agg = <-aggregation:
+				done = true
+			case participantId := <-disconnected:
 
-		aggOut = make(chan AggregationOutput)
-
-		go func() {
-			var errAgg error
-			abort := make(chan pkg.NodeID)
-			for done := false; !done; {
-				select {
-				case agg := <-aggregation:
-					if agg.Error != nil {
-						panic(agg.Error)
-					}
-					aggOut <- agg
-					done = true
-				case participantId := <-disconnected:
-
-					if proto.HasShareFrom(participantId) {
-						s.Logf("node %s disconnected after providing its share, protocol %s continuing...", participantId, pd.HID())
-						continue
-					}
-
-					time.AfterFunc(time.Second, func() { // leaves some time to process some more messages
-						participantId := participantId
-						abort <- participantId
-					})
-					//errAgg = fmt.Errorf("participant disconnected before providing its share: %s", participantId)
-				case nid := <-abort:
-					done = true
-					errAgg = fmt.Errorf("aborted due to disconnection of %s before providing its share", nid)
+				if proto.HasShareFrom(participantId) {
+					s.Logf("node %s disconnected after providing its share, protocol %s", participantId, pd.HID())
+					continue
 				}
+
+				s.Logf("node %s disconnected before providing its share, protocol %s", participantId, pd.HID())
+
+				// time.AfterFunc(time.Second, func() { // leaves some time to process some more messages
+				// 	participantId := participantId
+				// 	abort <- participantId
+				// })
+			case <-abort:
+				done = true
+				agg.Error = fmt.Errorf("protocol aggregation has aborted aborted")
 			}
+		}
 
-			if errAgg != nil {
-				//s.coordinator.Outgoing() <- Event{EventType: Failed, Descriptor: pd}
-				err = fmt.Errorf("error during aggregation: %s", errAgg)
-			}
-			// } else {
-			// 	// if pd.Signature.Type == RKG_1 {
-			// 	// 	s.rkgRound1Results[pd.ID()] = aggOut.Share // TODO revamp result backend to store all round results
-			// 	// } else {
-			// 	// 	err = s.ResultBackend.Put(pd, aggOut.Share)
-			// 	// 	if err != nil {
-			// 	// 		panic(err)
-			// 	// 	}
-			// 	// }
-			// 	s.coordinator.Outgoing() <- Event{EventType: Completed, Descriptor: pd}
-			// }
+		s.runningProtoMu.Lock()
+		delete(s.runningProtos, pid)
+		s.runningProtoMu.Unlock()
 
-			//s.Logf("[Aggregate] Finished aggregating for pd: %v", pd)
-			s.L.Lock()
-			delete(s.runningProtos, pid)
-			s.completedProtos = append(s.completedProtos, pd)
-			s.L.Unlock()
+		aggOut <- agg
 
-			s.Logf("completed aggregation for %s", pd.HID())
-		}()
-	}
+		if agg.Error != nil {
+			s.coordinator.Outgoing() <- Event{EventType: Failed, Descriptor: pd}
+			return
+		}
 
+		err := s.aggOutBackend.Put(ctx, agg)
+		if err != nil {
+			panic(err)
+		}
+		s.runningProtoMu.Lock()
+		s.completedProtos = append(s.completedProtos, pd)
+		s.runningProtoMu.Unlock()
+
+		s.coordinator.Outgoing() <- Event{EventType: Completed, Descriptor: pd}
+
+		s.Logf("completed aggregation for %s", pd.HID())
+	}()
 	return
 }
 
-// func (s *Executor) GetProtocolOutput(ctx context.Context, pd Descriptor) (out *AggregationOutput, err error) { // TODO rename AggregationOutput
+func (s *Executor) RunSignatureAsAggregator(ctx context.Context, sig Signature) (aggOut chan AggregationOutput, err error) {
 
-// 	// first checks if it has the share locally
-// 	share := Share{}
-// 	if pd.Signature.Type == RKG_1 {
-// 		var has bool
-// 		share, has = s.rkgRound1Results[pd.ID()]
-// 		if !has {
-// 			err = fmt.Errorf("no rkg share for round 1")
-// 		}
-// 	} else {
-// 		lattigoShare := pd.Signature.Type.Share()
-// 		err = s.ResultBackend.GetShare(pd.Signature, lattigoShare)
-// 		share.MHEShare = lattigoShare
-// 	}
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("session could not extract session from context")
+	}
 
-// 	// otherwise, query the aggregator
-// 	if err != nil {
-// 		if pd.Aggregator == s.self {
-// 			return nil, fmt.Errorf("node is aggregator but has error on backend: %s", err)
-// 		}
+	pd := s.getProtocolDescriptor(sig, sess.T)
 
-// 		if out, err = s.transport.GetAggregation(ctx, pd); err != nil {
-// 			return nil, err
-// 		}
-// 		s.Logf("queried aggregation for %s", pd.HID())
+	return s.runAsAggregator(ctx, sess, pd)
+}
 
-// 		share = out.Share
-// 		s.ResultBackend.Put(pd, out.Share)
-// 		if pd.Signature.Type == RKG_1 {
-// 			s.rkgRound1Results[pd.ID()] = out.Share
-// 		}
-// 	}
+func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor) (aggOut chan AggregationOutput, err error) {
 
-// 	return &AggregationOutput{Share: share}, nil
-// }
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("session could not extract session from context")
+	}
 
-func (s *Executor) GetOutput(ctx context.Context, pd Descriptor, aggOut AggregationOutput, input ...Input) (out Output) {
+	return s.runAsAggregator(ctx, sess, pd)
+}
+
+func (s *Executor) RunProtocolAsParticipant(ctx context.Context, pd Descriptor) error {
+
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return fmt.Errorf("session could not extract session from context")
+	}
+
+	input, err := s.inputProvider(ctx, pd)
+	if err != nil {
+		return fmt.Errorf("error while retreiving input: %w", err)
+	}
+
+	proto, err := NewProtocol(pd, sess, input)
+	if err != nil {
+		panic(err)
+	}
+
+	// runs the share generation and sending to aggregator
+	share := proto.AllocateShare()
+	err = proto.GenShare(&share)
+	if err != nil {
+		return err
+	}
+	s.transport.OutgoingShares() <- share
+	s.Logf("completed participation for %s", pd.HID())
+	return nil
+}
+
+func (s *Executor) GetOutput(ctx context.Context, aggOut AggregationOutput) (out Output) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
 		out.Error = fmt.Errorf("no session found in context")
 		return
 	}
 
-	p, err := NewProtocol(pd, sess, input...)
+	input, err := s.inputProvider(ctx, aggOut.Descriptor)
+	if err != nil {
+		out.Error = err
+	}
+
+	p, err := NewProtocol(aggOut.Descriptor, sess, input)
 	if err != nil {
 		out.Error = fmt.Errorf("cannot create protocol: %s", err)
 		return
@@ -286,13 +330,89 @@ func (s *Executor) GetOutput(ctx context.Context, pd Descriptor, aggOut Aggregat
 	return <-p.Output(aggOut)
 }
 
+// Register is called by the transport when a new peer register itself for the setup.
+func (s *Executor) Register(peer pkg.NodeID) error {
+	s.connectedNodesMu.Lock()
+	defer s.connectedNodesCond.Broadcast()
+	defer s.connectedNodesMu.Unlock()
+
+	if _, has := s.connectedNodes[peer]; has {
+		panic("attempting to register a registered node")
+	}
+
+	s.connectedNodes[peer] = make(utils.Set[pkg.ProtocolID])
+
+	s.Logf("[Node] registered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	return nil // TODO: Implement
+}
+
+// Unregister is called by the transport when a peer is unregistered from the setup.
+func (s *Executor) Unregister(peer pkg.NodeID) error {
+
+	s.connectedNodesMu.Lock()
+	_, has := s.connectedNodes[peer]
+	if !has {
+		panic("unregistering an unregistered node")
+	}
+
+	s.DisconnectedNode(peer)
+
+	delete(s.connectedNodes, peer)
+	s.connectedNodesMu.Unlock()
+
+	s.Logf("[Node] unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	return nil // TODO: Implement
+}
+
+func (s *Executor) getAvailable() utils.Set[pkg.NodeID] {
+	available := make(utils.Set[pkg.NodeID])
+	for nid, nProtos := range s.connectedNodes {
+		if len(nProtos) < numProtoPerNode {
+			available.Add(nid)
+		}
+	}
+	return available
+}
+
+func (s *Executor) getProtocolDescriptor(sig Signature, threshold int) Descriptor {
+	pd := Descriptor{Signature: sig, Aggregator: s.self}
+
+	var available, selected utils.Set[pkg.NodeID]
+	switch sig.Type {
+	case DEC, PCKS:
+		selected = utils.NewSingletonSet(pkg.NodeID(sig.Args["target"]))
+	default:
+		selected = utils.NewEmptySet[pkg.NodeID]()
+	}
+
+	s.connectedNodesMu.Lock()
+	for {
+		available = s.getAvailable()
+		available.Remove(selected.Elements()...)
+		if len(selected)+len(available) >= threshold {
+			break
+		}
+		s.connectedNodesCond.Wait()
+	}
+
+	selected.AddAll(utils.GetRandomSetOfSize(threshold-len(selected), available))
+	pd.Participants = selected.Elements()
+	for nid := range selected {
+		nodeProto := s.connectedNodes[nid]
+		nodeProto.Add(pd.ID())
+	}
+	s.connectedNodesMu.Unlock()
+
+	return pd
+}
+
 func (s *Executor) DisconnectedNode(id pkg.NodeID) {
-	s.L.RLock()
+	s.runningProtoMu.RLock()
 	protoIds, _ := s.nodesToProtocols[id]
 	for pid := range protoIds {
 		s.runningProtos[pid].disconnected <- id
 	}
-	s.L.RUnlock()
+	s.runningProtoMu.RUnlock()
 }
 
 func (s *Executor) Logf(msg string, v ...any) {
@@ -318,6 +438,14 @@ func (s *Executor) isParticipantFor(pd Descriptor) bool {
 
 func (s *Executor) hasRoleIn(pd Descriptor) bool {
 	return s.isAggregatorFor(pd) || s.isParticipantFor(pd)
+}
+
+func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {
+	if pd.Signature.Type == DEC || pd.Signature.Type == PCKS {
+		target := pd.Signature.Args["target"]
+		return s.self == pkg.NodeID(target)
+	}
+	return false
 }
 
 type testCoordinator struct {

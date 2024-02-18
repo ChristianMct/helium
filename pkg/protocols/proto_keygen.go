@@ -38,8 +38,9 @@ type OutputKey interface{}
 type CRP interface{}
 
 type AggregationOutput struct {
-	Share Share
-	Error error
+	Share      Share
+	Descriptor Descriptor
+	Error      error
 }
 
 type Instance interface {
@@ -312,6 +313,7 @@ func (p *protocol) Aggregate(ctx context.Context, incoming <-chan Share) (chan A
 			}
 		}
 
+		aggOut.Descriptor = p.Descriptor
 		if err == nil {
 			aggOut.Share = p.agg.share
 			aggOut.Share.ProtocolID = p.ProtocolID

@@ -3,7 +3,6 @@ package node
 import (
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -14,7 +13,6 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport/centralized"
-	"github.com/ldsec/helium/pkg/utils"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -36,9 +34,7 @@ type Node struct {
 	//pkBackend compute.PublicKeyBackend
 
 	// coordination
-	connectedNodes map[pkg.NodeID]utils.Set[pkg.ProtocolID]
-	L              sync.RWMutex
-	C              sync.Cond
+	executor *protocols.Executor
 
 	//transport transport.Transport
 	srv                 *centralized.HeliumServer
@@ -130,11 +126,15 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	node.outshares = make(chan protocols.Share)
 
 	// Executor
-	executor, err := protocols.NewExectutor(node.id, node, node)
-	executor.RunService(context.Background())
+	node.executor, err = protocols.NewExectutor(node.id, node, node)
+	if err != nil {
+		return nil, err
+	}
+
+	node.executor.RunService(context.Background())
 
 	// services
-	node.setup, err = setup.NewSetupService(node.id, executor, node.cli, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id, node.executor, node.cli, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
@@ -144,9 +144,6 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	// if err != nil {
 	// 	return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	// }
-
-	node.connectedNodes = make(map[pkg.NodeID]utils.Set[pkg.ProtocolID])
-	node.C = *sync.NewCond(&node.L)
 
 	// internal
 	// node.postsetupHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
@@ -341,66 +338,12 @@ func (n *Node) OutgoingShares() chan<- protocols.Share {
 
 // Register is called by the transport when a new peer register itself for the setup.
 func (s *Node) Register(peer pkg.NodeID) error {
-	s.L.Lock()
-	defer s.C.Broadcast()
-	defer s.L.Unlock()
-
-	if _, has := s.connectedNodes[peer]; has {
-		panic("attempting to register a registered node")
-	}
-
-	s.connectedNodes[peer] = make(utils.Set[pkg.ProtocolID])
-
-	s.Logf("[Node] registered peer %v, %d online nodes", peer, len(s.connectedNodes))
-	return nil // TODO: Implement
+	return s.executor.Register(peer)
 }
 
 // Unregister is called by the transport when a peer is unregistered from the setup.
 func (s *Node) Unregister(peer pkg.NodeID) error {
-
-	s.L.Lock()
-	_, has := s.connectedNodes[peer]
-	if !has {
-		panic("unregistering an unregistered node")
-	}
-
-	s.setup.DisconnectedNode(peer)
-
-	delete(s.connectedNodes, peer)
-	s.L.Unlock()
-
-	s.Logf("[Node] unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
-	return nil // TODO: Implement
-}
-
-func (s *Node) getAvailable() utils.Set[pkg.NodeID] {
-	available := make(utils.Set[pkg.NodeID])
-	for nid, nProtos := range s.connectedNodes {
-		if len(nProtos) < numProtoPerNode {
-			available.Add(nid)
-		}
-	}
-	return available
-}
-
-func (s *Node) getProtocolDescriptor(sig protocols.Signature, threshold int) protocols.Descriptor {
-	pd := protocols.Descriptor{Signature: sig, Aggregator: s.helperId}
-
-	s.L.Lock()
-	var available utils.Set[pkg.NodeID]
-	for available = s.getAvailable(); len(available) < threshold; available = s.getAvailable() {
-		s.C.Wait()
-	}
-
-	selected := utils.GetRandomSetOfSize(threshold, available)
-	pd.Participants = selected.Elements()
-	for nid := range selected {
-		nodeProto := s.connectedNodes[nid]
-		nodeProto.Add(pd.ID())
-	}
-	s.L.Unlock()
-
-	return pd
+	return s.executor.Register(peer)
 }
 
 func (node *Node) sendShares(ctx context.Context) {
