@@ -84,7 +84,7 @@ func (e *circuitParserContext) String() string {
 // 	return nil
 // }
 
-func (e *circuitParserContext) Input(in OperandLabel) FutureOperand {
+func (e *circuitParserContext) Input(in OperandLabel) *FutureOperand {
 	e.l.Lock()
 	defer e.l.Unlock()
 	opl := in.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties)
@@ -100,11 +100,18 @@ func (e *circuitParserContext) Input(in OperandLabel) FutureOperand {
 
 	c := make(chan struct{})
 	close(c)
-	return FutureOperand{Operand: Operand{OperandLabel: in}, c: c}
+	return &FutureOperand{Operand: Operand{OperandLabel: in}, c: c}
 }
 
-func (e *circuitParserContext) Load(in OperandLabel) Operand {
-	return Operand{OperandLabel: in} // TODO: collect ciphertext dependencies
+func (e *circuitParserContext) Load(in OperandLabel) *Operand {
+	return &Operand{OperandLabel: in} // TODO: collect ciphertext dependencies
+}
+
+func (e *circuitParserContext) NewOperand(opl OperandLabel) Operand {
+	e.l.Lock()
+	defer e.l.Unlock()
+	e.ci.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties))
+	return Operand{OperandLabel: opl}
 }
 
 func (e *circuitParserContext) Set(op Operand) {
@@ -127,6 +134,8 @@ func (e *circuitParserContext) Output(out Operand, to pkg.NodeID) {
 	opl := out.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties)
 	e.ci.OutputSet.Add(opl)
 	e.ci.Ops.Add(opl)
+
+	to = e.cd.InputParties[string(to)]
 
 	outset, exists := e.ci.OutputsFor[to]
 	if !exists {

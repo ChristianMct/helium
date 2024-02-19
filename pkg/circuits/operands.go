@@ -3,6 +3,8 @@ package circuits
 import (
 	"fmt"
 	"net/url"
+	"path"
+	"strings"
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -26,6 +28,9 @@ func NewFutureOperand(opl OperandLabel) *FutureOperand {
 }
 
 func (fo *FutureOperand) Set(op Operand) {
+	if fo.Ciphertext != nil { // TODO that only the main circuit routine calls set
+		return
+	}
 	fo.Ciphertext = op.Ciphertext
 	close(fo.c)
 }
@@ -41,6 +46,14 @@ func (opl OperandLabel) Host() pkg.NodeID {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
 	}
 	return pkg.NodeID(nopl.Host)
+}
+
+func (opl OperandLabel) Circuit() ID {
+	nopl, err := url.Parse(string(opl))
+	if err != nil {
+		panic(fmt.Errorf("invalid operand label: %s", opl))
+	}
+	return ID(strings.Trim(path.Dir(nopl.Path), "/"))
 }
 
 func (opl OperandLabel) HasHost(id pkg.NodeID) bool {

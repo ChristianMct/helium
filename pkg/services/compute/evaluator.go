@@ -14,7 +14,7 @@ import (
 )
 
 type ProtocolExecutor interface {
-	RunKeyOperation(ctx context.Context, sig protocols.Signature, in circuits.Operand, out *circuits.FutureOperand) error
+	RunKeyOperation(ctx context.Context, sig protocols.Signature) error
 }
 
 type fheEvaluator struct {
@@ -25,6 +25,7 @@ type evaluator struct {
 	cDesc  circuits.Descriptor
 	c      circuits.Circuit
 	params bgv.Parameters
+	sessid pkg.SessionID
 
 	// keys
 	pubKeyBackend PublicKeyBackend
@@ -41,27 +42,32 @@ type evaluator struct {
 	*fheEvaluator
 }
 
-func newEvaluator(c circuits.Circuit, cd circuits.Descriptor, params bgv.Parameters, pkbk PublicKeyBackend, pe ProtocolExecutor) (ev *evaluator, err error) {
+func newEvaluator(sessid pkg.SessionID, c circuits.Circuit, cd circuits.Descriptor, params bgv.Parameters, pkbk PublicKeyBackend, pe ProtocolExecutor) (ev *evaluator, err error) {
 	ev = new(evaluator)
 	ev.c = c
 	ev.cDesc = cd
 	ev.pubKeyBackend = pkbk
 	ev.protoExec = pe
 	ev.params = params
+	ev.sessid = sessid
 
 	ci, err := circuits.Parse(c, cd, params)
 	if err != nil {
 		return nil, err
 	}
-
+	ev.ops = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	ev.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	for inLabel := range ci.InputSet {
-		ev.inputs[inLabel] = circuits.NewFutureOperand(inLabel)
+		fop := circuits.NewFutureOperand(inLabel)
+		ev.inputs[inLabel] = fop
+		ev.ops[inLabel] = fop
 	}
 
 	ev.outputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	for outLabel := range ci.OutputSet {
-		ev.outputs[outLabel] = circuits.NewFutureOperand(outLabel)
+		fop := circuits.NewFutureOperand(outLabel)
+		ev.outputs[outLabel] = fop
+		ev.ops[outLabel] = fop
 	}
 
 	ev.fheEvaluator, err = newLattigoEvaluator(*ci, params, pkbk)
@@ -107,37 +113,53 @@ func (se *evaluator) IncomingOperand(op circuits.Operand) error {
 	return nil
 }
 
-func (se *evaluator) GetOperand(opl circuits.OperandLabel) (op *circuits.Operand, err error) {
+func (se *evaluator) GetOperand(_ context.Context, opl circuits.OperandLabel) (op *circuits.Operand, has bool) {
 	fop, has := se.ops[opl]
 	if !has {
-		return nil, fmt.Errorf("no operand with label %s in circuit", opl)
+		return
 	}
 	opg := fop.Get()
-	return &opg, nil
+	return &opg, true
+}
+
+func (se *evaluator) GetFutureOperand(_ context.Context, opl circuits.OperandLabel) (op *circuits.FutureOperand, has bool) {
+	fop, has := se.ops[opl]
+	return fop, has
 }
 
 // EvaluationContext (user-facing) API
 
-func (se *evaluator) Input(opl circuits.OperandLabel) circuits.FutureOperand {
-	return *se.inputs[opl]
+func (se *evaluator) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
+	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
+	op, has := se.inputs[opl]
+	if !has {
+		panic(fmt.Errorf("non registered input: %s", opl))
+	}
+	return op
 }
 
-func (se *evaluator) Load(opl circuits.OperandLabel) circuits.Operand {
+func (se *evaluator) Load(opl circuits.OperandLabel) *circuits.Operand {
+	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
 	op, err := se.ctbk.Get(opl)
 	if err != nil {
 		panic(err)
 	}
-	return *op
+	return op
+}
+
+func (se *evaluator) NewOperand(opl circuits.OperandLabel) circuits.Operand {
+	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
+	return circuits.Operand{OperandLabel: opl}
 }
 
 func (se *evaluator) Set(op circuits.Operand) {
-	se.ctbk.Set(op)
+	panic("not supported yet")
 }
 
 func (se *evaluator) keyOpSig(pt protocols.Type, in circuits.Operand, params map[string]string) protocols.Signature {
 	pparams := maps.Clone(params)
-	pparams["op"] = string(in.OperandLabel.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties))
-	return protocols.Signature{Type: pt, Args: params}
+	pparams["op"] = string(in.OperandLabel)
+	return protocols.Signature{Type: pt, Args: pparams}
 }
 
 func (se *evaluator) keyOpExec(sig protocols.Signature, in circuits.Operand) (out *circuits.FutureOperand, err error) {
@@ -145,10 +167,13 @@ func (se *evaluator) keyOpExec(sig protocols.Signature, in circuits.Operand) (ou
 	var isOutput bool
 	if out, isOutput = se.outputs[outLabel]; !isOutput {
 		out = circuits.NewFutureOperand(outLabel)
+		se.ops[outLabel] = out
 	}
 
+	ctx := pkg.NewContext(&se.sessid, (*pkg.CircuitID)(&se.cDesc.ID))
+
 	go func() {
-		err := se.protoExec.RunKeyOperation(context.Background(), sig, in, out)
+		err := se.protoExec.RunKeyOperation(ctx, sig)
 		if err != nil {
 			panic(err)
 		}
@@ -160,17 +185,34 @@ func keyOpOutputLabel(inLabel circuits.OperandLabel, sig protocols.Signature) ci
 	return circuits.OperandLabel(fmt.Sprintf("%s-%s-out", inLabel, sig.Type))
 }
 
+func (se *evaluator) getOperandLabel(cOpLabel circuits.OperandLabel) circuits.OperandLabel {
+	return cOpLabel.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
+}
+
 func (se *evaluator) DEC(in circuits.Operand, params map[string]string) (out *circuits.FutureOperand, err error) {
+	//in.OperandLabel = se.getOperandLabel(in.OperandLabel)
+	if _, has := se.ops[in.OperandLabel]; !has {
+		fop := circuits.NewFutureOperand(in.OperandLabel)
+		fop.Set(in)
+		se.ops[in.OperandLabel] = fop
+	}
 	sig := se.keyOpSig(protocols.DEC, in, params)
 	return se.keyOpExec(sig, in)
 }
 
 func (se *evaluator) PCKS(in circuits.Operand, params map[string]string) (out *circuits.FutureOperand, err error) {
+	//in.OperandLabel = se.getOperandLabel(in.OperandLabel)
+	if _, has := se.ops[in.OperandLabel]; !has {
+		fop := circuits.NewFutureOperand(in.OperandLabel)
+		fop.Set(in)
+		se.ops[in.OperandLabel] = fop
+	}
 	sig := se.keyOpSig(protocols.PCKS, in, params)
 	return se.keyOpExec(sig, in)
 }
 
 func (se *evaluator) Output(op circuits.Operand, nid pkg.NodeID) {
+	//opl := op.OperandLabel.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
 	se.outputs[op.OperandLabel].Set(op)
 }
 

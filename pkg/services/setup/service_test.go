@@ -39,7 +39,6 @@ var testSettings = []testSetting{
 
 type testnode struct {
 	*Service
-	//*protocols.Executor
 	*pkg.Session
 }
 
@@ -79,9 +78,6 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				clou := new(testnode)
 
-				//clou.Executor, err = protocols.NewExectutor(hid, testSess.HelperSession, protoTrans)
-				require.Nil(t, err)
-				//clou.Executor.RunService(ctx)
 				srvTrans := &testNodeTrans{Transport: protoTrans}
 				clou.Service, err = NewSetupService(hid, testSess.HelperSession, srvTrans, testSess.HelperSession.ObjectStore)
 				if err != nil {
@@ -93,9 +89,6 @@ func TestCloudAssistedSetup(t *testing.T) {
 				for nid := range nids {
 					cli := &testnode{}
 					cli.Session = testSess.NodeSessions[nid]
-					//cli.Executor, err = protocols.NewExectutor(nid, testSess.NodeSessions[nid], protoTrans.TransportFor(nid))
-					require.Nil(t, err)
-					//cli.Executor.RunService(ctx)
 					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
 					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], srvTrans, testSess.NodeSessions[nid].ObjectStore)
 					if err != nil {

@@ -19,8 +19,13 @@ type keySwitchProtocol struct {
 
 func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Instance, error) {
 
-	if len(pd.Participants) < sess.T {
-		return nil, fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.T)
+	prot, err := newProtocol(pd, sess)
+	if err != nil {
+		return nil, err
+	}
+
+	ks := &keySwitchProtocol{
+		protocol: *prot,
 	}
 
 	if _, hasArg := pd.Signature.Args["target"]; !hasArg {
@@ -34,9 +39,6 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 		return nil, fmt.Errorf("no input specified")
 	}
 
-	ks := &keySwitchProtocol{
-		protocol: protocol{ProtocolID: pd.ID(), Descriptor: pd, self: sess.NodeID},
-	}
 	ks.target = pkg.NodeID(target)
 
 	var isCt bool
@@ -44,13 +46,12 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 		return nil, fmt.Errorf("keyswitch protocol require a rlwe.Ciphertext as input parameter")
 	}
 
-	var err error
 	switch pd.Signature.Type {
 	case CKS:
 		return nil, fmt.Errorf("standalone CKS protocol not supported yet") // TODO
 	case DEC:
-		if !slices.Contains(pd.Participants, ks.target) {
-			return nil, fmt.Errorf("target must be a protocol participant in DEC")
+		if sess.Contains(ks.target) && !slices.Contains(pd.Participants, ks.target) {
+			return nil, fmt.Errorf("a session target must be a protocol participant in DEC")
 		}
 		ks.proto, err = NewCKSProtocol(sess.Params.Parameters, pd.Signature.Args)
 		ks.outputKey = rlwe.NewSecretKey(sess.Params) // target key is zero for decryption // TODO caching of this value

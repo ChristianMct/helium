@@ -19,6 +19,10 @@ type TestSession struct {
 	NodeSessions  map[NodeID]*Session
 	HelperSession *Session
 
+	// key backend
+	*CachedKeyBackend
+
+	// lattigo helpers
 	Encoder   *bgv.Encoder
 	Encryptor *rlwe.Encryptor
 	Decrpytor *rlwe.Decryptor
@@ -83,6 +87,8 @@ func NewTestSessionFromParams(sp SessionParameters, helperId NodeID) (*TestSessi
 	}
 
 	ts.HelperSession, err = NewSession(sp, helperId, os)
+
+	ts.CachedKeyBackend = NewCachedPublicKeyBackend(NewTestKeyBackend(ts.RlweParams.Parameters, ts.SkIdeal))
 
 	ts.Encoder = bgv.NewEncoder(ts.RlweParams)
 	ts.Encryptor, err = bgv.NewEncryptor(ts.RlweParams, ts.SkIdeal)

@@ -1,4 +1,4 @@
-package compute
+package pkg
 
 import (
 	"fmt"
@@ -97,4 +97,25 @@ func (ckb *CachedKeyBackend) GetRelinearizationKey() (*rlwe.RelinearizationKey, 
 		return rk, nil
 	}
 	return nil, err
+}
+
+type TestKeyBackend struct {
+	skIdeal *rlwe.SecretKey
+	keygen  rlwe.KeyGenerator
+}
+
+func NewTestKeyBackend(params rlwe.Parameters, skIdeal *rlwe.SecretKey) *TestKeyBackend {
+	return &TestKeyBackend{skIdeal: skIdeal, keygen: *rlwe.NewKeyGenerator(params)}
+}
+
+func (tkb *TestKeyBackend) GetCollectivePublicKey() (*rlwe.PublicKey, error) {
+	return tkb.keygen.GenPublicKeyNew(tkb.skIdeal)
+}
+
+func (tkb *TestKeyBackend) GetGaloisKey(galEl uint64) (*rlwe.GaloisKey, error) {
+	return tkb.keygen.GenGaloisKeyNew(galEl, tkb.skIdeal)
+}
+
+func (tkb *TestKeyBackend) GetRelinearizationKey() (*rlwe.RelinearizationKey, error) {
+	return tkb.keygen.GenRelinearizationKeyNew(tkb.skIdeal)
 }

@@ -4,12 +4,10 @@ import (
 	"fmt"
 
 	"github.com/ldsec/helium/pkg/pkg"
-	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
-	"golang.org/x/exp/maps"
 )
 
 type Name string
@@ -50,10 +48,12 @@ type Circuit func(EvaluationContext) error
 // their execution context.
 type EvaluationContext interface {
 	// Input reads an input operand with the given label from the context.
-	Input(OperandLabel) FutureOperand
+	Input(OperandLabel) *FutureOperand
 
 	// Load reads an existing ciphertext in the session
-	Load(OperandLabel) Operand
+	Load(OperandLabel) *Operand
+
+	NewOperand(OperandLabel) Operand // TODO prealloc lattigo ?
 
 	// Set registers the given operand to the context.
 	Set(Operand)
@@ -92,10 +92,6 @@ type Evaluator interface {
 
 	DecomposeNTT(levelQ, levelP, nbPi int, c2 ring.Poly, c2IsNTT bool, decompQP []ringqp.Poly)
 	NewDecompQPBuffer() []ringqp.Poly
-}
-
-func (cd Descriptor) InputPartiesIDSet() utils.Set[pkg.NodeID] {
-	return utils.NewSet(maps.Values(cd.InputParties))
 }
 
 var statusToString = []string{"COMPLETED", "STARTED", "EXECUTING", "FAILED"}

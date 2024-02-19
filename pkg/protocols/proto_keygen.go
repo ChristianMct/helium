@@ -139,6 +139,22 @@ type protocol struct {
 	agg *shareAggregator
 }
 
+func newProtocol(pd Descriptor, sess *pkg.Session) (*protocol, error) {
+
+	if len(pd.Participants) < sess.T {
+		return nil, fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.T)
+	}
+
+	for _, p := range pd.Participants {
+		if !sess.Contains(p) {
+			return nil, fmt.Errorf("participant %s not in session", p)
+		}
+	}
+
+	p := &protocol{ProtocolID: pd.ID(), Descriptor: pd, self: sess.NodeID}
+	return p, nil
+}
+
 type cpkProtocol struct {
 	protocol
 	proto LattigoKeygenProtocol
@@ -158,15 +174,15 @@ func NewProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Instance, e
 
 func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Instance, error) {
 
-	if len(pd.Participants) < sess.T {
-		return nil, fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.T)
+	prot, err := newProtocol(pd, sess)
+	if err != nil {
+		return nil, err
 	}
 
 	p := &cpkProtocol{
-		protocol: protocol{ProtocolID: pd.ID(), Descriptor: pd, self: sess.NodeID},
+		protocol: *prot,
 	}
 
-	var err error
 	switch pd.Signature.Type {
 	case CKG:
 		p.proto, err = NewCKGProtocol(*&sess.Params.Parameters, pd.Signature.Args)

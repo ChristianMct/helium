@@ -134,7 +134,7 @@ func (s *Executor) RunService(ctx context.Context) {
 
 			err := s.RunProtocolAsParticipant(ctx, ev.Descriptor)
 			if err != nil {
-				panic(err)
+				panic(fmt.Errorf("error during protocol execution as participant: %w", err))
 			}
 
 		}
@@ -153,6 +153,7 @@ func (s *Executor) RunService(ctx context.Context) {
 			}
 			// sends received share to the incoming channel of the destination protocol.
 			proto.incoming <- incShare
+
 			//s.Logf("received share from sender %s for protocol %s", incShare.From, incShare.ProtocolID)
 		}
 	}()
@@ -206,7 +207,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 		s.Logf("completed participation for %s", pd.HID())
 	}
 
-	aggOut = make(chan AggregationOutput)
+	aggOut = make(chan AggregationOutput, 1)
 	go func() {
 		var agg AggregationOutput
 		agg.Descriptor = pd
@@ -267,7 +268,7 @@ func (s *Executor) RunSignatureAsAggregator(ctx context.Context, sig Signature) 
 		return nil, fmt.Errorf("session could not extract session from context")
 	}
 
-	pd := s.getProtocolDescriptor(sig, sess.T)
+	pd := s.getProtocolDescriptor(sig, sess)
 
 	return s.runAsAggregator(ctx, sess, pd)
 }
@@ -374,13 +375,17 @@ func (s *Executor) getAvailable() utils.Set[pkg.NodeID] {
 	return available
 }
 
-func (s *Executor) getProtocolDescriptor(sig Signature, threshold int) Descriptor {
+func (s *Executor) getProtocolDescriptor(sig Signature, sess *pkg.Session) Descriptor {
 	pd := Descriptor{Signature: sig, Aggregator: s.self}
 
 	var available, selected utils.Set[pkg.NodeID]
 	switch sig.Type {
-	case DEC, PCKS:
-		selected = utils.NewSingletonSet(pkg.NodeID(sig.Args["target"]))
+	case DEC:
+		if sess.Contains(pkg.NodeID(sig.Args["target"])) {
+			selected = utils.NewSingletonSet(pkg.NodeID(sig.Args["target"]))
+			break
+		}
+		fallthrough
 	default:
 		selected = utils.NewEmptySet[pkg.NodeID]()
 	}
@@ -389,13 +394,13 @@ func (s *Executor) getProtocolDescriptor(sig Signature, threshold int) Descripto
 	for {
 		available = s.getAvailable()
 		available.Remove(selected.Elements()...)
-		if len(selected)+len(available) >= threshold {
+		if len(selected)+len(available) >= sess.T {
 			break
 		}
 		s.connectedNodesCond.Wait()
 	}
 
-	selected.AddAll(utils.GetRandomSetOfSize(threshold-len(selected), available))
+	selected.AddAll(utils.GetRandomSetOfSize(sess.T-len(selected), available))
 	pd.Participants = selected.Elements()
 	for nid := range selected {
 		nodeProto := s.connectedNodes[nid]
