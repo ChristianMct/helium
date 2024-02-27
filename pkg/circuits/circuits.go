@@ -22,8 +22,8 @@ type Signature struct {
 type Descriptor struct {
 	Signature
 	ID
-	InputParties map[string]pkg.NodeID
-	Evaluator    pkg.NodeID
+	NodeMapping map[string]pkg.NodeID
+	Evaluator   pkg.NodeID
 }
 
 type Status int32 // TODO harmonize with protocols.Event
@@ -44,6 +44,11 @@ type Event struct {
 // a provided evaluation context.
 type Circuit func(EvaluationContext) error
 
+type Output struct {
+	ID
+	Operand
+}
+
 // EvaluationContext defines the interface that is available to circuits to access
 // their execution context.
 type EvaluationContext interface {
@@ -62,10 +67,10 @@ type EvaluationContext interface {
 	Output(Operand, pkg.NodeID)
 
 	// DEC runs a DEC protocol over the provided operand within the context.
-	DEC(in Operand, params map[string]string) (out *FutureOperand, err error)
+	DEC(in Operand, rec pkg.NodeID, params map[string]string) error
 
 	// PCKS runs a PCKS protocol over the provided operand within the context.
-	PCKS(in Operand, params map[string]string) (out *FutureOperand, err error)
+	PCKS(in Operand, rec pkg.NodeID, params map[string]string) error
 
 	// Parameters returns the encryption parameters for the circuit.
 	Parameters() bgv.Parameters

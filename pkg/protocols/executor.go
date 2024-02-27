@@ -53,7 +53,7 @@ type Event struct {
 }
 
 func (ev Event) String() string {
-	return fmt.Sprintf("%s: %s", ev.EventType, ev.Descriptor)
+	return fmt.Sprintf("%s: %s", ev.EventType, ev.Signature)
 }
 
 type Executor struct {
@@ -77,6 +77,7 @@ type Executor struct {
 		incoming     chan Share
 		disconnected chan pkg.NodeID
 	}
+	runningProtoWg sync.WaitGroup
 
 	nodesToProtocols map[pkg.NodeID]utils.Set[pkg.ProtocolID]
 
@@ -114,31 +115,7 @@ func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordina
 	return s, nil
 }
 
-func (s *Executor) RunService(ctx context.Context) {
-
-	// processes incoming coordinator events
-	go func() {
-		for ev := range s.coordinator.Incoming() {
-
-			if ev.EventType != Started {
-				continue
-			}
-
-			if !s.isParticipantFor(ev.Descriptor) {
-				continue
-			}
-
-			if s.isKeySwitchReceiver(ev.Descriptor) {
-				continue
-			}
-
-			err := s.RunProtocolAsParticipant(ctx, ev.Descriptor)
-			if err != nil {
-				panic(fmt.Errorf("error during protocol execution as participant: %w", err))
-			}
-
-		}
-	}()
+func (s *Executor) Run(ctx context.Context) {
 
 	// processes incoming shares from the transport
 	go func() {
@@ -153,10 +130,38 @@ func (s *Executor) RunService(ctx context.Context) {
 			}
 			// sends received share to the incoming channel of the destination protocol.
 			proto.incoming <- incShare
-
 			//s.Logf("received share from sender %s for protocol %s", incShare.From, incShare.ProtocolID)
 		}
 	}()
+
+	// processes incoming coordinator events
+	for ev := range s.coordinator.Incoming() {
+
+		if ev.EventType != Started {
+			continue
+		}
+
+		if !s.isParticipantFor(ev.Descriptor) {
+			continue
+		}
+
+		if s.isKeySwitchReceiver(ev.Descriptor) {
+			continue
+		}
+
+		err := s.RunProtocolAsParticipant(ctx, ev.Descriptor)
+		if err != nil {
+			panic(fmt.Errorf("error during protocol execution as participant: %w", err))
+		}
+
+	}
+
+	s.runningProtoWg.Wait()
+
+	close(s.coordinator.Outgoing())
+
+	return
+
 }
 
 func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd Descriptor) (aggOut chan AggregationOutput, err error) {
@@ -188,6 +193,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 		disconnected: disconnected,
 	}
 	s.runningProtoMu.Unlock()
+	s.runningProtoWg.Add(1)
 
 	// runs the aggregation
 	aggregation, err = proto.Aggregate(ctx, incoming)
@@ -235,16 +241,25 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 			}
 		}
 
-		s.runningProtoMu.Lock()
-		delete(s.runningProtos, pid)
-		s.runningProtoMu.Unlock()
-
 		aggOut <- agg
 
 		if agg.Error != nil {
 			s.coordinator.Outgoing() <- Event{EventType: Failed, Descriptor: pd}
-			return
+		} else {
+			s.coordinator.Outgoing() <- Event{EventType: Completed, Descriptor: pd}
 		}
+
+		s.connectedNodesMu.Lock()
+		for _, part := range pd.Participants {
+			s.connectedNodes[part].Remove(pd.ID())
+		}
+		s.connectedNodesMu.Unlock()
+		s.connectedNodesCond.Broadcast()
+
+		s.runningProtoMu.Lock()
+		delete(s.runningProtos, pid)
+		s.runningProtoMu.Unlock()
+		s.runningProtoWg.Done()
 
 		err := s.aggOutBackend.Put(ctx, agg)
 		if err != nil {
@@ -253,8 +268,6 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 		s.runningProtoMu.Lock()
 		s.completedProtos = append(s.completedProtos, pd)
 		s.runningProtoMu.Unlock()
-
-		s.coordinator.Outgoing() <- Event{EventType: Completed, Descriptor: pd}
 
 		s.Logf("completed aggregation for %s", pd.HID())
 	}()
@@ -268,7 +281,11 @@ func (s *Executor) RunSignatureAsAggregator(ctx context.Context, sig Signature) 
 		return nil, fmt.Errorf("session could not extract session from context")
 	}
 
+	//s.Logf("getting key operation descriptor: %s", sig)
+
 	pd := s.getProtocolDescriptor(sig, sess)
+
+	//s.Logf("running key operation descriptor: %s", pd)
 
 	return s.runAsAggregator(ctx, sess, pd)
 }
@@ -466,8 +483,16 @@ func NewTestCoordinator() *testCoordinator {
 				cli.incoming <- ev
 			}
 		}
+		for _, cli := range tc.clients {
+			close(cli.incoming)
+		}
 	}()
 	return tc
+}
+
+func (tc *testCoordinator) Close() {
+	close(tc.outgoing)
+	close(tc.incoming)
 }
 
 func (tc *testCoordinator) NewNodeCoordinator(nid pkg.NodeID) *testCoordinator {

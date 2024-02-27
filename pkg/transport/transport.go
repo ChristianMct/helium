@@ -6,43 +6,40 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/ldsec/helium/pkg/circuits"
-	"github.com/ldsec/helium/pkg/coordinator"
 	"github.com/ldsec/helium/pkg/pkg"
-	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 )
 
-// Transport is an interface for the helium transport layer abstraction.
-type Transport interface {
-	// Connect starts the transport. After calling Connect, the transport
-	// should be running and delivering incoming/outgoing messages.
-	Connect() error
+// // Transport is an interface for the helium transport layer abstraction.
+// type Transport interface {
+// 	// Connect starts the transport. After calling Connect, the transport
+// 	// should be running and delivering incoming/outgoing messages.
+// 	Connect() error
 
-	// RegisterSetupService registers the provided SetupServiceHandler as an handler for setup-
-	// related queries received through the transport.
-	RegisterSetupService(SetupServiceHandler)
+// 	// RegisterSetupService registers the provided SetupServiceHandler as an handler for setup-
+// 	// related queries received through the transport.
+// 	RegisterSetupService(SetupServiceHandler)
 
-	// RegisterComputeService registers the provided ComputeServiceHandler as an handler for compute-
-	// related queries received through the transport.
-	RegisterComputeService(ComputeServiceHandler)
+// 	// RegisterComputeService registers the provided ComputeServiceHandler as an handler for compute-
+// 	// related queries received through the transport.
+// 	RegisterComputeService(ComputeServiceHandler)
 
-	GetCoordinationTransport() CoordinationTransport
+// 	GetCoordinationTransport() CoordinationTransport
 
-	// GetSetupTransport returns the SetupServiceTransport instance for the
-	// setup service to use.
-	// GetSetupTransport() SetupServiceTransport
+// 	// GetSetupTransport returns the SetupServiceTransport instance for the
+// 	// setup service to use.
+// 	// GetSetupTransport() SetupServiceTransport
 
-	// GetComputeTransport returns the ComputeServiceTransport instance for the
-	// compute service to use.
-	GetComputeTransport() ComputeServiceTransport
+// 	// GetComputeTransport returns the ComputeServiceTransport instance for the
+// 	// compute service to use.
+// 	GetComputeTransport() ComputeServiceTransport
 
-	// GetNetworkStats returns the basic network-usage statistics for the transport.
-	GetNetworkStats() NetStats
+// 	// GetNetworkStats returns the basic network-usage statistics for the transport.
+// 	GetNetworkStats() NetStats
 
-	// ResetNetworkStats resets the network stats
-	ResetNetworkStats()
-}
+// 	// ResetNetworkStats resets the network stats
+// 	ResetNetworkStats()
+// }
 
 // // SetupServiceTransport is an interface for the transport layer supporting the setup service.
 // type SetupServiceTransport interface {
@@ -62,66 +59,66 @@ type Transport interface {
 // 	Close() // TODO: there should be a common interface for transports
 // }
 
-// ComputeServiceTransport is an interface for the transport layer supporting the compute service.
-type ComputeServiceTransport interface {
-	RegisterForComputeAt(context.Context, pkg.NodeID) (<-chan circuits.Update, int, error)
+// // ComputeServiceTransport is an interface for the transport layer supporting the compute service.
+// type ComputeServiceTransport interface {
+// 	RegisterForComputeAt(context.Context, pkg.NodeID) (<-chan circuits.Update, int, error)
 
-	PutCircuitUpdates(circuits.Update) (seq int, err error)
+// 	PutCircuitUpdates(circuits.Update) (seq int, err error)
 
-	// GetCiphertext queries the transport for the designated ciphertext
-	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
+// 	// GetCiphertext queries the transport for the designated ciphertext
+// 	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
 
-	// PutCiphertext sends the ciphertext over the transport.
-	PutCiphertext(context.Context, pkg.NodeID, pkg.Ciphertext) error
+// 	// PutCiphertext sends the ciphertext over the transport.
+// 	PutCiphertext(context.Context, pkg.NodeID, pkg.Ciphertext) error
 
-	ShareTransport
+// 	ShareTransport
 
-	Close() // TODO: there should be a common interface for transports
-}
+// 	Close() // TODO: there should be a common interface for transports
+// }
 
-type CoordinationTransport interface {
-	Register(context.Context) (events <-chan coordinator.Event, present int, err error)
-	Send(coordinator.Event) error
-}
+// type CoordinationTransport interface {
+// 	Register(context.Context) (events <-chan coordinator.Event, present int, err error)
+// 	Send(coordinator.Event) error
+// }
 
-// ShareTransport is an interface for the transport of protocol shares.
-type ShareTransport interface {
-	// IncomingShares returns the channel over which the transport sends
-	// incoming shares.
-	IncomingShares() <-chan protocols.Share
+// // ShareTransport is an interface for the transport of protocol shares.
+// type ShareTransport interface {
+// 	// IncomingShares returns the channel over which the transport sends
+// 	// incoming shares.
+// 	IncomingShares() <-chan protocols.Share
 
-	// OutgoingShares returns the channel over which the caller can write
-	// shares for the transport to send.
-	OutgoingShares() chan<- protocols.Share
-}
+// 	// OutgoingShares returns the channel over which the caller can write
+// 	// shares for the transport to send.
+// 	OutgoingShares() chan<- protocols.Share
+// }
 
-type PeerRegisteringHandler interface {
-	// Register is called by the transport when a new peer register itself for the setup.
-	Register(pkg.NodeID) error
+// type PeerRegisteringHandler interface {
+// 	// Register is called by the transport when a new peer register itself for the setup.
+// 	Register(pkg.NodeID) error
 
-	// Unregister is called by the transport when a peer is unregistered from the setup.
-	Unregister(pkg.NodeID) error
-}
+// 	// Unregister is called by the transport when a peer is unregistered from the setup.
+// 	Unregister(pkg.NodeID) error
+// }
 
-// SetupServiceHandler handles queries from the transport to the setup service.
-type SetupServiceHandler interface {
-	PeerRegisteringHandler
+// // SetupServiceHandler handles queries from the transport to the setup service.
+// type SetupServiceHandler interface {
+// 	PeerRegisteringHandler
 
-	// GetProtocolStatus returns the node's list of protocol along with their status.
-	//GetProtocolStatus() []protocols.StatusUpdate
+// 	// GetProtocolStatus returns the node's list of protocol along with their status.
+// 	//GetProtocolStatus() []protocols.StatusUpdate
 
-	// GetProtocolOutput returns the aggregation output for the designated protocol
-	// or an error if such output does not exist.
-	GetProtocolOutput(protocols.Descriptor) (*protocols.AggregationOutput, error)
-}
+// 	// GetProtocolOutput returns the aggregation output for the designated protocol
+// 	// or an error if such output does not exist.
+// 	GetProtocolOutput(protocols.Descriptor) (*protocols.AggregationOutput, error)
+// }
 
-// ComputeServiceHandler handles queries from the transport to the compute service.
-type ComputeServiceHandler interface {
-	PeerRegisteringHandler
+// // ComputeServiceHandler handles queries from the transport to the compute service.
+// type ComputeServiceHandler interface {
+// 	PeerRegisteringHandler
 
-	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
-	PutCiphertext(context.Context, pkg.Ciphertext) error
-}
+// 	GetCiphertext(context.Context, pkg.CiphertextID) (*pkg.Ciphertext, error)
+// 	PutCiphertext(context.Context, pkg.Ciphertext) error
+// }
 
 type Dialer = func(c context.Context, s string) (net.Conn, error)
 

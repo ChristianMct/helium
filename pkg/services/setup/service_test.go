@@ -8,6 +8,7 @@ import (
 
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ldsec/helium/pkg/pkg"
 
@@ -83,7 +84,6 @@ func TestCloudAssistedSetup(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				clou.Service.RunService(ctx, coord)
 
 				clients := make(map[pkg.NodeID]*testnode, ts.N)
 				for nid := range nids {
@@ -94,7 +94,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					cli.Service.RunService(ctx, coord.NewNodeCoordinator(nid))
+
 					clou.Executor.Register(nid)
 					clients[nid] = cli
 				}
@@ -112,11 +112,32 @@ func TestCloudAssistedSetup(t *testing.T) {
 					Rlk: []pkg.NodeID{hid},
 				}
 
-				sigList, _ := DescriptionToSignatureList(sd)
-				for _, sig := range sigList {
-					err = clou.Service.RunProtocol(ctx, sig)
-					require.Nil(t, err)
+				// runs the setup
+				go func() {
+					sigList, _ := DescriptionToSignatureList(sd)
+					for _, sig := range sigList {
+						err = clou.Service.RunProtocol(ctx, sig)
+						require.Nil(t, err)
+					}
+					coord.Close()
+				}()
+
+				// run the nodes
+				g, ctx := errgroup.WithContext(ctx)
+				g.Go(func() error {
+					clou.Service.Run(ctx, coord)
+					return nil
+				})
+				for nid, cli := range clients {
+					nid := nid
+					cli := cli
+					g.Go(func() error {
+						cli.Service.Run(ctx, coord.NewNodeCoordinator(nid))
+						return nil
+					})
 				}
+				err = g.Wait()
+				require.Nil(t, err)
 
 				for _, c := range clients {
 					checkKeyGenProt(ctx, t, testSess, sd, c)

@@ -48,11 +48,10 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Trans
 	return s, nil
 }
 
-func (s *Service) RunService(ctx context.Context, coord protocols.Coordinator) {
-
-	s.Executor.RunService(ctx)
+func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) {
 
 	// processes incoming events from the coordinator
+	upstreamDone := make(chan struct{})
 	if coord.Incoming() != nil { // TODO need a better way
 		go func() {
 			for ev := range coord.Incoming() {
@@ -69,17 +68,26 @@ func (s *Service) RunService(ctx context.Context, coord protocols.Coordinator) {
 				}
 				s.incoming <- ev
 			}
+			close(upstreamDone)
 		}()
 	}
 
 	// process outgoing events
-
+	downstreamDone := make(chan struct{})
 	go func() {
 		for ev := range s.outgoing {
 			coord.Outgoing() <- ev
 		}
+		close(downstreamDone)
 	}()
 
+	go s.Executor.Run(ctx)
+
+	<-upstreamDone
+	s.Logf("upstream coordinator is done, closing downstream")
+	close(s.incoming) // closing downstream
+	<-downstreamDone
+	s.Logf("downstream coordinator is done, service.Run return")
 }
 
 // As helper

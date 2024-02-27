@@ -3,7 +3,9 @@ package compute
 import (
 	"context"
 	"fmt"
-	"maps"
+	"log"
+
+	"golang.org/x/exp/maps"
 
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
@@ -32,6 +34,7 @@ type evaluator struct {
 
 	// protocols
 	protoExec ProtocolExecutor
+	*completedProt
 
 	// data
 
@@ -69,6 +72,8 @@ func newEvaluator(sessid pkg.SessionID, c circuits.Circuit, cd circuits.Descript
 		ev.outputs[outLabel] = fop
 		ev.ops[outLabel] = fop
 	}
+
+	ev.completedProt = newCompletedProt(maps.Values(ci.KeySwitchOps))
 
 	ev.fheEvaluator, err = newLattigoEvaluator(*ci, params, pkbk)
 	if err != nil {
@@ -130,7 +135,7 @@ func (se *evaluator) GetFutureOperand(_ context.Context, opl circuits.OperandLab
 // EvaluationContext (user-facing) API
 
 func (se *evaluator) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
-	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
+	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.NodeMapping)
 	op, has := se.inputs[opl]
 	if !has {
 		panic(fmt.Errorf("non registered input: %s", opl))
@@ -139,7 +144,7 @@ func (se *evaluator) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 }
 
 func (se *evaluator) Load(opl circuits.OperandLabel) *circuits.Operand {
-	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
+	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.NodeMapping)
 	op, err := se.ctbk.Get(opl)
 	if err != nil {
 		panic(err)
@@ -148,7 +153,7 @@ func (se *evaluator) Load(opl circuits.OperandLabel) *circuits.Operand {
 }
 
 func (se *evaluator) NewOperand(opl circuits.OperandLabel) circuits.Operand {
-	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
+	opl = opl.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.NodeMapping)
 	return circuits.Operand{OperandLabel: opl}
 }
 
@@ -157,28 +162,26 @@ func (se *evaluator) Set(op circuits.Operand) {
 }
 
 func (se *evaluator) keyOpSig(pt protocols.Type, in circuits.Operand, params map[string]string) protocols.Signature {
-	pparams := maps.Clone(params)
-	pparams["op"] = string(in.OperandLabel)
-	return protocols.Signature{Type: pt, Args: pparams}
+	params["op"] = string(in.OperandLabel)
+	return protocols.Signature{Type: pt, Args: params}
 }
 
-func (se *evaluator) keyOpExec(sig protocols.Signature, in circuits.Operand) (out *circuits.FutureOperand, err error) {
-	outLabel := keyOpOutputLabel(in.OperandLabel, sig)
-	var isOutput bool
-	if out, isOutput = se.outputs[outLabel]; !isOutput {
-		out = circuits.NewFutureOperand(outLabel)
-		se.ops[outLabel] = out
-	}
+func (se *evaluator) keyOpExec(sig protocols.Signature, in circuits.Operand) (err error) {
+
+	// var isOutput bool
 
 	ctx := pkg.NewContext(&se.sessid, (*pkg.CircuitID)(&se.cDesc.ID))
 
-	go func() {
-		err := se.protoExec.RunKeyOperation(ctx, sig)
-		if err != nil {
-			panic(err)
-		}
-	}()
-	return out, nil
+	if err := se.protoExec.RunKeyOperation(ctx, sig); err != nil {
+		return err
+	}
+
+	outLabel := keyOpOutputLabel(in.OperandLabel, sig)
+	if outfop, isOutput := se.outputs[outLabel]; isOutput {
+		outfop.Get() // waits for keyop to complete
+		return
+	}
+	return fmt.Errorf("key op should have an output future operand for %s", outLabel)
 }
 
 func keyOpOutputLabel(inLabel circuits.OperandLabel, sig protocols.Signature) circuits.OperandLabel {
@@ -186,21 +189,24 @@ func keyOpOutputLabel(inLabel circuits.OperandLabel, sig protocols.Signature) ci
 }
 
 func (se *evaluator) getOperandLabel(cOpLabel circuits.OperandLabel) circuits.OperandLabel {
-	return cOpLabel.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.InputParties)
+	return cOpLabel.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.NodeMapping)
 }
 
-func (se *evaluator) DEC(in circuits.Operand, params map[string]string) (out *circuits.FutureOperand, err error) {
+func (se *evaluator) DEC(in circuits.Operand, rec pkg.NodeID, params map[string]string) (err error) {
 	//in.OperandLabel = se.getOperandLabel(in.OperandLabel)
 	if _, has := se.ops[in.OperandLabel]; !has {
 		fop := circuits.NewFutureOperand(in.OperandLabel)
 		fop.Set(in)
 		se.ops[in.OperandLabel] = fop
 	}
-	sig := se.keyOpSig(protocols.DEC, in, params)
+	pparams := maps.Clone(params)
+	pparams["target"] = string(se.cDesc.NodeMapping[string(rec)])
+	pparams["op"] = string(in.OperandLabel)
+	sig := se.keyOpSig(protocols.DEC, in, pparams)
 	return se.keyOpExec(sig, in)
 }
 
-func (se *evaluator) PCKS(in circuits.Operand, params map[string]string) (out *circuits.FutureOperand, err error) {
+func (se *evaluator) PCKS(in circuits.Operand, rec pkg.NodeID, params map[string]string) (err error) {
 	//in.OperandLabel = se.getOperandLabel(in.OperandLabel)
 	if _, has := se.ops[in.OperandLabel]; !has {
 		fop := circuits.NewFutureOperand(in.OperandLabel)
@@ -222,6 +228,10 @@ func (se *evaluator) Parameters() bgv.Parameters {
 
 func (se *evaluator) NewEvaluator() circuits.Evaluator {
 	return &fheEvaluator{se.fheEvaluator.ShallowCopy()}
+}
+
+func (se *evaluator) Logf(msg string, v ...any) {
+	log.Printf("%s | [%s] %s\n", se.cDesc.Evaluator, se.cDesc.ID, fmt.Sprintf(msg, v...))
 }
 
 func (ew *fheEvaluator) NewDecompQPBuffer() []ringqp.Poly {

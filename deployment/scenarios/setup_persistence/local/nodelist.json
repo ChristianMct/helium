@@ -1,6 +1,0 @@
-[
-  {"NodeID": "cloud","NodeAddress": "cloud:40000"}, 
-  {"NodeID": "node-a"},
-  {"NodeID": "node-b"},
-  {"NodeID": "node-R"}
-]

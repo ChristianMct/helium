@@ -31,15 +31,12 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 	if _, hasArg := pd.Signature.Args["target"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: target")
 	}
-	target, isString := pd.Signature.Args["target"]
-	if !isString {
-		return nil, fmt.Errorf("invalid target type %T instead of %T", pd.Signature.Args["target"], target)
-	}
+
+	ks.target = pkg.NodeID(pd.Signature.Args["target"])
+
 	if len(input) == 0 {
 		return nil, fmt.Errorf("no input specified")
 	}
-
-	ks.target = pkg.NodeID(target)
 
 	var isCt bool
 	if ks.input, isCt = input[0].(*rlwe.Ciphertext); !isCt {
@@ -52,6 +49,9 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 	case DEC:
 		if sess.Contains(ks.target) && !slices.Contains(pd.Participants, ks.target) {
 			return nil, fmt.Errorf("a session target must be a protocol participant in DEC")
+		}
+		if !sess.Contains(ks.target) && ks.Aggregator != ks.target {
+			return nil, fmt.Errorf("target for protocol DEC should be a session node or the aggreator, was %s", ks.target)
 		}
 		ks.proto, err = NewCKSProtocol(sess.Params.Parameters, pd.Signature.Args)
 		ks.outputKey = rlwe.NewSecretKey(sess.Params) // target key is zero for decryption // TODO caching of this value

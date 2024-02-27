@@ -3,6 +3,7 @@ package circuits
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/pkg"
@@ -87,7 +88,7 @@ func (e *circuitParserContext) String() string {
 func (e *circuitParserContext) Input(in OperandLabel) *FutureOperand {
 	e.l.Lock()
 	defer e.l.Unlock()
-	opl := in.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties)
+	opl := in.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping)
 	e.ci.InputSet.Add(opl)
 
 	from := opl.Host()
@@ -110,37 +111,44 @@ func (e *circuitParserContext) Load(in OperandLabel) *Operand {
 func (e *circuitParserContext) NewOperand(opl OperandLabel) Operand {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties))
+	e.ci.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping))
 	return Operand{OperandLabel: opl}
 }
 
 func (e *circuitParserContext) Set(op Operand) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	opl := op.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties)
+	opl := op.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping)
 	e.ci.Ops.Add(opl)
 }
 
 func (e *circuitParserContext) Get(opl OperandLabel) Operand {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties))
+	e.ci.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping))
 	return Operand{OperandLabel: opl}
 }
 
 func (e *circuitParserContext) Output(out Operand, to pkg.NodeID) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	opl := out.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.InputParties)
+	e.output(out, to)
+}
+
+func (e *circuitParserContext) output(out Operand, to pkg.NodeID) {
+	opl := out.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping)
 	e.ci.OutputSet.Add(opl)
 	e.ci.Ops.Add(opl)
 
-	to = e.cd.InputParties[string(to)]
+	tonid, has := e.cd.NodeMapping[string(to)]
+	if !has {
+		panic(fmt.Errorf("unknown node mapping for output reciever: %s", to))
+	}
 
-	outset, exists := e.ci.OutputsFor[to]
+	outset, exists := e.ci.OutputsFor[tonid]
 	if !exists {
 		outset = utils.NewEmptySet[OperandLabel]()
-		e.ci.OutputsFor[to] = outset
+		e.ci.OutputsFor[tonid] = outset
 	}
 	outset.Add(opl)
 }
@@ -152,9 +160,11 @@ func (e *circuitParserContext) registerKeyOps(sig protocols.Signature) error {
 		return fmt.Errorf("protocol parameter should have a target")
 	}
 
-	if e.cd.InputParties != nil {
-		sig.Args["target"] = string(e.cd.InputParties[target])
+	nid, has := e.cd.NodeMapping[target]
+	if !has {
+		panic(fmt.Errorf("unkown mapping to node for key op target: %s", target))
 	}
+	sig.Args["target"] = string(nid)
 
 	if _, exists := e.ci.KeySwitchOps[sig.String()]; exists {
 		return fmt.Errorf("protocol with id %s exists", sig.String())
@@ -173,32 +183,46 @@ func GetProtocolSignature(t protocols.Type, in OperandLabel, params map[string]s
 	return protocols.Signature{Type: t, Args: parm}
 }
 
-func (e *circuitParserContext) DEC(in Operand, params map[string]string) (out *FutureOperand, err error) {
+func (e *circuitParserContext) DEC(in Operand, rec pkg.NodeID, params map[string]string) (err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	pd := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(e.cd.ID), params)
+
+	if argRec, has := params["target"]; has && pkg.NodeID(argRec) != rec {
+		return fmt.Errorf("if specified, the target argument must match rec")
+	}
+
+	pparams := maps.Clone(params)
+	pparams["target"] = string(rec)
+
+	pd := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping), pparams)
 	if err = e.registerKeyOps(pd); err != nil {
-		panic(err)
+		return err
 	}
 	opOut := Operand{OperandLabel: OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Type))}
-	c := make(chan struct{})
-	close(c)
-	return &FutureOperand{c: c, Operand: opOut}, nil
+	e.output(opOut, rec)
+	return nil
 }
 
-func (e *circuitParserContext) PCKS(in Operand, params map[string]string) (out *FutureOperand, err error) {
+func (e *circuitParserContext) PCKS(in Operand, rec pkg.NodeID, params map[string]string) (err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
-	pd := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(e.cd.ID), params)
+
+	if argRec, has := params["target"]; has && pkg.NodeID(argRec) != rec {
+		return fmt.Errorf("if specified, the target argument must match rec")
+	}
+
+	pparams := maps.Clone(params)
+	pparams["target"] = string(rec)
+
+	pd := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping), params)
 	if err = e.registerKeyOps(pd); err != nil {
 		panic(err)
 	}
 	opOut := Operand{OperandLabel: OperandLabel(fmt.Sprintf("%s-%s-out", in.OperandLabel, pd.Type))}
-	c := make(chan struct{})
-	close(c)
-	return &FutureOperand{c: c, Operand: opOut}, nil
+	e.output(opOut, rec)
+	return nil
 }
 
 func (e *circuitParserContext) Parameters() bgv.Parameters {

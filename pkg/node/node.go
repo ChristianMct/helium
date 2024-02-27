@@ -33,9 +33,6 @@ type Node struct {
 	objectstore.ObjectStore
 	//pkBackend compute.PublicKeyBackend
 
-	// coordination
-	executor *protocols.Executor
-
 	//transport transport.Transport
 	srv                 *centralized.HeliumServer
 	cli                 *centralized.HeliumClient
@@ -125,16 +122,8 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	node.inshares = make(chan protocols.Share)
 	node.outshares = make(chan protocols.Share)
 
-	// Executor
-	node.executor, err = protocols.NewExectutor(node.id, node, node)
-	if err != nil {
-		return nil, err
-	}
-
-	node.executor.RunService(context.Background())
-
 	// services
-	node.setup, err = setup.NewSetupService(node.id, node.executor, node.cli, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id /* node.sessions, node,*/, nil, nil, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
@@ -266,25 +255,12 @@ func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signa
 			node.srv.CloseEvents()
 		}()
 
-		node.setup.RunService(ctx, coord)
+		node.setup.Run(ctx, coord)
 
 		// TODO: load and verify state from persistent storage
 		for _, sig := range sigList {
 			sig := sig
-			pdc := make(chan protocols.Descriptor)
-			go func() {
-				pdc <- node.getProtocolDescriptor(sig, sess.T)
-			}()
-			select {
-			case pd := <-pdc:
-				err = node.setup.RunProtocol(ctx, pd)
-				if err != nil {
-					return nil, nil, err
-				}
-			case <-ctx.Done():
-				return nil, nil, ctx.Err()
-			}
-
+			node.setup.RunSignatureAsAggregator(ctx, sig)
 		}
 
 		node.Logf("all signatures run, closing")
@@ -305,7 +281,7 @@ func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signa
 		go node.sendShares(ctx)
 
 		coord := &nodeProtocolCoordinator{incoming: make(chan protocols.Event)}
-		node.setup.RunService(ctx, coord)
+		node.setup.Run(ctx, coord)
 		for ev := range events {
 			if ev.IsSetupEvent() {
 				pev := *ev.ProtocolEvent
@@ -338,12 +314,12 @@ func (n *Node) OutgoingShares() chan<- protocols.Share {
 
 // Register is called by the transport when a new peer register itself for the setup.
 func (s *Node) Register(peer pkg.NodeID) error {
-	return s.executor.Register(peer)
+	return s.setup.Register(peer)
 }
 
 // Unregister is called by the transport when a peer is unregistered from the setup.
 func (s *Node) Unregister(peer pkg.NodeID) error {
-	return s.executor.Register(peer)
+	return s.setup.Register(peer)
 }
 
 func (node *Node) sendShares(ctx context.Context) {
@@ -362,26 +338,26 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 
 	var current int
 	runProto := make(map[pkg.ProtocolID]protocols.Descriptor)
-	runCircuit := make(map[pkg.CircuitID]circuits.Signature)
+	runCircuit := make(map[circuits.ID]circuits.Signature)
 	for ev := range events {
 
 		if ev.IsComputeEvent() {
-			cid := ev.CircuitID
-			switch ev.CircuitEvent.EventType {
-			case coordinator.Started:
+			cid := ev.CircuitEvent.ID
+			switch ev.CircuitEvent.Status {
+			case circuits.Started:
 				runCircuit[cid] = ev.CircuitEvent.Signature
-			case coordinator.Executing:
+			case circuits.Executing:
 				if _, has := runCircuit[cid]; !has {
 					err = fmt.Errorf("inconsisted state, circuit %s execution event before start", cid)
 					return
 				}
-			case coordinator.Completed, coordinator.Failed:
+			case circuits.Completed, circuits.Failed:
 				if _, has := runCircuit[cid]; !has {
 					err = fmt.Errorf("inconsisted state, circuit %s termination event before start", cid)
 					return
 				}
 				delete(runCircuit, cid)
-				if ev.CircuitEvent.EventType == coordinator.Completed {
+				if ev.CircuitEvent.Status == circuits.Completed {
 					completedCirc = append(completedCirc, ev.CircuitEvent.Signature)
 				}
 			}

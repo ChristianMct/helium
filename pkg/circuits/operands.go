@@ -27,6 +27,12 @@ func NewFutureOperand(opl OperandLabel) *FutureOperand {
 	return &FutureOperand{Operand: Operand{OperandLabel: opl}, c: make(chan struct{})}
 }
 
+func NewDummyFutureOperand(opl OperandLabel) *FutureOperand {
+	c := make(chan struct{})
+	close(c)
+	return &FutureOperand{Operand: Operand{OperandLabel: opl}, c: c}
+}
+
 func (fo *FutureOperand) Set(op Operand) {
 	if fo.Ciphertext != nil { // TODO that only the main circuit routine calls set
 		return

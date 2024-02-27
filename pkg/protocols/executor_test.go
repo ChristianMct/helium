@@ -82,11 +82,11 @@ func TestExecutor(t *testing.T) {
 
 		helper, err = NewExectutor(hid, testSess.HelperSession, testCoord, hip, testAggBackend, testTrans)
 		require.Nil(t, err)
-		go helper.RunService(ctx)
+		go helper.Run(ctx)
 		for nid := range nids {
 			executors[nid], err = NewExectutor(nid, testSess.NodeSessions[nid], testCoord.NewNodeCoordinator(nid), pip, nil, testTrans.TransportFor(nid))
 			require.Nil(t, err)
-			go executors[nid].RunService(ctx)
+			go executors[nid].Run(ctx)
 			err = helper.Register(nid)
 			if err != nil {
 				t.Fatal(err)
