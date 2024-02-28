@@ -118,7 +118,7 @@ func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.D
 	if err != nil {
 		return nil, err
 	}
-	return &protocols.AggregationOutput{Share: s}, nil
+	return &protocols.AggregationOutput{Share: s, Descriptor: pd}, nil
 }
 
 func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {

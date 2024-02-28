@@ -3,19 +3,17 @@ package setup
 import (
 	"context"
 	"fmt"
-	"math"
 	"testing"
 
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
+	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ldsec/helium/pkg/pkg"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
 var TestPN12QP109 = bgv.ParametersLiteral{
@@ -41,6 +39,7 @@ var testSettings = []testSetting{
 type testnode struct {
 	*Service
 	*pkg.Session
+	protocols.Coordinator
 }
 
 type testNodeTrans struct {
@@ -77,13 +76,16 @@ func TestCloudAssistedSetup(t *testing.T) {
 				coord := protocols.NewTestCoordinator()
 				protoTrans := protocols.NewTestTransport()
 
+				all := make(map[pkg.NodeID]*testnode, ts.N+1)
 				clou := new(testnode)
+				all["helper"] = clou
 
 				srvTrans := &testNodeTrans{Transport: protoTrans}
 				clou.Service, err = NewSetupService(hid, testSess.HelperSession, srvTrans, testSess.HelperSession.ObjectStore)
 				if err != nil {
 					t.Fatal(err)
 				}
+				clou.Coordinator = coord
 
 				clients := make(map[pkg.NodeID]*testnode, ts.N)
 				for nid := range nids {
@@ -94,9 +96,10 @@ func TestCloudAssistedSetup(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-
-					clou.Executor.Register(nid)
+					cli.Coordinator = coord.NewNodeCoordinator(nid)
+					clou.Service.Register(nid)
 					clients[nid] = cli
+					all[nid] = cli
 				}
 
 				sd := Description{
@@ -116,31 +119,26 @@ func TestCloudAssistedSetup(t *testing.T) {
 				go func() {
 					sigList, _ := DescriptionToSignatureList(sd)
 					for _, sig := range sigList {
-						err = clou.Service.RunProtocol(ctx, sig)
-						require.Nil(t, err)
+						clou.RunProtocol(ctx, sig)
 					}
 					coord.Close()
 				}()
 
 				// run the nodes
 				g, ctx := errgroup.WithContext(ctx)
-				g.Go(func() error {
-					clou.Service.Run(ctx, coord)
-					return nil
-				})
-				for nid, cli := range clients {
+				for nid, node := range all {
 					nid := nid
-					cli := cli
+					node := node
 					g.Go(func() error {
-						cli.Service.Run(ctx, coord.NewNodeCoordinator(nid))
-						return nil
+						err := node.Run(ctx, node.Coordinator)
+						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
 				err = g.Wait()
 				require.Nil(t, err)
 
-				for _, c := range clients {
-					checkKeyGenProt(ctx, t, testSess, sd, c)
+				for _, n := range all {
+					CheckTestSetup(ctx, t, n.self, testSess, sd, n)
 				}
 
 				// 	// Start public key generation
@@ -561,49 +559,3 @@ func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signat
 // 		}
 // 	}
 // }
-
-// Based on the session information, check if the protocol was performed correctly.
-func checkKeyGenProt(ctx context.Context, t *testing.T, lt *pkg.TestSession, setup Description, n *testnode) {
-
-	params := lt.RlweParams
-	sk := lt.SkIdeal
-	nParties := len(lt.HelperSession.Nodes)
-	sess := n.Session
-
-	// check CPK
-	if utils.NewSet(setup.Cpk).Contains(n.self) {
-		cpk, err := n.Service.GetCollectivePublicKey(ctx)
-		if err != nil {
-			t.Fatalf("%s | %s", sess.NodeID, err)
-		}
-
-		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params.Parameters), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
-	}
-
-	// check RTG
-	for _, key := range setup.GaloisKeys {
-		if utils.NewSet(key.Receivers).Contains(sess.NodeID) {
-			rtk, err := n.Service.GetGaloisKey(ctx, key.GaloisEl)
-			if err != nil {
-				t.Fatalf("%s | %s", sess.NodeID, err)
-			}
-
-			decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
-			noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
-			require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params.Parameters), noiseBound, "rtk for galEl %d should be correct", key.GaloisEl)
-		}
-	}
-
-	// check RLK
-	if utils.NewSet(setup.Rlk).Contains(sess.NodeID) {
-		rlk, err := n.Service.GetRelinearizationKey(ctx)
-		if err != nil {
-			t.Fatalf("%s | %s", sess.NodeID, err)
-		}
-
-		BaseRNSDecompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
-		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
-
-		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
-	}
-}

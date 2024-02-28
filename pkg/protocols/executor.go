@@ -438,7 +438,7 @@ func (s *Executor) DisconnectedNode(id pkg.NodeID) {
 }
 
 func (s *Executor) Logf(msg string, v ...any) {
-	log.Printf("%s | %s\n", s.self, fmt.Sprintf(msg, v...))
+	log.Printf("%s | [compute] %s\n", s.self, fmt.Sprintf(msg, v...))
 }
 
 func (s *Executor) NodeID() pkg.NodeID {
@@ -491,7 +491,6 @@ func NewTestCoordinator() *testCoordinator {
 }
 
 func (tc *testCoordinator) Close() {
-	close(tc.outgoing)
 	close(tc.incoming)
 }
 
@@ -507,6 +506,10 @@ func (tc *testCoordinator) Incoming() <-chan Event {
 
 func (tc *testCoordinator) Outgoing() chan<- Event {
 	return tc.outgoing
+}
+
+func (tc *testCoordinator) New(ev Event) {
+	tc.incoming <- ev
 }
 
 type testTransport struct {

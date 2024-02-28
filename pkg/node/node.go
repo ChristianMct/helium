@@ -11,8 +11,10 @@ import (
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport/centralized"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -31,7 +33,7 @@ type Node struct {
 
 	sessions *pkg.SessionStore
 	objectstore.ObjectStore
-	//pkBackend compute.PublicKeyBackend
+	// pkBackend compute.PublicKeyBackend
 
 	//transport transport.Transport
 	srv                 *centralized.HeliumServer
@@ -39,8 +41,8 @@ type Node struct {
 	outshares, inshares chan protocols.Share
 
 	// services
-	setup *setup.Service
-	//compute *compute.Service
+	setup   *setup.Service
+	compute *compute.Service
 
 	// postsetupHandler  func(*pkg.SessionStore, compute.PublicKeyBackend) error
 	// precomputeHandler func(*pkg.SessionStore, compute.PublicKeyBackend) error
@@ -58,28 +60,28 @@ type Config struct {
 	TLSConfig         centralized.TLSConfig
 }
 
-type lightNodeServiceTransport struct {
-	*centralized.HeliumClient
-	outgoingShares chan protocols.Share
-}
+// type lightNodeServiceTransport struct {
+// 	*centralized.HeliumClient
+// 	outgoingShares chan protocols.Share
+// }
 
-// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
-// aggregated share of the designated protocol.
-func (lst *lightNodeServiceTransport) GetAggregationFrom(ctx context.Context, nid pkg.NodeID, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-	return lst.HeliumClient.GetAggregationOutput(ctx, pd)
-}
+// // GetAggregationFrom queries the designated node id (typically, the aggregator) for the
+// // aggregated share of the designated protocol.
+// func (lst *lightNodeServiceTransport) GetAggregationFrom(ctx context.Context, nid pkg.NodeID, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+// 	return lst.HeliumClient.GetAggregationOutput(ctx, pd)
+// }
 
-// IncomingShares returns the channel over which the transport sends
-// incoming shares.
-func (lst *lightNodeServiceTransport) IncomingShares() <-chan protocols.Share {
-	panic("light nodes cannot receive shares")
-}
+// // IncomingShares returns the channel over which the transport sends
+// // incoming shares.
+// func (lst *lightNodeServiceTransport) IncomingShares() <-chan protocols.Share {
+// 	panic("light nodes cannot receive shares")
+// }
 
-// OutgoingShares returns the channel over which the caller can write
-// shares for the transport to send.
-func (lst *lightNodeServiceTransport) OutgoingShares() chan<- protocols.Share {
-	return lst.outgoingShares
-}
+// // OutgoingShares returns the channel over which the caller can write
+// // shares for the transport to send.
+// func (lst *lightNodeServiceTransport) OutgoingShares() chan<- protocols.Share {
+// 	return lst.outgoingShares
+// }
 
 // NewNode creates a new Helium node from the provided config and node list.
 func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
@@ -119,20 +121,20 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	} else {
 		node.cli = centralized.NewHeliumClient(node.id, node.helperId, node.nodeList.AddressOf(node.helperId))
 	}
+
 	node.inshares = make(chan protocols.Share)
 	node.outshares = make(chan protocols.Share)
 
 	// services
-	node.setup, err = setup.NewSetupService(node.id /* node.sessions, node,*/, nil, nil, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id, node, node, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
 
-	//node.pkBackend = compute.NewCachedPublicKeyBackend(node.setup)
-	// node.compute, err = compute.NewComputeService(node.id, node.helperId, node, node.transport.GetComputeTransport(), node.pkBackend)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to load the compute service: %w", err)
-	// }
+	node.compute, err = compute.NewComputeService(node.id, node, node.setup, node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load the compute service: %w", err)
+	}
 
 	// internal
 	// node.postsetupHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
@@ -198,32 +200,32 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 // 	return node, nil
 // }
 
-type helperProtocolCoordinator struct {
-	outgoing chan protocols.Event
+type protocolCoordinator struct {
+	incoming, outgoing chan protocols.Event
 }
 
-func (hcp *helperProtocolCoordinator) Incoming() <-chan protocols.Event {
-	return nil
-}
-
-func (hcp *helperProtocolCoordinator) Outgoing() chan<- protocols.Event {
-	return hcp.outgoing
-}
-
-type nodeProtocolCoordinator struct {
-	incoming chan protocols.Event
-}
-
-func (hcp *nodeProtocolCoordinator) Incoming() <-chan protocols.Event {
+func (hcp *protocolCoordinator) Incoming() <-chan protocols.Event {
 	return hcp.incoming
 }
 
-func (hcp *nodeProtocolCoordinator) Outgoing() chan<- protocols.Event {
-	return nil
+func (hcp *protocolCoordinator) Outgoing() chan<- protocols.Event {
+	return hcp.outgoing
 }
 
-// func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
-func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan interface{}, err error) {
+type coordinatorT struct {
+	incoming, outgoing chan coordinator.Event
+}
+
+func (hcp *coordinatorT) Incoming() <-chan coordinator.Event {
+	return hcp.incoming
+}
+
+func (hcp *coordinatorT) Outgoing() chan<- coordinator.Event {
+	return hcp.outgoing
+}
+
+// func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
+func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
 
 	// recovers the session
 	sess, exists := node.GetSessionFromContext(ctx)
@@ -231,40 +233,79 @@ func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signa
 		return nil, nil, fmt.Errorf("session `%s` does not exist", sess.ID)
 	}
 
+	// App loading
+
 	// registers the app's circuits and infer the setup description
-	// for cName, circuit := range app.Circuits {
-	// 	compute.RegisterCircuit(cName, circuit)
-	// }
-	setupDesc, err := getSetupDescription(app, sess)
+	err = node.compute.RegisterCircuits(app.Circuits)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("could not register all circuits: %w", err)
+	}
+
+	if app.SetupDescription == nil {
+		return nil, nil, fmt.Errorf("app must provide a setup description") // TODO: inference of setup description from registered circuits.
 	}
 
 	//sigList, sigToReceiverSet := setup.DescriptionToSignatureList(setupDesc)
-	sigList, _ := setup.DescriptionToSignatureList(setupDesc)
+	sigList, _ := setup.DescriptionToSignatureList(*app.SetupDescription)
 
+	cds := make(chan circuits.Descriptor)
+	or := make(chan circuits.Output)
+
+	// runs the setup phase
 	if node.IsFullNode() {
 
-		coord := &helperProtocolCoordinator{make(chan protocols.Event)}
+		setupCoord := &protocolCoordinator{make(chan protocols.Event), make(chan protocols.Event)}
 
+		downstreamDone := make(chan struct{})
 		go func() {
-			for ev := range coord.outgoing {
+			for ev := range setupCoord.outgoing {
 				pev := ev
 				node.srv.SendEvent(coordinator.Event{Time: time.Now(), ProtocolEvent: &pev})
 			}
-			node.srv.CloseEvents()
+			//node.srv.CloseEvents()
+			close(downstreamDone)
 		}()
 
-		node.setup.Run(ctx, coord)
+		go node.setup.Run(ctx, setupCoord)
 
 		// TODO: load and verify state from persistent storage
 		for _, sig := range sigList {
 			sig := sig
-			node.setup.RunSignatureAsAggregator(ctx, sig)
+			node.setup.RunProtocol(ctx, sig)
 		}
 
-		node.Logf("all signatures run, closing")
-		close(coord.outgoing)
+		node.Logf("all signatures run, closing setup downstream")
+		close(setupCoord.incoming)
+
+		<-downstreamDone
+		node.Logf("setup done Service done")
+		close(node.setupDone)
+
+		computeCoord := &coordinatorT{make(chan coordinator.Event), make(chan coordinator.Event)}
+
+		go node.compute.Run(ctx, ip, or, computeCoord)
+
+		downstreamDone = make(chan struct{})
+		go func() {
+			for ev := range computeCoord.outgoing {
+				cev := ev
+				node.srv.SendEvent(cev)
+			}
+			close(downstreamDone)
+		}()
+
+		go func() {
+			for cd := range cds {
+				cev := coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
+				computeCoord.incoming <- cev
+			}
+			node.Logf("user closed circuit discription channel, closing downstream")
+			close(computeCoord.incoming)
+			<-downstreamDone
+			node.Logf("compute service done, closing event channel")
+			//close(or) already closed by service
+			node.srv.CloseEvents()
+		}()
 
 	} else {
 		events, present, err := node.cli.Register(ctx)
@@ -280,24 +321,42 @@ func (node *Node) RunNew(ctx context.Context, app App) (sigs chan circuits.Signa
 
 		go node.sendShares(ctx)
 
-		coord := &nodeProtocolCoordinator{incoming: make(chan protocols.Event)}
-		node.setup.Run(ctx, coord)
-		for ev := range events {
-			if ev.IsSetupEvent() {
-				pev := *ev.ProtocolEvent
-				coord.incoming <- pev
-			}
-		}
+		setupCoord := &protocolCoordinator{make(chan protocols.Event), make(chan protocols.Event)}
+		go node.setup.Run(ctx, setupCoord)
 
-		node.Logf("helper closed the event log, closing")
+		computeCoord := &coordinatorT{make(chan coordinator.Event), make(chan coordinator.Event)}
+		go node.compute.Run(ctx, ip, or, computeCoord)
+
+		go func() {
+			for ev := range events {
+				if ev.IsSetupEvent() {
+					pev := *ev.ProtocolEvent
+					setupCoord.incoming <- pev
+				}
+				if ev.IsComputeEvent() {
+					cev := ev
+					computeCoord.incoming <- cev
+				}
+			}
+
+			node.Logf("upstream done, closing downstream")
+			close(setupCoord.incoming)
+			close(computeCoord.incoming)
+			close(node.setupDone)
+		}()
+
 	}
 
-	return
+	return cds, or, nil
 }
 
 func (n *Node) PutShare(_ context.Context, s protocols.Share) error {
 	n.inshares <- s
 	return nil
+}
+
+func (n *Node) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	return n.cli.GetAggregationOutput(ctx, pd)
 }
 
 func (n *Node) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
@@ -312,6 +371,14 @@ func (n *Node) OutgoingShares() chan<- protocols.Share {
 	return n.outshares
 }
 
+func (n *Node) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
+	return n.cli.PutCiphertext(ctx, ct)
+}
+
+func (n *Node) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
+	return n.cli.GetCiphertext(ctx, ctID)
+}
+
 // Register is called by the transport when a new peer register itself for the setup.
 func (s *Node) Register(peer pkg.NodeID) error {
 	return s.setup.Register(peer)
@@ -319,7 +386,7 @@ func (s *Node) Register(peer pkg.NodeID) error {
 
 // Unregister is called by the transport when a peer is unregistered from the setup.
 func (s *Node) Unregister(peer pkg.NodeID) error {
-	return s.setup.Register(peer)
+	return s.setup.Unregister(peer)
 }
 
 func (node *Node) sendShares(ctx context.Context) {
@@ -394,24 +461,88 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 	return
 }
 
-func getSetupDescription(app App, sess *pkg.Session) (sd setup.Description, err error) {
-	// creates a setup.Description from the config and provided circuits
-	if app.SetupDescription != nil {
-		sd = setup.MergeSetupDescriptions(sd, *app.SetupDescription)
-	} else {
-		return setup.Description{}, fmt.Errorf("must provide a setup description") // TODO re enable setup inference
-	}
-	// for _, cs := range app.Circuits {
-	// 	// infer setup description
-	// 	compSd, err := setup.CircuitToSetupDescription(cs, *sess.Params)
-	// 	if err != nil {
-	// 		return setup.Description{}, fmt.Errorf("error while converting circuit to setup description: %w", err)
-	// 	}
-	// 	// adds the circuit's required eval keys to the app's setup description
-	// 	sd = setup.MergeSetupDescriptions(sd, compSd)
-	// }
-	return sd, nil
-}
+// func getSetupDescription(app App, sess *pkg.Session) (sd setup.Description, err error) {
+// 	// creates a setup.Description from the config and provided circuits
+// 	if app.SetupDescription != nil {
+// 		sd = setup.MergeSetupDescriptions(sd, *app.SetupDescription)
+// 	} else {
+// 		return setup.Description{}, fmt.Errorf("must provide a setup description") // TODO re enable setup inference
+// 	}
+// 	// for _, cs := range app.Circuits {
+// 	// 	// infer setup description
+// 	// 	compSd, err := CircuitToSetupDescription(cs, *sess.Params)
+// 	// 	if err != nil {
+// 	// 		return setup.Description{}, fmt.Errorf("error while converting circuit to setup description: %w", err)
+// 	// 	}
+// 	// 	// adds the circuit's required eval keys to the app's setup description
+// 	// 	sd = setup.MergeSetupDescriptions(sd, *compSd)
+// 	// }
+// 	return sd, nil
+// }
+
+// // CircuitToSetupDescription converts a CircuitDescription into a setup.Description by
+// // extractiong the keys needed for the correct circuit execution.
+// func CircuitToSetupDescription(c circuits.Circuit, params bgv.Parameters) (*setup.Description, error) {
+// 	sd := setup.Description{}
+
+// 	cDesc := circuits.Descriptor{Signature: circuits.Signature{Name: "dummy"}}
+
+// 	cd, err := circuits.Parse(c, "dummy-cid", params, nil)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	// determine session nodes
+// 	sessionNodes := make([]pkg.NodeID, 0)
+// 	for client := range cd.InputSet {
+// 		nopl, err := url.Parse(string(client))
+// 		if err != nil {
+// 			panic(fmt.Errorf("invalid operand label: %s", client))
+// 		}
+// 		sessionNodes = append(sessionNodes, pkg.NodeID(nopl.Host))
+// 	}
+// 	// log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
+
+// 	// determine aggregators
+// 	aggregators := make([]pkg.NodeID, 0)
+// 	for _, ksSig := range cd.KeySwitchOps {
+// 		aggregators = append(aggregators, pkg.NodeID(ksSig.Args["aggregator"]))
+// 	}
+// 	// log.Printf("[Convert] Aggregators are %v\n", aggregators)
+
+// 	// Collective Public Key
+// 	sd.Cpk = sessionNodes
+
+// 	// Relinearization Key
+// 	if cd.NeedRlk {
+// 		sd.Rlk = aggregators
+// 	}
+
+// 	// Rotation Keys
+// 	for GaloisEl := range cd.GaloisKeys {
+// 		keyField := struct {
+// 			GaloisEl  uint64
+// 			Receivers []pkg.NodeID
+// 		}{GaloisEl, aggregators}
+// 		sd.GaloisKeys = append(sd.GaloisKeys, keyField)
+// 	}
+
+// 	// Public Keys of output receivers
+// 	// for _, ksSig := range cd.KeySwitchOps {
+// 	// 	// there is an external receiver
+// 	// 	if ksSig.Type == protocols.PCKS {
+// 	// 		sender := pkg.NodeID(ksSig.Args["target"])
+// 	// 		receivers := append(aggregators, sessionNodes...)
+// 	// 		keyField := struct {
+// 	// 			Sender    pkg.NodeID
+// 	// 			Receivers []pkg.NodeID
+// 	// 		}{sender, receivers}
+// 	// 		sd.Pk = append(sd.Pk, keyField)
+// 	// 	}
+// 	// }
+
+// 	return sd, nil
+// }
 
 // func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
 // 	sessId, _ := pkg.SessionIDFromContext(ctx)
@@ -491,10 +622,6 @@ func (node *Node) WaitForSetupDone() {
 	<-node.setupDone
 }
 
-func (node *Node) GetSetupService() *setup.Service {
-	return node.setup
-}
-
 // func (node *Node) GetComputeService() *compute.Service {
 // 	return node.compute
 // }
@@ -567,7 +694,7 @@ func (node *Node) Close() error {
 }
 
 func (node *Node) Logf(msg string, v ...any) {
-	log.Printf("%s | %s\n", node.id, fmt.Sprintf(msg, v...))
+	log.Printf("%s | [node] %s\n", node.id, fmt.Sprintf(msg, v...))
 }
 
 // // outputStats outputs the total network usage and time take to execute a protocol phase.
@@ -614,22 +741,17 @@ func (node *Node) Logf(msg string, v ...any) {
 // 	node.precomputeHandler = h
 // }
 
-type Context struct {
-	C context.Context
+func (n *Node) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
+	n.WaitForSetupDone()
+	return n.setup.GetCollectivePublicKey(ctx)
 }
 
-func (c Context) SenderID() string {
-	md, hasIncomingContext := metadata.FromIncomingContext(c.C)
-	if hasIncomingContext && len(md.Get("node_id")) == 1 {
-		return md.Get("node_id")[0]
-	}
-	return ""
+func (n *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
+	n.WaitForSetupDone()
+	return n.setup.GetGaloisKey(ctx, galEl)
 }
 
-func (c Context) SessionID() pkg.SessionID {
-	md, hasIncomingContext := metadata.FromIncomingContext(c.C)
-	if hasIncomingContext && len(md.Get("session_id")) == 1 {
-		return pkg.SessionID(md.Get("session_id")[0])
-	}
-	return ""
+func (n *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
+	n.WaitForSetupDone()
+	return n.setup.GetRelinearizationKey(ctx)
 }

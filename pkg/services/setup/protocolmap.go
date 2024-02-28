@@ -1,12 +1,18 @@
 package setup
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
+	"testing"
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/stretchr/testify/require"
+	"github.com/tuneinsight/lattigo/v4/drlwe"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 
 	//"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/utils"
@@ -69,68 +75,6 @@ func mergeReceivers(r1, r2 []pkg.NodeID) (rOut []pkg.NodeID) {
 	return els
 }
 
-// // CircuitToSetupDescription converts a CircuitDescription into a setup.Description by
-// // extractiong the keys needed for the correct circuit execution.
-// func CircuitToSetupDescription(c compute.Circuit, params bgv.Parameters) (Description, error) {
-// 	sd := Description{}
-
-// 	cd, err := compute.ParseCircuit(c, "dummy-cid", params, nil)
-// 	if err != nil {
-// 		return Description{}, err
-// 	}
-
-// 	// determine session nodes
-// 	sessionNodes := make([]pkg.NodeID, 0)
-// 	for client := range cd.InputSet {
-// 		nopl, err := url.Parse(string(client))
-// 		if err != nil {
-// 			panic(fmt.Errorf("invalid operand label: %s", client))
-// 		}
-// 		sessionNodes = append(sessionNodes, pkg.NodeID(nopl.Host))
-// 	}
-// 	// log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
-
-// 	// determine aggregators
-// 	aggregators := make([]pkg.NodeID, 0)
-// 	for _, ksSig := range cd.KeySwitchOps {
-// 		aggregators = append(aggregators, pkg.NodeID(ksSig.Args["aggregator"]))
-// 	}
-// 	// log.Printf("[Convert] Aggregators are %v\n", aggregators)
-
-// 	// Collective Public Key
-// 	sd.Cpk = sessionNodes
-
-// 	// Relinearization Key
-// 	if cd.NeedRlk {
-// 		sd.Rlk = aggregators
-// 	}
-
-// 	// Rotation Keys
-// 	for GaloisEl := range cd.GaloisKeys {
-// 		keyField := struct {
-// 			GaloisEl  uint64
-// 			Receivers []pkg.NodeID
-// 		}{GaloisEl, aggregators}
-// 		sd.GaloisKeys = append(sd.GaloisKeys, keyField)
-// 	}
-
-// 	// Public Keys of output receivers
-// 	for _, ksSig := range cd.KeySwitchOps {
-// 		// there is an external receiver
-// 		if ksSig.Type == protocols.PCKS {
-// 			sender := pkg.NodeID(ksSig.Args["target"])
-// 			receivers := append(aggregators, sessionNodes...)
-// 			keyField := struct {
-// 				Sender    pkg.NodeID
-// 				Receivers []pkg.NodeID
-// 			}{sender, receivers}
-// 			sd.Pk = append(sd.Pk, keyField)
-// 		}
-// 	}
-
-// 	return sd, nil
-// }
-
 type SignatureList []protocols.Signature
 type ReceiversMap map[string]utils.Set[pkg.NodeID]
 
@@ -190,4 +134,49 @@ func (sd Description) String() string {
 		Rlk: %v,
 		Pk: %v
 	}`, sd.Cpk, sd.GaloisKeys, sd.Rlk, sd.Pk)
+}
+
+// Based on the session information, check if the protocol was performed correctly.
+func CheckTestSetup(ctx context.Context, t *testing.T, nid pkg.NodeID, lt *pkg.TestSession, setup Description, n pkg.PublicKeyBackend) {
+
+	params := lt.RlweParams
+	sk := lt.SkIdeal
+	nParties := len(lt.HelperSession.Nodes)
+
+	// check CPK
+	if utils.NewSet(setup.Cpk).Contains(nid) {
+		cpk, err := n.GetCollectivePublicKey(ctx)
+		if err != nil {
+			t.Fatalf("%s | %s", nid, err)
+		}
+
+		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params.Parameters), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
+	}
+
+	// check RTG
+	for _, key := range setup.GaloisKeys {
+		if utils.NewSet(key.Receivers).Contains(nid) {
+			rtk, err := n.GetGaloisKey(ctx, key.GaloisEl)
+			if err != nil {
+				t.Fatalf("%s | %s", nid, err)
+			}
+
+			decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+			noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
+			require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params.Parameters), noiseBound, "rtk for galEl %d should be correct", key.GaloisEl)
+		}
+	}
+
+	// check RLK
+	if utils.NewSet(setup.Rlk).Contains(nid) {
+		rlk, err := n.GetRelinearizationKey(ctx)
+		if err != nil {
+			t.Fatalf("%s | %s", nid, err)
+		}
+
+		BaseRNSDecompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
+
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
+	}
 }

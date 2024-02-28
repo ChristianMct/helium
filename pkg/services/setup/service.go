@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/objectstore"
@@ -14,7 +15,7 @@ import (
 type Service struct {
 	self pkg.NodeID
 
-	*protocols.Executor
+	execuctor *protocols.Executor
 	transport Transport
 
 	// protocols.Coordinator
@@ -37,7 +38,7 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Trans
 	s = new(Service)
 
 	s.self = ownId
-	s.Executor, err = protocols.NewExectutor(s.self, sessions, s, s.GetInputs, s, trans)
+	s.execuctor, err = protocols.NewExectutor(s.self, sessions, s, s.GetInputs, s, trans)
 	s.transport = trans
 	s.ResultBackend = newObjStoreResultBackend(backend)
 	s.completed = make(map[string]protocols.Descriptor)
@@ -48,7 +49,20 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Trans
 	return s, nil
 }
 
-func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) {
+func (s *Service) processEvent(ev protocols.Event) {
+	switch ev.EventType {
+	case protocols.Started:
+	case protocols.Completed:
+		s.l.Lock()
+		s.completed[ev.Signature.String()] = ev.Descriptor
+		s.l.Unlock()
+	case protocols.Failed:
+	default:
+		panic("unkown event type")
+	}
+}
+
+func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 
 	// processes incoming events from the coordinator
 	upstreamDone := make(chan struct{})
@@ -56,49 +70,51 @@ func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) {
 		go func() {
 			for ev := range coord.Incoming() {
 				s.Logf("new coordination event: %s", ev)
-				switch ev.EventType {
-				case protocols.Started:
-				case protocols.Completed:
-					s.l.Lock()
-					s.completed[ev.Signature.String()] = ev.Descriptor
-					s.l.Unlock()
-				case protocols.Failed:
-				default:
-					panic("unkown event type")
-				}
+				s.processEvent(ev)
 				s.incoming <- ev
 			}
 			close(upstreamDone)
 		}()
 	}
 
-	// process outgoing events
+	// process downstream outgoing events
 	downstreamDone := make(chan struct{})
 	go func() {
 		for ev := range s.outgoing {
+			s.processEvent(ev)
 			coord.Outgoing() <- ev
 		}
 		close(downstreamDone)
 	}()
 
-	go s.Executor.Run(ctx)
+	executorRunReturned := make(chan struct{})
+	go func() {
+		s.execuctor.Run(ctx)
+		close(executorRunReturned)
+	}()
 
 	<-upstreamDone
 	s.Logf("upstream coordinator is done, closing downstream")
 	close(s.incoming) // closing downstream
+
+	<-executorRunReturned
+	s.Logf("executor Run method returned")
+
 	<-downstreamDone
+	close(coord.Outgoing()) // closing upstream
 	s.Logf("downstream coordinator is done, service.Run return")
+	return nil
 }
 
 // As helper
 func (s *Service) RunProtocol(ctx context.Context, sig protocols.Signature) error {
 
-	aggOut, err := s.Executor.RunSignatureAsAggregator(ctx, sig)
+	_, err := s.execuctor.RunSignatureAsAggregator(ctx, sig)
 	if err != nil {
 		return err
 	}
 
-	return (<-aggOut).Error
+	return nil
 }
 
 func (s *Service) GetInputs(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
@@ -107,22 +123,9 @@ func (s *Service) GetInputs(ctx context.Context, pd protocols.Descriptor) (proto
 		return nil, nil
 	}
 
-	r1pd := pd
-	r1pd.Signature.Type = protocols.RKG_1
-
-	var aggOutR1 *protocols.AggregationOutput
-	var err error
-	if pd.Aggregator != s.self {
-		if aggOutR1, err = s.transport.GetAggregationOutput(ctx, r1pd); err != nil {
-			return nil, fmt.Errorf("error when retrieving aggregation output: %w", err)
-		}
-	} else {
-		aggOutC, err := s.Executor.RunDescriptorAsAggregator(ctx, r1pd)
-		if err != nil {
-			return nil, err
-		}
-		aggOut := <-aggOutC
-		aggOutR1 = &aggOut
+	aggOutR1, err := s.GetProtocolOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
+	if err != nil {
+		return nil, err
 	}
 
 	return aggOutR1.Share, nil
@@ -155,23 +158,30 @@ func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor
 	share.MHEShare = lattigoShare
 	share.Type = pd.Signature.Type
 	share.ProtocolID = pd.ID()
-
-	// otherwise, query the aggregator
-	if err != nil {
-		if pd.Aggregator == s.self {
-			return nil, fmt.Errorf("node is aggregator but has error on backend: %s", err)
-		}
-
-		if out, err = s.transport.GetAggregationOutput(ctx, pd); err != nil {
-			return nil, err
-		}
-		s.Logf("queried aggregation for %s", pd.HID())
-
-		share = out.Share
-		s.ResultBackend.Put(pd, out.Share)
+	if err == nil {
+		return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
 	}
 
-	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
+	// otherwise, query the aggregator or run the protocol
+	if pd.Aggregator != s.self {
+		if out, err = s.transport.GetAggregationOutput(ctx, pd); err != nil {
+			return nil, fmt.Errorf("error when queriying transport for aggregation output: %w", err)
+		}
+	} else {
+		aggOutC, err := s.execuctor.RunDescriptorAsAggregator(ctx, pd)
+		if err != nil {
+			return nil, err
+		}
+		aggOut := <-aggOutC
+		out = &aggOut
+		err = s.ResultBackend.Put(pd, aggOut.Share)
+		if err != nil {
+			return nil, err
+		}
+
+	}
+
+	return out, nil
 }
 
 func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) protocols.Output {
@@ -184,10 +194,10 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) 
 
 	aggOut, err := s.GetProtocolOutput(ctx, pd)
 	if err != nil {
-		return protocols.Output{Error: fmt.Errorf("could not retrieve aggrgation output for %s", pd.HID())}
+		return protocols.Output{Error: fmt.Errorf("could not retrieve aggrgation output for %s: %w", pd.HID(), err)}
 	}
 
-	return s.Executor.GetOutput(ctx, *aggOut)
+	return s.execuctor.GetOutput(ctx, *aggOut)
 }
 
 func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
@@ -275,3 +285,15 @@ func (s *Service) filterSignatureList(sl SignatureList) (noResult, hasResult Sig
 // 		}
 // 	}
 // }
+
+func (s *Service) Register(nid pkg.NodeID) error {
+	return s.execuctor.Register(nid)
+}
+
+func (s *Service) Unregister(nid pkg.NodeID) error {
+	return s.execuctor.Unregister(nid)
+}
+
+func (s *Service) Logf(msg string, v ...any) {
+	log.Printf("%s | [setup] %s\n", s.self, fmt.Sprintf(msg, v...))
+}

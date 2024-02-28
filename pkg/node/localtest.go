@@ -23,7 +23,6 @@ import (
 	"github.com/ldsec/helium/pkg/transport/centralized"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/test/bufconn"
 )
@@ -52,14 +51,14 @@ type LocalTest struct {
 	ExternalNodes []*Node
 	Params        bgv.Parameters
 
-	SkIdeal     *rlwe.SecretKey
+	*pkg.TestSession
 	NodeConfigs []Config
 	pkg.NodesList
 	//compute.PublicKeyBackend
 }
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
-func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
+func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test = new(LocalTest)
 	//memPkBackend := &compute.MemoryKeyBackend{}
 	//test.PublicKeyBackend = memPkBackend
@@ -69,7 +68,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 		var err error
 		test.Nodes[i], err = NewNode(nc, test.NodesList)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 	}
 	test.FullNodes = test.Nodes[:config.FullNodes]
@@ -77,84 +76,14 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest) {
 	test.HelperNodes = test.Nodes[config.FullNodes+config.LightNodes : config.FullNodes+config.LightNodes+config.HelperNodes]
 	test.ExternalNodes = test.Nodes[config.FullNodes+config.LightNodes+config.HelperNodes:]
 
-	// initialize the session-related fields if session parameters are given
 	if config.Session != nil {
-		var err error
-		test.Params, err = bgv.NewParametersFromLiteral(config.Session.RLWEParams)
+		test.TestSession, err = pkg.NewTestSessionFromParams(*config.Session, test.HelperNodes[0].id)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
-
-		sess := make([]*pkg.Session, len(test.SessionNodes()))
-		test.SkIdeal = rlwe.NewSecretKey(test.Params)
-		for i, n := range test.SessionNodes() {
-			// computes the ideal secret-key for the test
-			sess[i], _ = n.GetSessionFromID("test-session")
-			sk, err := sess[i].GetSecretKey()
-			if err != nil {
-				panic(err)
-			}
-			test.Params.RingQP().AtLevel(test.SkIdeal.Value.Q.Level(), test.SkIdeal.Value.P.Level()).Add(sk.Value, test.SkIdeal.Value, test.SkIdeal.Value)
-		}
-
-		// initialise key generation
-		// if config.SimSetup != nil {
-		// 	kg := rlwe.NewKeyGenerator(test.Params)
-		// 	sk := test.SkIdeal
-		// 	if config.SimSetup.Cpk != nil {
-		// 		cpk, err := kg.GenPublicKeyNew(sk)
-		// 		if err != nil {
-		// 			panic(err)
-		// 		}
-		// 		memPkBackend.PublicKey = cpk
-		// 	}
-		// 	for _, gkrec := range config.SimSetup.GaloisKeys {
-		// 		gk, err := kg.GenGaloisKeyNew(gkrec.GaloisEl, sk)
-		// 		if err != nil {
-		// 			panic(err)
-		// 		}
-		// 		memPkBackend.GaloisKeys[gk.GaloisElement] = gk
-
-		// 	}
-		// 	if config.SimSetup.Rlk != nil {
-		// 		rlk, err := kg.GenRelinearizationKeyNew(sk.CopyNew())
-		// 		if err != nil {
-		// 			panic(err)
-		// 		}
-		// 		memPkBackend.RelinearizationKey = rlk
-		// 	}
-
-		// 	for _, node := range test.Nodes {
-		// 		node.GetComputeService().SetPublicKeyBackend(memPkBackend)
-		// 	}
-		// }
-
-		// if config.Session.T != 0 && config.Session.T < len(test.SessionNodes()) && config.DoThresholdSetup {
-		// 	shares := make(map[pkg.NodeID]map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
-		// 	thresholdizer := drlwe.NewThresholdizer(test.Params)
-		// 	for i, ni := range test.SessionNodes() {
-		// 		shares[ni.id] = make(map[pkg.NodeID]*drlwe.ShamirSecretShare, len(test.SessionNodes()))
-		// 		sk, err := sess[i].GetSecretKey()
-		// 		if err != nil {
-		// 			panic(err)
-		// 		}
-		// 		shamirPoly, _ := thresholdizer.GenShamirPolynomial(config.Session.T, sk)
-		// 		for _, nj := range test.SessionNodes() {
-		// 			shares[ni.id][nj.id] = thresholdizer.AllocateThresholdSecretShare()
-		// 			thresholdizer.GenShamirSecretShare(sess[i].SPKS[nj.ID()], shamirPoly, shares[ni.id][nj.id])
-		// 		}
-		// 	}
-		// 	for i, ni := range test.SessionNodes() {
-		// 		tsk := thresholdizer.AllocateThresholdSecretShare()
-		// 		for _, nj := range test.SessionNodes() {
-		// 			thresholdizer.AggregateShares(shares[nj.id][ni.id], tsk, tsk)
-		// 		}
-		// 		sess[i].SetTSK(tsk)
-		// 	}
-		// }
 	}
 
-	return test
+	return test, nil
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.

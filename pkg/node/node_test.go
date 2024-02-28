@@ -1,11 +1,18 @@
 package node
 
 import (
+	"strconv"
+	"strings"
 	"testing"
 
+	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
+	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -13,6 +20,22 @@ func failIfNonNil(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+type testNode struct {
+	*Node
+	compute.InputProvider
+	OutputReceiver chan circuits.Output
+	Outputs        map[circuits.ID]circuits.Output
+}
+
+func NodeIDtoTestInput(nid string) []uint64 {
+	num := strings.Trim(string(nid), "light-")
+	i, err := strconv.ParseUint(num, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return []uint64{i}
 }
 
 func TestNodeSetup(t *testing.T) {
@@ -29,16 +52,28 @@ func TestNodeSetup(t *testing.T) {
 		T:          T,
 	}
 
-	lt := NewLocalTest(LocalTestConfig{
+	lt, err := NewLocalTest(LocalTestConfig{
 		LightNodes:  N,
 		HelperNodes: 1,
 		Session:     &sessParams,
 	})
+	require.Nil(t, err)
 
-	lt.Start()
+	testSess := lt.TestSession
 
-	cloud := lt.HelperNodes[0]
-	clients := lt.LightNodes
+	all := make([]testNode, 1+N)
+	cloud := &all[0]
+	cloud.Node = lt.HelperNodes[0]
+	cloud.InputProvider = compute.NoInput
+
+	clients := all[1:]
+	clientsId := make([]pkg.NodeID, len(clients))
+	for i, n := range lt.LightNodes {
+		clientsId[i] = n.id
+		cli := &clients[i]
+		cli.Node = n
+		cli.InputProvider = compute.NoInput
+	}
 
 	ctx := pkg.NewContext(&sessParams.ID, nil)
 
@@ -46,7 +81,7 @@ func TestNodeSetup(t *testing.T) {
 
 	app := App{
 		SetupDescription: &setup.Description{
-			Cpk: sessParams.Nodes,
+			Cpk: clientsId,
 			GaloisKeys: []struct {
 				GaloisEl  uint64
 				Receivers []pkg.NodeID
@@ -59,33 +94,38 @@ func TestNodeSetup(t *testing.T) {
 		},
 	}
 
-	g, ctx := errgroup.WithContext(ctx)
-
-	g.Go(func() error {
-		_, _, err = cloud.RunNew(ctx, app)
-		return err
-	})
-
-	for _, node := range clients {
+	lt.Start()
+	//g, ctx := errgroup.WithContext(ctx)
+	g := errgroup.Group{}
+	for _, node := range all {
 		node := node
 		g.Go(func() error {
-			_, _, err := node.RunNew(ctx, app)
-			return err
+			cdesc, outs, err := node.Run(ctx, app, node.InputProvider)
+			if err != nil {
+				return err
+			}
+			close(cdesc)
+			_, has := <-outs
+			require.False(t, has)
+			return nil
 		})
 	}
+
 	err = g.Wait()
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	for _, node := range all {
+		setup.CheckTestSetup(ctx, t, node.id, testSess, *app.SetupDescription, node)
+	}
 }
 
-func TestNodeSetupCompute(t *testing.T) {
-
-	t.Skip("not implemented yet")
+func TestNodeCompute(t *testing.T) {
 
 	N := 4
 	T := N
-	//CIRCUIT_REP := 10
+	//CIRCUIT_REP := 1
 
 	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
 	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
@@ -96,17 +136,32 @@ func TestNodeSetupCompute(t *testing.T) {
 		T:          T,
 	}
 
-	lt := NewLocalTest(LocalTestConfig{
+	lt, err := NewLocalTest(LocalTestConfig{
 		LightNodes:  N,
 		HelperNodes: 1,
 		Session:     &sessParams,
 	})
+	require.Nil(t, err)
 
-	lt.Start()
+	testSess := lt.TestSession
 
-	//all := lt.Nodes
-	cloud := lt.HelperNodes[0]
-	clients := lt.LightNodes
+	all := make([]testNode, 1+N)
+	cloud := &all[0]
+	cloud.Node = lt.HelperNodes[0]
+	cloud.InputProvider = compute.NoInput
+
+	clients := all[1:]
+	clientsId := make([]pkg.NodeID, len(clients))
+	for i, n := range lt.LightNodes {
+		clientsId[i] = n.id
+		cli := &clients[i]
+		cli.Node = n
+		pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
+		testSess.Encoder.Encode(NodeIDtoTestInput(string(n.id)), pt)
+		cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (*rlwe.Plaintext, error) {
+			return pt, nil
+		}
+	}
 
 	// cDesc := compute.Description{}
 	// for i := 0; i < CIRCUIT_REP; i++ {
@@ -183,9 +238,9 @@ func TestNodeSetupCompute(t *testing.T) {
 	// })
 
 	g, ctx := errgroup.WithContext(ctx)
-
+	lt.Start()
 	g.Go(func() error {
-		_, _, err = cloud.RunNew(ctx, app)
+		_, _, err = cloud.Run(ctx, app, cloud.InputProvider)
 		return err
 	})
 
@@ -225,7 +280,7 @@ func TestNodeSetupCompute(t *testing.T) {
 		// }
 
 		g.Go(func() error {
-			_, _, err := node.RunNew(ctx, app)
+			_, _, err := node.Run(ctx, app, node.InputProvider)
 			return err
 		})
 

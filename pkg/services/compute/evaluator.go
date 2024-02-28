@@ -24,6 +24,7 @@ type fheEvaluator struct {
 }
 
 type evaluator struct {
+	ctx    context.Context // TODO: check if storing this context this way is a problem
 	cDesc  circuits.Descriptor
 	c      circuits.Circuit
 	params bgv.Parameters
@@ -45,8 +46,9 @@ type evaluator struct {
 	*fheEvaluator
 }
 
-func newEvaluator(sessid pkg.SessionID, c circuits.Circuit, cd circuits.Descriptor, params bgv.Parameters, pkbk PublicKeyBackend, pe ProtocolExecutor) (ev *evaluator, err error) {
+func newEvaluator(ctx context.Context, sessid pkg.SessionID, c circuits.Circuit, cd circuits.Descriptor, params bgv.Parameters, pkbk PublicKeyBackend, pe ProtocolExecutor) (ev *evaluator, err error) {
 	ev = new(evaluator)
+	ev.ctx = ctx
 	ev.c = c
 	ev.cDesc = cd
 	ev.pubKeyBackend = pkbk
@@ -75,7 +77,7 @@ func newEvaluator(sessid pkg.SessionID, c circuits.Circuit, cd circuits.Descript
 
 	ev.completedProt = newCompletedProt(maps.Values(ci.KeySwitchOps))
 
-	ev.fheEvaluator, err = newLattigoEvaluator(*ci, params, pkbk)
+	ev.fheEvaluator, err = newLattigoEvaluator(ctx, *ci, params, pkbk)
 	if err != nil {
 		return nil, err
 	}
@@ -83,10 +85,10 @@ func newEvaluator(sessid pkg.SessionID, c circuits.Circuit, cd circuits.Descript
 	return ev, nil
 }
 
-func newLattigoEvaluator(ci circuits.Info, params bgv.Parameters, pkbk PublicKeyBackend) (eval *fheEvaluator, err error) {
+func newLattigoEvaluator(ctx context.Context, ci circuits.Info, params bgv.Parameters, pkbk PublicKeyBackend) (eval *fheEvaluator, err error) {
 	rlk := new(rlwe.RelinearizationKey)
 	if ci.NeedRlk {
-		rlk, err = pkbk.GetRelinearizationKey()
+		rlk, err = pkbk.GetRelinearizationKey(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +97,7 @@ func newLattigoEvaluator(ci circuits.Info, params bgv.Parameters, pkbk PublicKey
 	gks := make([]*rlwe.GaloisKey, 0, len(ci.GaloisKeys))
 	for galEl := range ci.GaloisKeys {
 		var err error
-		gk, err := pkbk.GetGaloisKey(galEl)
+		gk, err := pkbk.GetGaloisKey(ctx, galEl)
 		if err != nil {
 			return nil, err
 		}

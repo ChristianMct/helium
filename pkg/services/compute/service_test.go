@@ -49,6 +49,15 @@ var testCircuits = []TestCircuit{
 	//{Descriptor: circuits.Descriptor{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ID: "add-2-dec-3", Evaluator: "helper"}, ExpResult: 1},
 }
 
+func NodeIDtoTestInput(nid string) []uint64 {
+	num := strings.Trim(string(nid), "node-")
+	i, err := strconv.ParseUint(num, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return []uint64{i}
+}
+
 var testSettings = []testSetting{
 	{N: 2, Circuits: testCircuits, Reciever: "node-0"},
 	{N: 2, Circuits: testCircuits, Reciever: "helper"},
@@ -77,15 +86,6 @@ func (tnt *testNodeTrans) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) 
 
 func (tnt *testNodeTrans) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
 	return tnt.helperSrv.GetCiphertext(ctx, ctID)
-}
-
-func nodeIDtoInput(nid pkg.NodeID) []uint64 {
-	num := strings.Trim(string(nid), "node-")
-	i, err := strconv.ParseUint(num, 10, 64)
-	if err != nil {
-		panic(err)
-	}
-	return []uint64{i}
 }
 
 func TestCloudAssistedCompute(t *testing.T) {
@@ -138,10 +138,10 @@ func TestCloudAssistedCompute(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					cli.Coordinator = coord.NewNodeCoordinator(nid)
 
 					pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
-					testSess.Encoder.Encode(nodeIDtoInput(nid), pt)
-					cli.Coordinator = coord.NewNodeCoordinator(nid)
+					testSess.Encoder.Encode(NodeIDtoTestInput(string(nid)), pt)
 					cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (*rlwe.Plaintext, error) {
 						return pt, nil
 					}
@@ -159,9 +159,9 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 				g, ctx := errgroup.WithContext(ctx)
 				// run the nodes
-				for nid, cli := range all {
+				for nid, node := range all {
 					nid := nid
-					cli := cli
+					cli := node
 					g.Go(func() error {
 						for out := range cli.OutputReceiver {
 							cli.Outputs[out.ID] = out

@@ -30,9 +30,9 @@ type Coordinator interface {
 }
 
 type PublicKeyBackend interface {
-	GetCollectivePublicKey() (*rlwe.PublicKey, error)
-	GetGaloisKey(galEl uint64) (*rlwe.GaloisKey, error)
-	GetRelinearizationKey() (*rlwe.RelinearizationKey, error)
+	GetCollectivePublicKey(context.Context) (*rlwe.PublicKey, error)
+	GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error)
+	GetRelinearizationKey(context.Context) (*rlwe.RelinearizationKey, error)
 }
 
 type OperandBackend interface {
@@ -286,7 +286,7 @@ func (s *Service) runEvaluator(ctx context.Context, c circuits.Circuit, cd circu
 
 	sessid, _ := pkg.SessionIDFromContext(ctx)
 
-	ev, err := newEvaluator(sessid, c, cd, params, s.pubkeyBackend, s)
+	ev, err := newEvaluator(ctx, sessid, c, cd, params, s.pubkeyBackend, s)
 	if err != nil {
 		return err
 	}
@@ -355,7 +355,7 @@ func (s *Service) runParticipant(ctx context.Context, c circuits.Circuit, cd cir
 		panic("does not find sess")
 	}
 
-	cpk, err := s.pubkeyBackend.GetCollectivePublicKey()
+	cpk, err := s.pubkeyBackend.GetCollectivePublicKey(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot create encryptor: %w", err)
 	}
