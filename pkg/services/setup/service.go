@@ -38,7 +38,7 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Trans
 	s = new(Service)
 
 	s.self = ownId
-	s.execuctor, err = protocols.NewExectutor(s.self, sessions, s, s.GetInputs, s, trans)
+	s.execuctor, err = protocols.NewExectutor(s.self, sessions, s, s.GetInputs, trans)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 // As helper
 func (s *Service) RunProtocol(ctx context.Context, sig protocols.Signature) error {
 
-	_, err := s.execuctor.RunSignatureAsAggregator(ctx, sig)
+	err := s.execuctor.RunSignatureAsAggregator(ctx, sig, s.Put)
 	if err != nil {
 		return err
 	}
@@ -176,7 +176,11 @@ func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor
 			return nil, fmt.Errorf("error when queriying transport for aggregation output: %w", err)
 		}
 	} else {
-		aggOutC, err := s.execuctor.RunDescriptorAsAggregator(ctx, pd)
+		aggOutC := make(chan protocols.AggregationOutput)
+		err := s.execuctor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocols.AggregationOutput) error {
+			aggOutC <- ao
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}

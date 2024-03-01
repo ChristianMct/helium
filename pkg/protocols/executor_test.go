@@ -33,9 +33,10 @@ func TestExecutor(t *testing.T) {
 		executors := make(map[pkg.NodeID]*Executor, len(nids))
 		testTrans := NewTestTransport()
 		testCoord := NewTestCoordinator()
-		testAggBackend := NewTestAggregationOutputBackend()
 
 		ct := testSess.Encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
+		rkg1Done := make(chan struct{})
+		var rkg1AggOut *AggregationOutput
 
 		var helper *Executor
 		var hip InputProvider = func(ctx context.Context, pd Descriptor) (Input, error) {
@@ -44,19 +45,24 @@ func TestExecutor(t *testing.T) {
 				r1Pd := pd
 				r1Pd.Signature.Type = RKG_1
 
-				rkg1AggOutp, err := testAggBackend.Get(ctx, r1Pd)
-				if err == nil {
-					return rkg1AggOutp.Share, nil
+				if rkg1AggOut != nil {
+					return rkg1AggOut.Share, nil
 				}
 
-				aggOutC, err := helper.RunDescriptorAsAggregator(ctx, r1Pd)
+				aggOutC := make(chan AggregationOutput)
+				err = helper.RunDescriptorAsAggregator(ctx, r1Pd, func(ctx context.Context, ao AggregationOutput) error {
+					aggOutC <- ao
+					return nil
+				})
 				if err != nil {
 					return nil, err
 				}
-				rkg1AggOut := <-aggOutC
+				rkg1AggOutv := <-aggOutC
+				rkg1AggOut = &rkg1AggOutv
 				if rkg1AggOut.Error != nil {
 					return nil, rkg1AggOut.Error
 				}
+				close(rkg1Done)
 				return rkg1AggOut.Share, nil
 			case DEC:
 				return ct, nil
@@ -67,12 +73,7 @@ func TestExecutor(t *testing.T) {
 		var pip InputProvider = func(ctx context.Context, pd Descriptor) (Input, error) {
 			switch pd.Signature.Type {
 			case RKG:
-				r1pd := pd
-				r1pd.Signature.Type = RKG_1
-				rkg1AggOut, err := testAggBackend.Get(ctx, r1pd)
-				if err != nil {
-					return nil, err
-				}
+				<-rkg1Done
 				return rkg1AggOut.Share, nil
 			case DEC:
 				return ct, nil
@@ -80,11 +81,11 @@ func TestExecutor(t *testing.T) {
 			return nil, nil
 		}
 
-		helper, err = NewExectutor(hid, testSess.HelperSession, testCoord, hip, testAggBackend, testTrans)
+		helper, err = NewExectutor(hid, testSess.HelperSession, testCoord, hip, testTrans)
 		require.Nil(t, err)
 		go helper.Run(ctx)
 		for nid := range nids {
-			executors[nid], err = NewExectutor(nid, testSess.NodeSessions[nid], testCoord.NewNodeCoordinator(nid), pip, nil, testTrans.TransportFor(nid))
+			executors[nid], err = NewExectutor(nid, testSess.NodeSessions[nid], testCoord.NewNodeCoordinator(nid), pip, testTrans.TransportFor(nid))
 			require.Nil(t, err)
 			go executors[nid].Run(ctx)
 			err = helper.Register(nid)
@@ -103,7 +104,11 @@ func TestExecutor(t *testing.T) {
 
 		for _, sig := range sigs {
 			t.Run(fmt.Sprintf("N=%d/T=%d/Sig=%s", ts.N, ts.T, sig), func(t *testing.T) {
-				aggOutC, err := helper.RunSignatureAsAggregator(ctx, sig)
+				aggOutC := make(chan AggregationOutput)
+				err := helper.RunSignatureAsAggregator(ctx, sig, func(ctx context.Context, ao AggregationOutput) error {
+					aggOutC <- ao
+					return nil
+				})
 				require.Nil(t, err)
 				aggOut := <-aggOutC
 				out := helper.GetOutput(ctx, aggOut)

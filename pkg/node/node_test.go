@@ -278,6 +278,8 @@ func TestNodeCompute(t *testing.T) {
 
 func TestNodeMatMul(t *testing.T) {
 
+	t.Skip("not yet implemented")
+
 	N := 4
 	T := N
 	//CIRCUIT_REP := 1

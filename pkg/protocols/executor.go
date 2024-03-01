@@ -24,10 +24,7 @@ type Coordinator interface {
 
 type InputProvider func(ctx context.Context, pd Descriptor) (Input, error)
 
-type AggregationOutputBackend interface {
-	Put(context.Context, AggregationOutput) error
-	Get(context.Context, Descriptor) (*AggregationOutput, error)
-}
+type AggregationOutputReceiver func(context.Context, AggregationOutput) error
 
 type EventType int32
 
@@ -71,7 +68,6 @@ type Executor struct {
 	transport     Transport
 	coordinator   Coordinator
 	inputProvider InputProvider
-	aggOutBackend AggregationOutputBackend
 
 	// node tracking
 	connectedNodes     map[pkg.NodeID]utils.Set[pkg.ProtocolID]
@@ -95,7 +91,7 @@ type Executor struct {
 	// rkgRound1Results map[pkg.ProtocolID]Share // TODO remove
 }
 
-func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordinator, ip InputProvider, agbk AggregationOutputBackend, trans Transport) (*Executor, error) {
+func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
 	s := new(Executor)
 	s.self = ownId
 	s.sessions = sessions
@@ -103,7 +99,6 @@ func NewExectutor(ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordina
 	s.coordinator = coord
 	s.transport = trans
 	s.inputProvider = ip
-	s.aggOutBackend = agbk
 
 	s.runningProtos = make(map[pkg.ProtocolID]struct {
 		pd           Descriptor
@@ -172,11 +167,11 @@ func (s *Executor) Run(ctx context.Context) {
 
 }
 
-func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd Descriptor) (aggOut chan AggregationOutput, err error) {
+func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
 
 	input, err := s.inputProvider(ctx, pd)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	proto, err := NewProtocol(pd, sess, input)
@@ -221,7 +216,6 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 		s.Logf("completed participation for %s", pd.HID())
 	}
 
-	aggOut = make(chan AggregationOutput, 1)
 	go func() {
 		var agg AggregationOutput
 		agg.Descriptor = pd
@@ -249,8 +243,6 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 			}
 		}
 
-		aggOut <- agg
-
 		if agg.Error != nil {
 			s.coordinator.Outgoing() <- Event{EventType: Failed, Descriptor: pd}
 		} else {
@@ -269,7 +261,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 		s.runningProtoMu.Unlock()
 		s.runningProtoWg.Done()
 
-		err := s.aggOutBackend.Put(ctx, agg)
+		err := aggOutRec(ctx, agg)
 		if err != nil {
 			panic(err)
 		}
@@ -282,11 +274,11 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 	return
 }
 
-func (s *Executor) RunSignatureAsAggregator(ctx context.Context, sig Signature) (aggOut chan AggregationOutput, err error) {
+func (s *Executor) RunSignatureAsAggregator(ctx context.Context, sig Signature, aggOutRec AggregationOutputReceiver) (err error) {
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
-		return nil, fmt.Errorf("session could not extract session from context")
+		return fmt.Errorf("session could not extract session from context")
 	}
 
 	//s.Logf("getting key operation descriptor: %s", sig)
@@ -295,17 +287,17 @@ func (s *Executor) RunSignatureAsAggregator(ctx context.Context, sig Signature) 
 
 	//s.Logf("running key operation descriptor: %s", pd)
 
-	return s.runAsAggregator(ctx, sess, pd)
+	return s.runAsAggregator(ctx, sess, pd, aggOutRec)
 }
 
-func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor) (aggOut chan AggregationOutput, err error) {
+func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
-		return nil, fmt.Errorf("session could not extract session from context")
+		return fmt.Errorf("session could not extract session from context")
 	}
 
-	return s.runAsAggregator(ctx, sess, pd)
+	return s.runAsAggregator(ctx, sess, pd, aggOutRec)
 }
 
 func (s *Executor) RunProtocolAsParticipant(ctx context.Context, pd Descriptor) error {
