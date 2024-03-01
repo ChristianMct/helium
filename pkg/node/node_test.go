@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,14 +13,34 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"golang.org/x/exp/maps"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 )
 
-func failIfNonNil(t *testing.T, err error) {
-	if err != nil {
-		t.Fatal(err)
-	}
+type TestCircuit struct {
+	circuits.Signature
+	ExpResult uint64
+}
+
+type testSetting struct {
+	N        int // N - total parties
+	T        int // T - parties in the access structure
+	Circuits []TestCircuit
+	Reciever pkg.NodeID
+	Rep      int // numer of repetition for each circuit
+}
+
+var testCircuits = []TestCircuit{
+	{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ExpResult: 1},
+}
+
+var testSettings = []testSetting{
+	{N: 2, Circuits: testCircuits, Reciever: "light-0"},
+	{N: 2, Circuits: testCircuits, Reciever: "helper-0"},
+	{N: 3, T: 2, Circuits: testCircuits, Reciever: "light-0"},
+	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper-0"},
+	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper-0", Rep: 10},
 }
 
 type testNode struct {
@@ -27,6 +48,26 @@ type testNode struct {
 	compute.InputProvider
 	OutputReceiver chan circuits.Output
 	Outputs        map[circuits.ID]circuits.Output
+}
+
+func NewTestNodes(lt *LocalTest) (all, clients map[pkg.NodeID]*testNode, cloud *testNode) {
+	all = make(map[pkg.NodeID]*testNode, len(lt.Nodes))
+	cloud = &testNode{}
+	cloud.Node = lt.HelperNodes[0]
+	cloud.InputProvider = compute.NoInput
+	cloud.Outputs = make(map[circuits.ID]circuits.Output)
+	all[cloud.id] = cloud
+
+	clients = make(map[pkg.NodeID]*testNode)
+	for _, n := range lt.LightNodes {
+		cli := &testNode{}
+		cli.Node = n
+		cli.InputProvider = compute.NoInput
+		cli.Outputs = make(map[circuits.ID]circuits.Output)
+		clients[n.id] = cli
+		all[n.id] = cli
+	}
+	return
 }
 
 func NodeIDtoTestInput(nid string) []uint64 {
@@ -40,88 +81,202 @@ func NodeIDtoTestInput(nid string) []uint64 {
 
 func TestNodeSetup(t *testing.T) {
 
-	N := 4
-	T := 3
+	for _, ts := range testSettings {
+		if ts.T == 0 {
+			ts.T = ts.N
+		}
+		if ts.Rep == 0 {
+			ts.Rep = 1
+		}
 
-	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
-	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
-	failIfNonNil(t, err)
-	sessParams := pkg.SessionParameters{
-		ID:         "test-session",
-		RLWEParams: params.ParametersLiteral(),
-		T:          T,
-	}
+		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
-	lt, err := NewLocalTest(LocalTestConfig{
-		LightNodes:  N,
-		HelperNodes: 1,
-		Session:     &sessParams,
-	})
-	require.Nil(t, err)
-
-	testSess := lt.TestSession
-
-	all := make([]testNode, 1+N)
-	cloud := &all[0]
-	cloud.Node = lt.HelperNodes[0]
-	cloud.InputProvider = compute.NoInput
-
-	clients := all[1:]
-	clientsId := make([]pkg.NodeID, len(clients))
-	for i, n := range lt.LightNodes {
-		clientsId[i] = n.id
-		cli := &clients[i]
-		cli.Node = n
-		cli.InputProvider = compute.NoInput
-	}
-
-	ctx := pkg.NewContext(&sessParams.ID, nil)
-
-	hid := cloud.id
-
-	app := App{
-		SetupDescription: &setup.Description{
-			Cpk: clientsId,
-			GaloisKeys: []struct {
-				GaloisEl  uint64
-				Receivers []pkg.NodeID
-			}{
-				{5, []pkg.NodeID{hid}},
-				{25, []pkg.NodeID{hid}},
-				{125, []pkg.NodeID{hid}},
-			},
-			Rlk: []pkg.NodeID{hid},
-		},
-	}
-
-	lt.Start()
-	//g, ctx := errgroup.WithContext(ctx)
-	g := errgroup.Group{}
-	for _, node := range all {
-		node := node
-		g.Go(func() error {
-			cdesc, outs, err := node.Run(ctx, app, node.InputProvider)
-			if err != nil {
-				return err
+			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
+			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
+			require.Nil(t, err)
+			sessParams := pkg.SessionParameters{
+				ID:         "test-session",
+				RLWEParams: params.ParametersLiteral(),
+				T:          ts.T,
 			}
-			close(cdesc)
-			_, has := <-outs
-			require.False(t, has)
-			return nil
+
+			lt, err := NewLocalTest(LocalTestConfig{
+				LightNodes:  ts.N,
+				HelperNodes: 1,
+				Session:     &sessParams,
+			})
+			require.Nil(t, err)
+
+			testSess := lt.TestSession
+
+			all, clients, cloud := NewTestNodes(lt)
+
+			ctx := pkg.NewContext(&sessParams.ID, nil)
+
+			hid := cloud.id
+
+			app := App{
+				SetupDescription: &setup.Description{
+					Cpk: maps.Keys(clients),
+					GaloisKeys: []struct {
+						GaloisEl  uint64
+						Receivers []pkg.NodeID
+					}{
+						{5, []pkg.NodeID{hid}},
+						{25, []pkg.NodeID{hid}},
+						{125, []pkg.NodeID{hid}},
+					},
+					Rlk: []pkg.NodeID{hid},
+				},
+			}
+
+			lt.Start()
+			//g, ctx := errgroup.WithContext(ctx)
+			g, runctx := errgroup.WithContext(ctx)
+			for _, node := range all {
+				node := node
+				g.Go(func() error {
+					cdesc, outs, err := node.Run(runctx, app, node.InputProvider)
+					if err != nil {
+						return err
+					}
+					close(cdesc)
+					_, has := <-outs
+					require.False(t, has)
+					return nil
+				})
+			}
+
+			err = g.Wait()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for _, node := range all {
+				setup.CheckTestSetup(ctx, t, node.id, testSess, *app.SetupDescription, node)
+			}
 		})
-	}
-
-	err = g.Wait()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, node := range all {
-		setup.CheckTestSetup(ctx, t, node.id, testSess, *app.SetupDescription, node)
 	}
 }
 
 func TestNodeCompute(t *testing.T) {
+
+	for _, ts := range testSettings {
+		if ts.T == 0 {
+			ts.T = ts.N
+		}
+		if ts.Rep == 0 {
+			ts.Rep = 1
+		}
+
+		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
+
+			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
+			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
+			require.Nil(t, err)
+			sessParams := pkg.SessionParameters{
+				ID:         "test-session",
+				RLWEParams: params.ParametersLiteral(),
+				T:          ts.T,
+			}
+
+			lt, err := NewLocalTest(LocalTestConfig{
+				LightNodes:  ts.N,
+				HelperNodes: 1,
+				Session:     &sessParams,
+			})
+			require.Nil(t, err)
+
+			testSess := lt.TestSession
+
+			all, clients, cloud := NewTestNodes(lt)
+
+			for _, cli := range clients {
+				pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
+				testSess.Encoder.Encode(NodeIDtoTestInput(string(cli.id)), pt)
+				cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (*rlwe.Plaintext, error) {
+					return pt, nil
+				}
+			}
+
+			ctx := pkg.NewContext(&sessParams.ID, nil)
+			hid := cloud.id
+
+			app := App{
+				SetupDescription: &setup.Description{
+					Cpk: maps.Keys(clients),
+					GaloisKeys: []struct {
+						GaloisEl  uint64
+						Receivers []pkg.NodeID
+					}{
+						{5, []pkg.NodeID{hid}},
+						{25, []pkg.NodeID{hid}},
+						{125, []pkg.NodeID{hid}},
+					},
+					Rlk: []pkg.NodeID{hid},
+				},
+				Circuits: circuits.TestCircuits,
+			}
+
+			lt.Start()
+			g, runctx := errgroup.WithContext(ctx)
+
+			var cdescs chan chan<- circuits.Descriptor = make(chan chan<- circuits.Descriptor)
+			for _, node := range all {
+				node := node
+				g.Go(func() error {
+					cdescsn, outs, err := node.Run(runctx, app, node.InputProvider)
+					if err != nil {
+						return err
+					}
+					if node.id == hid {
+						cdescs <- cdescsn
+					}
+					for out := range outs {
+						node.Outputs[out.ID] = out
+					}
+					return nil
+				})
+			}
+
+			nodemap := map[string]pkg.NodeID{"p1": "light-0", "p2": "light-1", "eval": "helper-0", "rec": ts.Reciever}
+			cdesc := <-cdescs
+			expResult := make(map[circuits.ID]uint64)
+			for _, tc := range ts.Circuits {
+				for i := 0; i < ts.Rep; i++ {
+					cid := circuits.ID(fmt.Sprintf("%s-%d", tc.Name, i))
+					cdesc <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, ID: cid, NodeMapping: nodemap, Evaluator: hid}
+					expResult[cid] = tc.ExpResult
+				}
+			}
+
+			close(cdesc)
+			err = g.Wait()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rec := all[ts.Reciever]
+			for cid, expRes := range expResult {
+				out, has := rec.Outputs[cid]
+				require.True(t, has, "reciever should have an output")
+				delete(rec.Outputs, cid)
+				pt := &rlwe.Plaintext{Operand: out.Ciphertext.Operand, Value: out.Ciphertext.Value[0]}
+				res := make([]uint64, testSess.RlweParams.PlaintextSlots())
+				testSess.Encoder.Decode(pt, res)
+				//fmt.Println(out.OperandLabel, res[:10])
+				require.Equal(t, expRes, res[0])
+			}
+
+			for nid, n := range all {
+				require.Empty(t, n.Outputs, "node %s should have no extra outputs", nid)
+			}
+
+		})
+	}
+}
+
+func TestNodeMatMul(t *testing.T) {
 
 	N := 4
 	T := N
@@ -129,7 +284,7 @@ func TestNodeCompute(t *testing.T) {
 
 	//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
 	params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
-	failIfNonNil(t, err)
+	require.Nil(t, err)
 	sessParams := pkg.SessionParameters{
 		ID:         "test-session",
 		RLWEParams: params.ParametersLiteral(),
@@ -163,11 +318,6 @@ func TestNodeCompute(t *testing.T) {
 		}
 	}
 
-	// cDesc := compute.Description{}
-	// for i := 0; i < CIRCUIT_REP; i++ {
-	// 	cDesc = append(cDesc, circuits.Signature{CircuitName: "matmul4-dec", CircuitID: pkg.CircuitID(fmt.Sprintf("test-circuit-%d", i))})
-	// }
-
 	ctx := pkg.NewContext(&sessParams.ID, nil)
 
 	hid := cloud.id
@@ -186,7 +336,7 @@ func TestNodeCompute(t *testing.T) {
 			Rlk: []pkg.NodeID{hid},
 		},
 		// InputProvider: &compute.NoInput,
-		// Circuits:      TestCircuits,
+		Circuits: circuits.TestCircuits,
 	}
 
 	// m := params.PlaintextDimensions().Cols

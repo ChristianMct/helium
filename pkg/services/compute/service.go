@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/ldsec/helium/pkg/circuits"
@@ -176,7 +177,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 			cev := *ev.CircuitEvent
 			s.Logf("new coordination event: CIRCUIT %s", cev)
 			switch ev.CircuitEvent.Status {
-			case circuits.Executing:
+			case circuits.Started:
 				err := s.runCircuit(ctx, cev.Descriptor)
 				if err != nil {
 					panic(err)
@@ -300,7 +301,7 @@ func (s *Service) runEvaluator(ctx context.Context, c circuits.Circuit, cd circu
 	s.runningCircuits[cd.ID] = ev
 	s.runningCircuitsMu.Unlock()
 
-	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Executing, Descriptor: cd}}
+	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
 
 	// evalDone := make(chan struct{})
 	go func() {
@@ -483,7 +484,8 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 
 	_, exists := s.sessions.GetSessionFromContext(ctx) // TODO per-session ciphertexts
 	if !exists {
-		return fmt.Errorf("invalid session id")
+		sessid, _ := pkg.SessionIDFromContext(ctx)
+		return fmt.Errorf("invalid session id \"%s\"", sessid)
 	}
 
 	ctURL, err := pkg.ParseURL(string(ct.ID))
@@ -509,6 +511,8 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 	if err != nil {
 		return err
 	}
+
+	s.Logf("recieved ciphertext for operand %s", op.OperandLabel)
 
 	return nil
 }
@@ -645,4 +649,8 @@ func (s *Service) isOutputReceiver(cd circuits.Descriptor, ci circuits.Info) boo
 
 func (s *Service) isEvaluator(cd circuits.Descriptor, ci circuits.Info) bool {
 	return cd.Evaluator == s.self
+}
+
+func (s *Service) Logf(msg string, v ...any) {
+	log.Printf("%s | [compute] %s\n", s.self, fmt.Sprintf(msg, v...))
 }

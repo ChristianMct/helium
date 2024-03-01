@@ -15,7 +15,6 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -72,7 +71,7 @@ type HeliumServer struct {
 	statsHandler statsHandler
 }
 
-func NewHeliumServer(id pkg.NodeID, na pkg.NodeAddress, nl pkg.NodesList, protoHandler ProtocolHandler) *HeliumServer {
+func NewHeliumServer(id pkg.NodeID, na pkg.NodeAddress, nl pkg.NodesList, protoHandler ProtocolHandler, ctxtHandler CiphertextHandler) *HeliumServer {
 	hsv := new(HeliumServer)
 	hsv.id = id
 
@@ -85,16 +84,17 @@ func NewHeliumServer(id pkg.NodeID, na pkg.NodeAddress, nl pkg.NodesList, protoH
 		grpc.MaxSendMsgSize(MaxMsgSize),
 		grpc.StatsHandler(&hsv.statsHandler),
 		grpc.ChainUnaryInterceptor(interceptors...),
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    KeepaliveTime,
-			Timeout: KeepaliveTime,
-		}),
+		// grpc.KeepaliveParams(keepalive.ServerParameters{
+		// 	Time:    KeepaliveTime,
+		// 	Timeout: KeepaliveTime,
+		// }),
 	}
 
 	hsv.Server = grpc.NewServer(serverOpts...)
 	hsv.Server.RegisterService(&api.HeliumHelper_ServiceDesc, hsv)
 
 	hsv.protocolHandler = protoHandler
+	hsv.ciphertextHandler = ctxtHandler
 	hsv.watchers = make([]NodeWatcher, 0)
 
 	hsv.nodes = make(map[pkg.NodeID]*client)
@@ -226,7 +226,13 @@ func (ct *HeliumServer) Register(_ *api.Void, stream api.HeliumHelper_RegisterSe
 
 // PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
 // field to the callee.
-func (hsv *HeliumServer) PutShare(ctx context.Context, apiShare *api.Share) (*api.Void, error) {
+func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *api.Share) (*api.Void, error) {
+
+	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	if err != nil {
+		return nil, err
+	}
+
 	s, err := getShareFromAPI(apiShare)
 	if err != nil {
 		hsv.Logf("got an invalid share: %s", err) // TODO add details
@@ -236,7 +242,13 @@ func (hsv *HeliumServer) PutShare(ctx context.Context, apiShare *api.Share) (*ap
 	return &api.Void{}, hsv.protocolHandler.PutShare(ctx, s)
 }
 
-func (hsv *HeliumServer) GetAggregationOutput(ctx context.Context, apipd *api.ProtocolDescriptor) (*api.AggregationOutput, error) {
+func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.ProtocolDescriptor) (*api.AggregationOutput, error) {
+
+	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	if err != nil {
+		return nil, err
+	}
+
 	pd := getProtocolDescFromAPI(apipd)
 	out, err := hsv.protocolHandler.GetProtocolOutput(ctx, *pd)
 	if err != nil {
@@ -255,7 +267,13 @@ func (hsv *HeliumServer) GetAggregationOutput(ctx context.Context, apipd *api.Pr
 	return apiOut, nil
 }
 
-func (hsv *HeliumServer) GetCiphertext(ctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
+func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctr *api.CiphertextRequest) (*api.Ciphertext, error) {
+
+	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	if err != nil {
+		return nil, err
+	}
+
 	ct, err := hsv.ciphertextHandler.GetCiphertext(ctx, pkg.CiphertextID(ctr.Id.CiphertextId))
 	if err != nil {
 		return nil, err
@@ -263,11 +281,17 @@ func (hsv *HeliumServer) GetCiphertext(ctx context.Context, ctr *api.CiphertextR
 	return ct.ToGRPC(), nil
 }
 
-func (hsv *HeliumServer) PutCiphertext(ctx context.Context, apict *api.Ciphertext) (*api.CiphertextID, error) {
+func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *api.Ciphertext) (*api.CiphertextID, error) {
 	ct, err := pkg.NewCiphertextFromGRPC(apict)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ciphertext: %w", err)
 	}
+
+	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	if err != nil {
+		return nil, err
+	}
+
 	err = hsv.ciphertextHandler.PutCiphertext(ctx, *ct)
 	if err != nil {
 		return nil, err

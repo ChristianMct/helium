@@ -1,6 +1,7 @@
 package node
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -24,6 +25,37 @@ const (
 	numProtoPerNode = 5
 )
 
+type protocolTransport struct {
+	outshares, inshares  chan protocols.Share
+	getAggregationOutput func(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
+}
+
+func (n *protocolTransport) IncomingShares() <-chan protocols.Share {
+	return n.inshares
+}
+
+func (n *protocolTransport) OutgoingShares() chan<- protocols.Share {
+	return n.outshares
+}
+
+func (n *protocolTransport) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	return n.getAggregationOutput(ctx, pd)
+}
+
+type computeTransport struct {
+	protocolTransport
+	putCiphertext func(ctx context.Context, ct pkg.Ciphertext) error
+	getCiphertext func(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error)
+}
+
+func (n *computeTransport) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
+	return n.putCiphertext(ctx, ct)
+}
+
+func (n *computeTransport) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
+	return n.getCiphertext(ctx, ctID)
+}
+
 type Node struct {
 	addr         pkg.NodeAddress
 	id, helperId pkg.NodeID
@@ -36,9 +68,11 @@ type Node struct {
 	// pkBackend compute.PublicKeyBackend
 
 	//transport transport.Transport
-	srv                 *centralized.HeliumServer
-	cli                 *centralized.HeliumClient
-	outshares, inshares chan protocols.Share
+	srv              *centralized.HeliumServer
+	cli              *centralized.HeliumClient
+	outgoingShares   chan protocols.Share
+	setupTransport   *protocolTransport
+	computeTransport *computeTransport
 
 	// services
 	setup   *setup.Service
@@ -116,22 +150,32 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 
 	// transport
 	if node.HasAddress() {
-		node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node)
+		node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node, node)
 		node.srv.RegisterWatcher(node)
 	} else {
 		node.cli = centralized.NewHeliumClient(node.id, node.helperId, node.nodeList.AddressOf(node.helperId))
 	}
 
-	node.inshares = make(chan protocols.Share)
-	node.outshares = make(chan protocols.Share)
+	node.outgoingShares = make(chan protocols.Share)
+	node.setupTransport = &protocolTransport{
+		outshares:            node.outgoingShares,
+		inshares:             make(chan protocols.Share),
+		getAggregationOutput: node.GetAggregationOutput}
+	node.computeTransport = &computeTransport{
+		protocolTransport: protocolTransport{
+			outshares:            node.outgoingShares,
+			inshares:             make(chan protocols.Share),
+			getAggregationOutput: node.GetAggregationOutput},
+		putCiphertext: node.PutCiphertext,
+		getCiphertext: node.GetCiphertext}
 
 	// services
-	node.setup, err = setup.NewSetupService(node.id, node, node, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id, node, node.setupTransport, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
 
-	node.compute, err = compute.NewComputeService(node.id, node, node.setup, node)
+	node.compute, err = compute.NewComputeService(node.id, node, node.setup, node.computeTransport)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}
@@ -295,7 +339,9 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		}()
 
 		go func() {
+			<-node.setupDone
 			for cd := range cds {
+				node.Logf("new circuit descriptor: %s", cd)
 				cev := coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
 				computeCoord.incoming <- cev
 			}
@@ -329,6 +375,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 
 		go func() {
 			for ev := range events {
+				node.Logf("new coordinator event: %s", ev)
 				if ev.IsSetupEvent() {
 					pev := *ev.ProtocolEvent
 					setupCoord.incoming <- pev
@@ -350,8 +397,15 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 	return cds, or, nil
 }
 
-func (n *Node) PutShare(_ context.Context, s protocols.Share) error {
-	n.inshares <- s
+func (n *Node) PutShare(ctx context.Context, s protocols.Share) error {
+	switch {
+	case s.Type.IsSetup():
+		n.setupTransport.inshares <- s
+	case s.Type.IsCompute():
+		n.computeTransport.inshares <- s
+	default:
+		return fmt.Errorf("unknown protocol type")
+	}
 	return nil
 }
 
@@ -363,34 +417,32 @@ func (n *Node) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor) (
 	return n.setup.GetProtocolOutput(ctx, pd)
 }
 
-func (n *Node) IncomingShares() <-chan protocols.Share {
-	return n.inshares
-}
-
-func (n *Node) OutgoingShares() chan<- protocols.Share {
-	return n.outshares
-}
-
 func (n *Node) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
+	if n.id == n.helperId {
+		return n.compute.PutCiphertext(ctx, ct)
+	}
 	return n.cli.PutCiphertext(ctx, ct)
 }
 
 func (n *Node) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
+	if n.id == n.helperId {
+		return n.compute.GetCiphertext(ctx, ctID)
+	}
 	return n.cli.GetCiphertext(ctx, ctID)
 }
 
 // Register is called by the transport when a new peer register itself for the setup.
 func (s *Node) Register(peer pkg.NodeID) error {
-	return s.setup.Register(peer)
+	return errors.Join(s.setup.Register(peer), s.compute.Register(peer))
 }
 
 // Unregister is called by the transport when a peer is unregistered from the setup.
 func (s *Node) Unregister(peer pkg.NodeID) error {
-	return s.setup.Unregister(peer)
+	return errors.Join(s.setup.Unregister(peer), s.compute.Unregister(peer))
 }
 
 func (node *Node) sendShares(ctx context.Context) {
-	for share := range node.outshares {
+	for share := range node.outgoingShares {
 		if err := node.cli.PutShare(ctx, share); err != nil {
 			node.Logf("error while sending share: %s", err)
 		}

@@ -36,7 +36,7 @@ func getEventFromAPI(apiEvent *api.Event) coordinator.Event {
 	if apiEvent.CircuitEvent != nil {
 		event.CircuitEvent = &circuits.Event{
 			Status:     circuits.Status(apiEvent.CircuitEvent.Type),
-			Descriptor: getCircuitDescFromAPI(apiEvent.CircuitEvent.Descriptor_),
+			Descriptor: *getCircuitDescFromAPI(apiEvent.CircuitEvent.Descriptor_),
 		}
 	}
 	if apiEvent.ProtocolEvent != nil {
@@ -79,12 +79,48 @@ func getProtocolDescFromAPI(apiPD *api.ProtocolDescriptor) *protocols.Descriptor
 	return desc
 }
 
-func getAPICircuitDesc(cd circuits.Descriptor) *api.ComputeSignature {
-	panic("TODO")
+func getAPICircuitDesc(cd circuits.Descriptor) *api.CircuitDescriptor {
+	apiDesc := &api.CircuitDescriptor{
+		CircuitSignature: &api.CircuitSignature{
+			Name: string(cd.Name),
+			Args: make(map[string]string, len(cd.Args)),
+		},
+		CircuitID:   &api.CircuitID{CircuitID: string(cd.ID)},
+		NodeMapping: make(map[string]*api.NodeID, len(cd.NodeMapping)),
+		Evaluator:   &api.NodeID{NodeId: string(cd.Evaluator)},
+	}
+
+	for k, v := range cd.Args {
+		apiDesc.CircuitSignature.Args[k] = v
+	}
+
+	for s, nid := range cd.NodeMapping {
+		apiDesc.NodeMapping[s] = &api.NodeID{NodeId: string(nid)}
+	}
+
+	return apiDesc
 }
 
-func getCircuitDescFromAPI(apiCd *api.ComputeSignature) circuits.Descriptor {
-	panic("TODO")
+func getCircuitDescFromAPI(apiCd *api.CircuitDescriptor) *circuits.Descriptor {
+	cd := &circuits.Descriptor{
+		Signature: circuits.Signature{
+			Name: circuits.Name(apiCd.CircuitSignature.Name),
+			Args: make(map[string]string, len(apiCd.CircuitSignature.Args)),
+		},
+		ID:          circuits.ID(apiCd.CircuitID.CircuitID),
+		NodeMapping: make(map[string]pkg.NodeID, len(apiCd.NodeMapping)),
+		Evaluator:   pkg.NodeID(apiCd.Evaluator.NodeId),
+	}
+
+	for k, v := range apiCd.CircuitSignature.Args {
+		cd.Args[k] = v
+	}
+
+	for s, nid := range apiCd.NodeMapping {
+		cd.NodeMapping[s] = pkg.NodeID(nid.NodeId)
+	}
+
+	return cd
 }
 
 func getAPIShare(s *protocols.Share) (*api.Share, error) {

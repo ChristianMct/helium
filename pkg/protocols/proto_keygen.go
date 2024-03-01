@@ -99,6 +99,24 @@ func (t Type) Share() LattigoShare {
 	}
 }
 
+func (t Type) IsSetup() bool {
+	switch t {
+	case CKG, RTG, RKG, RKG_1:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t Type) IsCompute() bool {
+	switch t {
+	case DEC, PCKS:
+		return true
+	default:
+		return false
+	}
+}
+
 type Signature struct {
 	Type Type
 	Args map[string]string

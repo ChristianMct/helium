@@ -45,8 +45,6 @@ var testNodeMapping = map[string]pkg.NodeID{"p1": "node-0", "p2": "node-1", "eva
 
 var testCircuits = []TestCircuit{
 	{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ExpResult: 1},
-	//{Descriptor: circuits.Descriptor{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ID: "add-2-dec-2", Evaluator: "helper"}, ExpResult: 1},
-	//{Descriptor: circuits.Descriptor{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ID: "add-2-dec-3", Evaluator: "helper"}, ExpResult: 1},
 }
 
 func NodeIDtoTestInput(nid string) []uint64 {
@@ -63,6 +61,7 @@ var testSettings = []testSetting{
 	{N: 2, Circuits: testCircuits, Reciever: "helper"},
 	{N: 3, T: 2, Circuits: testCircuits, Reciever: "node-0"},
 	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper"},
+	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper", Rep: 10},
 }
 
 type testnode struct {
@@ -99,7 +98,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 				ts.Rep = 1
 			}
 
-			t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s", ts.N, ts.T, ts.Reciever), func(t *testing.T) {
+			t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 				hid := pkg.NodeID("helper")
 
@@ -193,7 +192,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 				}
 
 				for _, cd := range cds {
-					coord.New(coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Executing, Descriptor: cd}})
+					coord.New(coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}})
 				}
 				coord.Close()
 

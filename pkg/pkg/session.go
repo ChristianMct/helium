@@ -94,6 +94,21 @@ func GetOutgoingContext(ctx context.Context, senderID NodeID) context.Context {
 	return metadata.NewOutgoingContext(ctx, md)
 }
 
+func GetContextFromIncomingContext(inctx context.Context) (ctx context.Context, err error) {
+
+	sid := SessionIDFromIncomingContext(inctx)
+	if len(sid) == 0 {
+		return nil, fmt.Errorf("invalid incoming context: missing session id")
+	}
+
+	ctx = context.WithValue(inctx, ctxSessionID, sid)
+	cid := CircuitIDFromIncomingContext(inctx)
+	if len(cid) != 0 {
+		ctx = context.WithValue(ctx, ctxCircuitID, cid)
+	}
+	return
+}
+
 func AppendCircuitID(ctx context.Context, circID CircuitID) context.Context {
 	return context.WithValue(ctx, ctxCircuitID, circID)
 }

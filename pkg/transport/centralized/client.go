@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/keepalive"
 )
 
 type HeliumClient struct {
@@ -56,7 +55,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer transport.Dialer) error {
 			grpc.MaxCallSendMsgSize(MaxMsgSize)),
 		grpc.WithStatsHandler(&hc.statsHandler),
 		grpc.WithChainUnaryInterceptor(interceptors...),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Second, Timeout: time.Minute}),
+		//grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Second, Timeout: time.Minute}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 

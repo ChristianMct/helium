@@ -39,7 +39,7 @@ message ProtocolEvent {
 }
 
 message CircuitEvent {
-    ComputeSignature Descriptor = 1;
+    CircuitDescriptor Descriptor = 1;
     EventType Type = 2;
 }
 
@@ -82,13 +82,6 @@ enum ProtocolStatus {
     FAILED = 2;
 }
 
-
-message ComputeSignature {
-    string CircuitName = 1;
-    string CircuitID = 2;
-}
-
-
 /* ProtocolDescriptor is a message type to describe a protocol by its type
 and arguments. It should be sufficient for parties to instantiate a protocol
 within a given session */
@@ -126,6 +119,34 @@ message AggregationOutput {
     Share AggregatedShare = 2;
 }
 
+message CircuitSignature {
+    string Name = 1;
+    map<string, string> Args = 2;
+}
+
+message CircuitID {
+    string CircuitID = 1;
+}
+
+message CircuitDescriptor {
+    CircuitSignature CircuitSignature = 1;
+    CircuitID CircuitID = 2;
+    map<string, NodeID> NodeMapping = 3;
+    NodeID Evaluator = 4;
+}
+
+enum CircuitStatus {
+    COMPLETED = 0;
+    CREATED = 1;
+    EXECUTING = 2;
+}
+
+message ComputeUpdate {
+    CircuitSignature CircuitSignature = 1;
+    CircuitStatus CircuitStatus = 2;
+    optional ProtocolUpdate ProtocolUpdate = 3;
+}
+
 message Ciphertext {
     bytes ciphertext = 1;
     CiphertextMetadata metadata = 2;
@@ -149,17 +170,4 @@ message CiphertextMetadata {
 message CiphertextRequest {
     CiphertextID id = 1;
     optional Signature signature = 2;
-}
-
-
-enum ComputeStatus {
-    COMPLETED = 0;
-    CREATED = 1;
-    EXECUTING = 2;
-}
-
-message ComputeUpdate {
-    ComputeSignature ComputeSignature = 1;
-    ComputeStatus ComputeStatus = 2;
-    optional ProtocolUpdate ProtocolUpdate = 3;
 }

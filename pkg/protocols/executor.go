@@ -56,6 +56,14 @@ func (ev Event) String() string {
 	return fmt.Sprintf("%s: %s", ev.EventType, ev.Signature)
 }
 
+func (ev Event) IsSetupEvent() bool {
+	return ev.Signature.Type.IsSetup()
+}
+
+func (ev Event) IsComputeEvent() bool {
+	return ev.Signature.Type.IsCompute()
+}
+
 type Executor struct {
 	self pkg.NodeID
 
@@ -378,7 +386,7 @@ func (s *Executor) Unregister(peer pkg.NodeID) error {
 	delete(s.connectedNodes, peer)
 	s.connectedNodesMu.Unlock()
 
-	s.Logf("[Node] unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	s.Logf("unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 
@@ -430,7 +438,7 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *pkg.Session) Descr
 
 func (s *Executor) DisconnectedNode(id pkg.NodeID) {
 	s.runningProtoMu.RLock()
-	protoIds, _ := s.nodesToProtocols[id]
+	protoIds := s.nodesToProtocols[id]
 	for pid := range protoIds {
 		s.runningProtos[pid].disconnected <- id
 	}
@@ -438,7 +446,7 @@ func (s *Executor) DisconnectedNode(id pkg.NodeID) {
 }
 
 func (s *Executor) Logf(msg string, v ...any) {
-	log.Printf("%s | [compute] %s\n", s.self, fmt.Sprintf(msg, v...))
+	log.Printf("%s | [executor] %s\n", s.self, fmt.Sprintf(msg, v...))
 }
 
 func (s *Executor) NodeID() pkg.NodeID {

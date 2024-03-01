@@ -39,6 +39,9 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Trans
 
 	s.self = ownId
 	s.execuctor, err = protocols.NewExectutor(s.self, sessions, s, s.GetInputs, s, trans)
+	if err != nil {
+		return nil, err
+	}
 	s.transport = trans
 	s.ResultBackend = newObjStoreResultBackend(backend)
 	s.completed = make(map[string]protocols.Descriptor)
@@ -50,6 +53,11 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, trans Trans
 }
 
 func (s *Service) processEvent(ev protocols.Event) {
+
+	if !ev.IsSetupEvent() {
+		panic("non-setup event sent to setup service")
+	}
+
 	switch ev.EventType {
 	case protocols.Started:
 	case protocols.Completed:
@@ -70,8 +78,8 @@ func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 		go func() {
 			for ev := range coord.Incoming() {
 				s.Logf("new coordination event: %s", ev)
-				s.processEvent(ev)
-				s.incoming <- ev
+				s.processEvent(ev) // update local state
+				s.incoming <- ev   // pass the event downstream
 			}
 			close(upstreamDone)
 		}()
@@ -81,8 +89,8 @@ func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 	downstreamDone := make(chan struct{})
 	go func() {
 		for ev := range s.outgoing {
-			s.processEvent(ev)
-			coord.Outgoing() <- ev
+			s.processEvent(ev)     // update local state
+			coord.Outgoing() <- ev // pass the event upstream
 		}
 		close(downstreamDone)
 	}()

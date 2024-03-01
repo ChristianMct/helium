@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ldsec/helium/pkg/circuits"
@@ -37,11 +38,23 @@ func (ev Event) IsProtocolEvent() bool {
 }
 
 func (ev Event) IsSetupEvent() bool {
-	return !ev.IsComputeEvent()
+	return ev.IsProtocolEvent() && ev.ProtocolEvent.IsSetupEvent()
 }
 
 func (ev Event) IsComputeEvent() bool {
-	return ev.CircuitEvent != nil
+	return ev.CircuitEvent != nil || (ev.ProtocolEvent != nil && ev.ProtocolEvent.IsComputeEvent())
+}
+
+func (ev Event) String() string {
+	switch {
+	case ev.IsProtocolEvent():
+		return fmt.Sprintf("PROTOCOL %s", ev.ProtocolEvent)
+	case ev.IsComputeEvent():
+		return fmt.Sprintf("CIRCUIT %s", ev.CircuitEvent)
+	default:
+		return "UNKNOWN"
+	}
+
 }
 
 type Log []Event
