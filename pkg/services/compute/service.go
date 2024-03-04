@@ -110,12 +110,12 @@ type Service struct {
 	library map[circuits.Name]circuits.Circuit
 }
 
-func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, pkbk PublicKeyBackend, trans Transport) (s *Service, err error) {
+func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, peconf protocols.ExecutorConfig, pkbk PublicKeyBackend, trans Transport) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownId
 	s.sessions = sessions
-	s.Executor, err = protocols.NewExectutor(s.self, sessions, s, s.GetProtocolInput, trans)
+	s.Executor, err = protocols.NewExectutor(peconf, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +428,7 @@ func (s *Service) runParticipant(ctx context.Context, c circuits.Circuit, cd cir
 
 func (s *Service) RunKeyOperation(ctx context.Context, sig protocols.Signature) (err error) {
 	s.Logf("running key operation: %s", sig)
-	err = s.Executor.RunSignatureAsAggregator(ctx, sig, s.Put)
+	err = s.Executor.RunSignature(ctx, sig, s.Put)
 	return err
 }
 

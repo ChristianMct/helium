@@ -8,6 +8,7 @@ import (
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestExecutor(t *testing.T) {
@@ -49,7 +50,7 @@ func TestExecutor(t *testing.T) {
 					return rkg1AggOut.Share, nil
 				}
 
-				aggOutC := make(chan AggregationOutput)
+				aggOutC := make(chan AggregationOutput, 1) // TODO the next command is blocking, see if we want to make it async
 				err = helper.RunDescriptorAsAggregator(ctx, r1Pd, func(ctx context.Context, ao AggregationOutput) error {
 					aggOutC <- ao
 					return nil
@@ -81,19 +82,6 @@ func TestExecutor(t *testing.T) {
 			return nil, nil
 		}
 
-		helper, err = NewExectutor(hid, testSess.HelperSession, testCoord, hip, testTrans)
-		require.Nil(t, err)
-		go helper.Run(ctx)
-		for nid := range nids {
-			executors[nid], err = NewExectutor(nid, testSess.NodeSessions[nid], testCoord.NewNodeCoordinator(nid), pip, testTrans.TransportFor(nid))
-			require.Nil(t, err)
-			go executors[nid].Run(ctx)
-			err = helper.Register(nid)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-
 		sigs := []Signature{
 			{Type: CKG},
 			{Type: RTG, Args: map[string]string{"GalEl": "5"}},
@@ -102,10 +90,34 @@ func TestExecutor(t *testing.T) {
 			{Type: DEC, Args: map[string]string{"target": "node-0", "smudging": "40"}},
 		}
 
+		conf := ExecutorConfig{
+			SigQueueSize:     len(sigs),
+			MaxProtoPerNode:  1,
+			MaxAggregation:   1,
+			MaxParticipation: 1,
+		}
+
+		helper, err = NewExectutor(conf, hid, testSess.HelperSession, testCoord, hip, testTrans)
+		require.Nil(t, err)
+
+		g, gctx := errgroup.WithContext(ctx)
+		g.Go(func() error { return helper.Run(gctx) })
+		for nid := range nids {
+			nid := nid
+			executors[nid], err = NewExectutor(conf, nid, testSess.NodeSessions[nid], testCoord.NewNodeCoordinator(nid), pip, testTrans.TransportFor(nid))
+			require.Nil(t, err)
+			g.Go(func() error { return executors[nid].Run(gctx) })
+			err = helper.Register(nid)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
 		for _, sig := range sigs {
 			t.Run(fmt.Sprintf("N=%d/T=%d/Sig=%s", ts.N, ts.T, sig), func(t *testing.T) {
+				sig := sig
 				aggOutC := make(chan AggregationOutput)
-				err := helper.RunSignatureAsAggregator(ctx, sig, func(ctx context.Context, ao AggregationOutput) error {
+				err := helper.RunSignature(ctx, sig, func(ctx context.Context, ao AggregationOutput) error {
 					aggOutC <- ao
 					return nil
 				})
@@ -115,6 +127,12 @@ func TestExecutor(t *testing.T) {
 				checkOutput(out, aggOut.Descriptor, *testSess, t)
 			})
 		}
+		close(testCoord.incoming)
+		close(testTrans.incoming)
+
+		err = g.Wait()
+		require.Nil(t, err)
+
 	}
 }
 

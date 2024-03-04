@@ -28,23 +28,24 @@ var TestPN12QP109 = bgv.ParametersLiteral{
 
 var rangeParam = []bgv.ParametersLiteral{TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
 
-type TestCircuit struct {
+type TestCircuitSig struct {
 	circuits.Signature
 	ExpResult uint64
 }
 
 type testSetting struct {
-	N        int // N - total parties
-	T        int // T - parties in the access structure
-	Circuits []TestCircuit
-	Reciever pkg.NodeID
-	Rep      int // numer of repetition for each circuit
+	N           int // N - total parties
+	T           int // T - parties in the access structure
+	CircuitSigs []TestCircuitSig
+	Reciever    pkg.NodeID
+	Rep         int // numer of repetition for each circuit
 }
 
 var testNodeMapping = map[string]pkg.NodeID{"p1": "node-0", "p2": "node-1", "eval": "helper"}
 
-var testCircuits = []TestCircuit{
+var testCircuitSigs = []TestCircuitSig{
 	{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "mul-2-dec", Args: nil}, ExpResult: 0},
 }
 
 func NodeIDtoTestInput(nid string) []uint64 {
@@ -57,11 +58,11 @@ func NodeIDtoTestInput(nid string) []uint64 {
 }
 
 var testSettings = []testSetting{
-	{N: 2, Circuits: testCircuits, Reciever: "node-0"},
-	{N: 2, Circuits: testCircuits, Reciever: "helper"},
-	{N: 3, T: 2, Circuits: testCircuits, Reciever: "node-0"},
-	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper"},
-	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper", Rep: 10},
+	{N: 2, CircuitSigs: testCircuitSigs, Reciever: "node-0"},
+	{N: 2, CircuitSigs: testCircuitSigs, Reciever: "helper"},
+	{N: 3, T: 2, CircuitSigs: testCircuitSigs, Reciever: "node-0"},
+	{N: 3, T: 2, CircuitSigs: testCircuitSigs, Reciever: "helper"},
+	{N: 3, T: 2, CircuitSigs: testCircuitSigs, Reciever: "helper", Rep: 10},
 }
 
 type testnode struct {
@@ -119,9 +120,16 @@ func TestCloudAssistedCompute(t *testing.T) {
 				clou := new(testnode)
 				all["helper"] = clou
 
+				peconf := protocols.ExecutorConfig{
+					SigQueueSize:     300,
+					MaxProtoPerNode:  1,
+					MaxAggregation:   1,
+					MaxParticipation: 1,
+				}
+
 				srvTrans := &testNodeTrans{Transport: protoTrans}
 				clou.Coordinator = coord
-				clou.Service, err = NewComputeService(hid, testSess.HelperSession, testSess, srvTrans)
+				clou.Service, err = NewComputeService(hid, testSess.HelperSession, peconf, testSess, srvTrans)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -133,7 +141,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 					cli := new(testnode)
 					cli.Session = testSess.NodeSessions[nid]
 					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-					cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], testSess, srvTrans)
+					cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], peconf, testSess, srvTrans)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -174,9 +182,9 @@ func TestCloudAssistedCompute(t *testing.T) {
 					})
 				}
 
-				cds := make([]circuits.Descriptor, 0, len(ts.Circuits)*ts.Rep)
+				cds := make([]circuits.Descriptor, 0, len(ts.CircuitSigs)*ts.Rep)
 				expResult := make(map[circuits.ID]uint64)
-				for _, tc := range ts.Circuits {
+				for _, tc := range ts.CircuitSigs {
 					for r := 0; r < ts.Rep; r++ {
 						cid := circuits.ID(fmt.Sprintf("%s-%d", tc.Name, r))
 						cd := circuits.Descriptor{

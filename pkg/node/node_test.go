@@ -18,29 +18,30 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type TestCircuit struct {
+type TestCircuitSig struct {
 	circuits.Signature
 	ExpResult uint64
 }
 
 type testSetting struct {
-	N        int // N - total parties
-	T        int // T - parties in the access structure
-	Circuits []TestCircuit
-	Reciever pkg.NodeID
-	Rep      int // numer of repetition for each circuit
+	N           int // N - total parties
+	T           int // T - parties in the access structure
+	CircuitSigs []TestCircuitSig
+	Reciever    pkg.NodeID
+	Rep         int // numer of repetition for each circuit
 }
 
-var testCircuits = []TestCircuit{
+var testCircuits = []TestCircuitSig{
 	{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "mul-2-dec", Args: nil}, ExpResult: 0},
 }
 
 var testSettings = []testSetting{
-	{N: 2, Circuits: testCircuits, Reciever: "light-0"},
-	{N: 2, Circuits: testCircuits, Reciever: "helper-0"},
-	{N: 3, T: 2, Circuits: testCircuits, Reciever: "light-0"},
-	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper-0"},
-	{N: 3, T: 2, Circuits: testCircuits, Reciever: "helper-0", Rep: 10},
+	{N: 2, CircuitSigs: testCircuits, Reciever: "light-0"},
+	{N: 2, CircuitSigs: testCircuits, Reciever: "helper-0"},
+	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "light-0"},
+	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper-0"},
+	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper-0", Rep: 10},
 }
 
 type testNode struct {
@@ -131,7 +132,7 @@ func TestNodeSetup(t *testing.T) {
 			}
 
 			lt.Start()
-			//g, ctx := errgroup.WithContext(ctx)
+
 			g, runctx := errgroup.WithContext(ctx)
 			for _, node := range all {
 				node := node
@@ -242,7 +243,7 @@ func TestNodeCompute(t *testing.T) {
 			nodemap := map[string]pkg.NodeID{"p1": "light-0", "p2": "light-1", "eval": "helper-0", "rec": ts.Reciever}
 			cdesc := <-cdescs
 			expResult := make(map[circuits.ID]uint64)
-			for _, tc := range ts.Circuits {
+			for _, tc := range ts.CircuitSigs {
 				for i := 0; i < ts.Rep; i++ {
 					cid := circuits.ID(fmt.Sprintf("%s-%d", tc.Name, i))
 					cdesc <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, ID: cid, NodeMapping: nodemap, Evaluator: hid}

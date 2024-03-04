@@ -80,8 +80,15 @@ func TestCloudAssistedSetup(t *testing.T) {
 				clou := new(testnode)
 				all["helper"] = clou
 
+				peconf := protocols.ExecutorConfig{
+					SigQueueSize:     300,
+					MaxProtoPerNode:  1,
+					MaxAggregation:   1,
+					MaxParticipation: 1,
+				}
+
 				srvTrans := &testNodeTrans{Transport: protoTrans}
-				clou.Service, err = NewSetupService(hid, testSess.HelperSession, srvTrans, testSess.HelperSession.ObjectStore)
+				clou.Service, err = NewSetupService(hid, testSess.HelperSession, peconf, srvTrans, testSess.HelperSession.ObjectStore)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -92,7 +99,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 					cli := &testnode{}
 					cli.Session = testSess.NodeSessions[nid]
 					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], srvTrans, testSess.NodeSessions[nid].ObjectStore)
+					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], peconf, srvTrans, testSess.NodeSessions[nid].ObjectStore)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -119,7 +126,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 				go func() {
 					sigList, _ := DescriptionToSignatureList(sd)
 					for _, sig := range sigList {
-						clou.RunProtocol(ctx, sig)
+						clou.RunSignature(ctx, sig)
 					}
 					coord.Close()
 				}()

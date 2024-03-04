@@ -86,12 +86,13 @@ type Node struct {
 }
 
 type Config struct {
-	ID                pkg.NodeID
-	Address           pkg.NodeAddress
-	HelperID          pkg.NodeID
-	SessionParameters []pkg.SessionParameters
-	ObjectStoreConfig objectstore.Config
-	TLSConfig         centralized.TLSConfig
+	ID                     pkg.NodeID
+	Address                pkg.NodeAddress
+	HelperID               pkg.NodeID
+	SessionParameters      []pkg.SessionParameters
+	ProtocolExecutorConfig protocols.ExecutorConfig
+	ObjectStoreConfig      objectstore.Config
+	TLSConfig              centralized.TLSConfig
 }
 
 // type lightNodeServiceTransport struct {
@@ -170,12 +171,12 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 		getCiphertext: node.GetCiphertext}
 
 	// services
-	node.setup, err = setup.NewSetupService(node.id, node, node.setupTransport, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id, node, config.ProtocolExecutorConfig, node.setupTransport, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
 
-	node.compute, err = compute.NewComputeService(node.id, node, node.setup, node.computeTransport)
+	node.compute, err = compute.NewComputeService(node.id, node, config.ProtocolExecutorConfig, node.setup, node.computeTransport)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}
@@ -315,7 +316,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		// TODO: load and verify state from persistent storage
 		for _, sig := range sigList {
 			sig := sig
-			node.setup.RunProtocol(ctx, sig)
+			node.setup.RunSignature(ctx, sig)
 		}
 
 		node.Logf("all signatures run, closing setup downstream")
