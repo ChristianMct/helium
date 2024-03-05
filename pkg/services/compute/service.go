@@ -12,6 +12,7 @@ import (
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"golang.org/x/sync/errgroup"
 )
 
 type Transport interface {
@@ -80,7 +81,8 @@ var NoInput InputProvider = func(_ context.Context, _ circuits.OperandLabel) (*r
 var NoOutput OutputReceiver = nil
 
 type Service struct {
-	self pkg.NodeID
+	config ServiceConfig
+	self   pkg.NodeID
 
 	sessions pkg.SessionProvider
 	*protocols.Executor
@@ -94,13 +96,15 @@ type Service struct {
 	outputsMu sync.RWMutex
 	outputs   map[circuits.OperandLabel]*circuits.Operand
 
+	queuedCircuits chan circuits.Descriptor
+
 	runningCircuitsMu sync.RWMutex
 	runningCircuitWg  sync.WaitGroup
 	runningCircuits   map[circuits.ID]CircuitInstance
 
 	//running chan struct{}
 
-	// upstream
+	// upstream coordinator
 	coordinator Coordinator
 
 	// downstream coordinator
@@ -110,20 +114,42 @@ type Service struct {
 	library map[circuits.Name]circuits.Circuit
 }
 
-func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, peconf protocols.ExecutorConfig, pkbk PublicKeyBackend, trans Transport) (s *Service, err error) {
+const (
+	DefaultCircQueueSize        = 100
+	DefaultMaxCircuitEvaluation = 10
+)
+
+type ServiceConfig struct {
+	CircQueueSize        int
+	MaxCircuitEvaluation int
+	Protocols            protocols.ExecutorConfig
+}
+
+func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, seconf ServiceConfig, pkbk PublicKeyBackend, trans Transport) (s *Service, err error) {
 	s = new(Service)
+
+	s.config = seconf
+	if s.config.CircQueueSize == 0 {
+		s.config.CircQueueSize = DefaultCircQueueSize
+	}
+	if s.config.MaxCircuitEvaluation == 0 {
+		s.config.MaxCircuitEvaluation = DefaultMaxCircuitEvaluation
+	}
 
 	s.self = ownId
 	s.sessions = sessions
-	s.Executor, err = protocols.NewExectutor(peconf, s.self, sessions, s, s.GetProtocolInput, trans)
+	s.Executor, err = protocols.NewExectutor(seconf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
 	s.transport = trans
 	s.pubkeyBackend = pkbk
 
+	s.queuedCircuits = make(chan circuits.Descriptor, seconf.CircQueueSize)
+
 	s.runningCircuits = make(map[circuits.ID]CircuitInstance)
 
+	// coordinator
 	s.incoming = make(chan protocols.Event)
 	s.outgoing = make(chan protocols.Event)
 
@@ -168,7 +194,6 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					s.runningCircuitsMu.RUnlock()
 
 					c.CompletedProtocol(pev.Descriptor)
-					break
 				}
 
 				continue
@@ -178,10 +203,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 			s.Logf("new coordination event: CIRCUIT %s", cev)
 			switch ev.CircuitEvent.Status {
 			case circuits.Started:
-				err := s.runCircuit(ctx, cev.Descriptor)
-				if err != nil {
-					panic(err)
-				}
+				s.queuedCircuits <- cev.Descriptor
 			case circuits.Completed, circuits.Failed:
 				s.runningCircuitsMu.Lock()
 				delete(s.runningCircuits, ev.CircuitEvent.ID)
@@ -193,7 +215,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 	//	close(s.running)
 
-	// process incoming downstream coordination events
+	// process downstream incoming coordination events
 	downstreamDone := make(chan struct{})
 	go func() {
 		for pev := range s.outgoing {
@@ -223,6 +245,19 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		close(downstreamDone)
 	}()
 
+	// process the circuit execution queue
+	evalRoutines, erctx := errgroup.WithContext(ctx)
+	for i := 0; i < s.config.MaxCircuitEvaluation; i++ {
+		evalRoutines.Go(func() error {
+			for cd := range s.queuedCircuits {
+				if err := s.runCircuit(erctx, cd); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
 	// sends the local outputs to the output receiver if any
 	go func() {
 		if or != nil {
@@ -238,8 +273,12 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 	<-upstreamDone
 	s.Logf("upstream coordinator done")
+	close(s.queuedCircuits)
 
-	s.runningCircuitWg.Wait()
+	err := evalRoutines.Wait()
+	if err != nil {
+		return err
+	}
 	s.Logf("all circuits done")
 
 	close(s.incoming) // closing downstream coordinator
@@ -273,16 +312,16 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err e
 	//<-s.running // waits for the Run function to be called
 
 	if s.isEvaluator(cd, *ci) {
-		err = s.runEvaluator(ctx, c, cd, ci, params)
+		err = s.runCircuitAsEvaluator(ctx, c, cd, ci, params)
 	} else {
-		err = s.runParticipant(ctx, c, cd, ci, params)
+		err = s.runCircuitAsParticipant(ctx, c, cd, ci, params)
 	}
 
 	return err
 }
 
 // TODO: include cd in ci ?
-func (s *Service) runEvaluator(ctx context.Context, c circuits.Circuit, cd circuits.Descriptor, ci *circuits.Info, params bgv.Parameters) (err error) {
+func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, cd circuits.Descriptor, ci *circuits.Info, params bgv.Parameters) (err error) {
 	s.Logf("started circuit %s as evaluator", cd.ID)
 
 	sessid, _ := pkg.SessionIDFromContext(ctx)
@@ -304,50 +343,50 @@ func (s *Service) runEvaluator(ctx context.Context, c circuits.Circuit, cd circu
 	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
 
 	// evalDone := make(chan struct{})
-	go func() {
-		err = c(ev)
-		if err != nil {
-			panic(err)
+	//go func() {
+	err = c(ev)
+	if err != nil {
+		panic(err)
+	}
+
+	err = ev.Wait() // all protocol events have been sent on upstream
+	if err != nil {
+		panic(err)
+	}
+
+	for outLabel := range ci.OutputSet {
+		op, has := ev.GetOperand(ctx, outLabel)
+		if !has {
+			panic(fmt.Errorf("circuit should have output operand %s", outLabel))
 		}
+		s.outputsMu.Lock()
+		s.outputs[outLabel] = op
+		s.outputsMu.Unlock()
+	}
 
-		err := ev.Wait() // all protocol events have been sent on upstream
-		if err != nil {
-			panic(err)
+	for outLabel := range ci.OutputsFor[s.self] {
+		fop, has := ev.GetOperand(ctx, outLabel)
+		if !has {
+			panic(fmt.Errorf("circuit instance has no output label %s", outLabel))
 		}
+		s.localOutputs <- circuits.Output{ID: cd.ID, Operand: *fop}
+	}
 
-		for outLabel := range ci.OutputSet {
-			op, has := ev.GetOperand(ctx, outLabel)
-			if !has {
-				panic(fmt.Errorf("circuit should have output operand %s", outLabel))
-			}
-			s.outputsMu.Lock()
-			s.outputs[outLabel] = op
-			s.outputsMu.Unlock()
-		}
+	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Completed, Descriptor: cd}}
 
-		for outLabel := range ci.OutputsFor[s.self] {
-			fop, has := ev.GetOperand(ctx, outLabel)
-			if !has {
-				panic(fmt.Errorf("circuit instance has no output label %s", outLabel))
-			}
-			s.localOutputs <- circuits.Output{ID: cd.ID, Operand: *fop}
-		}
+	s.runningCircuitsMu.Lock()
+	delete(s.runningCircuits, cd.ID)
+	nRunning := len(s.runningCircuits)
+	s.runningCircuitsMu.Unlock()
+	s.runningCircuitWg.Done()
 
-		s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Completed, Descriptor: cd}}
-
-		s.runningCircuitsMu.Lock()
-		delete(s.runningCircuits, cd.ID)
-		nRunning := len(s.runningCircuits)
-		s.runningCircuitsMu.Unlock()
-		s.runningCircuitWg.Done()
-
-		s.Logf("completed circuit %s as evaluator, %d running", cd.ID, nRunning)
-		// close(evalDone)
-	}()
+	s.Logf("completed circuit %s as evaluator, %d running", cd.ID, nRunning)
+	// close(evalDone)
+	//}()
 	return nil
 }
 
-func (s *Service) runParticipant(ctx context.Context, c circuits.Circuit, cd circuits.Descriptor, ci *circuits.Info, params bgv.Parameters) error {
+func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, cd circuits.Descriptor, ci *circuits.Info, params bgv.Parameters) error {
 
 	s.Logf("started circuit %s as participant", cd.ID)
 
