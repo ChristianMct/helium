@@ -375,9 +375,17 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		}
 
 		//completedProto, runningProto, completedCirc, runningCirc, err := recoverPresentState(events, present)
-		_, _, _, _, err = recoverPresentState(events, present)
+		complPd, runPd, complCd, runCd, err := recoverPresentState(events, present)
 		if err != nil {
 			return nil, nil, err
+		}
+
+		if err := node.setup.Init(ctx, complPd, runPd); err != nil {
+			return nil, nil, fmt.Errorf("error at setup service init: %w", err)
+		}
+
+		if err := node.compute.Init(ctx, complCd, runCd, complPd, runPd); err != nil {
+			return nil, nil, fmt.Errorf("error at compute service init: %w", err)
 		}
 
 		go node.sendShares(ctx)
@@ -474,7 +482,7 @@ func (node *Node) sendShares(ctx context.Context) {
 	}
 }
 
-func recoverPresentState(events <-chan coordinator.Event, present int) (completedProto, runningProto []protocols.Descriptor, completedCirc, runningCirc []circuits.Signature, err error) {
+func recoverPresentState(events <-chan coordinator.Event, present int) (completedProto, runningProto []protocols.Descriptor, completedCirc, runningCirc []circuits.Descriptor, err error) {
 
 	if present == 0 {
 		return
@@ -482,14 +490,14 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 
 	var current int
 	runProto := make(map[pkg.ProtocolID]protocols.Descriptor)
-	runCircuit := make(map[circuits.ID]circuits.Signature)
+	runCircuit := make(map[circuits.ID]circuits.Descriptor)
 	for ev := range events {
 
 		if ev.IsComputeEvent() {
 			cid := ev.CircuitEvent.ID
 			switch ev.CircuitEvent.Status {
 			case circuits.Started:
-				runCircuit[cid] = ev.CircuitEvent.Signature
+				runCircuit[cid] = ev.CircuitEvent.Descriptor
 			case circuits.Executing:
 				if _, has := runCircuit[cid]; !has {
 					err = fmt.Errorf("inconsisted state, circuit %s execution event before start", cid)
@@ -502,7 +510,7 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 				}
 				delete(runCircuit, cid)
 				if ev.CircuitEvent.Status == circuits.Completed {
-					completedCirc = append(completedCirc, ev.CircuitEvent.Signature)
+					completedCirc = append(completedCirc, ev.CircuitEvent.Descriptor)
 				}
 			}
 		}

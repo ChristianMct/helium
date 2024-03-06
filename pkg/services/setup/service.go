@@ -74,6 +74,28 @@ func (s *Service) processEvent(ev protocols.Event) {
 	}
 }
 
+func (s *Service) Init(ctx context.Context, complPd, runPd []protocols.Descriptor) error {
+
+	for _, cpd := range complPd {
+
+		if !cpd.Signature.Type.IsSetup() {
+			continue
+		}
+		if err := s.completed.CompletedProtocol(cpd); err != nil {
+			return err
+		}
+	}
+
+	for _, rpd := range runPd {
+		if !rpd.Signature.Type.IsSetup() {
+			continue
+		}
+		s.incoming <- protocols.Event{EventType: protocols.Executing, Descriptor: rpd} // sends a protocol started event downstream
+	}
+
+	return nil
+}
+
 func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 
 	// processes incoming events from the coordinator

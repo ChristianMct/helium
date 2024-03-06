@@ -105,6 +105,7 @@ type Service struct {
 	//runningCircuitWg  sync.WaitGroup
 	runningCircuits map[circuits.ID]CircuitInstance
 
+	completedCircuits chan circuits.Descriptor
 	//running chan struct{}
 
 	// upstream coordinator
@@ -164,6 +165,45 @@ func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Serv
 	return s, nil
 }
 
+func (s *Service) Init(ctx context.Context, complCd, runCd []circuits.Descriptor, complPd, runPd []protocols.Descriptor) error {
+
+	// stacks the completed circuit in a queue for processing by Run
+	s.completedCircuits = make(chan circuits.Descriptor, len(complCd))
+	for _, ccd := range complCd {
+		s.completedCircuits <- ccd
+	}
+
+	// create and queues the running circuits
+	for _, rcd := range runCd {
+		if err := s.createCircuit(ctx, rcd); err != nil {
+			return err
+		}
+		s.queuedCircuits <- rcd
+	}
+
+	// sends the completed
+	for _, cpd := range complPd {
+
+		if !cpd.Signature.Type.IsCompute() {
+			continue
+		}
+
+		if err := s.sendCompletedPdToCircuit(cpd); err != nil {
+			return err
+		}
+	}
+
+	// sends the running pd to the protocol executor
+	for _, rpd := range runPd {
+		if !rpd.Signature.Type.IsCompute() {
+			continue
+		}
+		s.incoming <- protocols.Event{EventType: protocols.Started, Descriptor: rpd}
+	}
+
+	return nil
+}
+
 func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, coord Coordinator) error {
 
 	s.coordinator = coord
@@ -187,22 +227,9 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 				switch pev.EventType {
 				case protocols.Completed:
-					opls, has := pev.Signature.Args["op"]
-					if !has {
-						panic("no op argument in circuit protocol event")
+					if err := s.sendCompletedPdToCircuit(pev.Descriptor); err != nil {
+						panic(err)
 					}
-
-					opl := circuits.OperandLabel(opls)
-					cid := opl.Circuit()
-
-					s.runningCircuitsMu.RLock()
-					c, has := s.runningCircuits[cid]
-					s.runningCircuitsMu.RUnlock()
-					if !has {
-						panic(fmt.Errorf("circuit is not runnig: %s", cid))
-					}
-
-					c.CompletedProtocol(pev.Descriptor)
 				}
 
 				continue
@@ -272,6 +299,42 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		})
 	}
 
+	// fetches the output for completed circuits (light nodes only)
+	go func() {
+		if or != nil {
+			for cd := range s.completedCircuits {
+				c, has := s.library[cd.Name]
+				if !has {
+					panic(fmt.Errorf("no registered circuit for name \"%s\"", cd.Name))
+				}
+
+				sess, has := s.sessions.GetSessionFromContext(ctx)
+				if !has {
+					panic(fmt.Errorf("could not retrieve session from the context"))
+				}
+
+				params := *sess.Params
+
+				cinf, err := circuits.Parse(c, cd, params)
+				if err != nil {
+					panic(err)
+				}
+
+				for opl := range cinf.OutputsFor[s.self] {
+					ct, err := s.transport.GetCiphertext(ctx, pkg.CiphertextID(opl))
+					if err != nil {
+						panic(err)
+					}
+
+					or <- circuits.Output{ID: cd.ID, Operand: circuits.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}}
+				}
+			}
+		} else {
+			for range s.completedCircuits {
+			}
+		}
+	}()
+
 	// sends the local outputs to the output receiver if any
 	go func() {
 		if or != nil {
@@ -298,6 +361,25 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	close(s.coordinator.Outgoing()) // close own outgoing channel
 	close(s.localOutputs)
 	return nil
+}
+
+func (s *Service) sendCompletedPdToCircuit(pd protocols.Descriptor) error {
+	opls, has := pd.Signature.Args["op"]
+	if !has {
+		panic("no op argument in circuit protocol event")
+	}
+
+	opl := circuits.OperandLabel(opls)
+	cid := opl.Circuit()
+
+	s.runningCircuitsMu.RLock()
+	c, has := s.runningCircuits[cid]
+	s.runningCircuitsMu.RUnlock()
+	if !has {
+		panic(fmt.Errorf("circuit is not runnig: %s", cid))
+	}
+
+	return c.CompletedProtocol(pd)
 }
 
 func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
