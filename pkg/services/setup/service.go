@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
+
+type ServiceConfig struct {
+	Protocols protocols.ExecutorConfig
+}
 
 type Service struct {
 	self pkg.NodeID
@@ -23,8 +26,8 @@ type Service struct {
 
 	ResultBackend
 
-	l         sync.RWMutex
-	completed map[string]protocols.Descriptor
+	//l         sync.RWMutex
+	completed *protocols.CompleteMap
 }
 
 type Transport interface {
@@ -34,17 +37,17 @@ type Transport interface {
 	GetAggregationOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
-func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, peconf protocols.ExecutorConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf ServiceConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownId
-	s.execuctor, err = protocols.NewExectutor(peconf, s.self, sessions, s, s.GetInputs, trans)
+	s.execuctor, err = protocols.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetInputs, trans)
 	if err != nil {
 		return nil, err
 	}
 	s.transport = trans
 	s.ResultBackend = newObjStoreResultBackend(backend)
-	s.completed = make(map[string]protocols.Descriptor)
+	s.completed = protocols.NewCompletedProt(nil)
 
 	s.incoming = make(chan protocols.Event)
 	s.outgoing = make(chan protocols.Event)
@@ -61,9 +64,10 @@ func (s *Service) processEvent(ev protocols.Event) {
 	switch ev.EventType {
 	case protocols.Started:
 	case protocols.Completed:
-		s.l.Lock()
-		s.completed[ev.Signature.String()] = ev.Descriptor
-		s.l.Unlock()
+		err := s.completed.CompletedProtocol(ev.Descriptor)
+		if err != nil {
+			panic(err)
+		}
 	case protocols.Failed:
 	default:
 		panic("unkown event type")
@@ -97,7 +101,10 @@ func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 
 	executorRunReturned := make(chan struct{})
 	go func() {
-		s.execuctor.Run(ctx)
+		err := s.execuctor.Run(ctx)
+		if err != nil {
+			panic(err) // TODO: return in Run
+		}
 		close(executorRunReturned)
 	}()
 
@@ -197,14 +204,13 @@ func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor
 }
 
 func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) protocols.Output {
-	s.l.RLock()
-	pd, has := s.completed[sig.String()]
-	s.l.RUnlock()
-	if !has {
-		return protocols.Output{Error: fmt.Errorf("no completed descriptor for sig %s", sig)}
+
+	pd, err := s.completed.AwaitCompletedDescriptorFor(sig)
+	if err != nil {
+		return protocols.Output{Error: fmt.Errorf("error while waiting for signature: %w", err)}
 	}
 
-	aggOut, err := s.GetProtocolOutput(ctx, pd)
+	aggOut, err := s.GetProtocolOutput(ctx, *pd)
 	if err != nil {
 		return protocols.Output{Error: fmt.Errorf("could not retrieve aggrgation output for %s: %w", pd.HID(), err)}
 	}

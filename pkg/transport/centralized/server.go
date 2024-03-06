@@ -129,14 +129,14 @@ func (ct *HeliumServer) CloseEvents() {
 	if ct.eventsClosed {
 		panic("events already closed")
 	}
-	ct.nodesMu.RLock()
+	ct.nodesMu.Lock()
 	ct.eventsClosed = true
 	for _, c := range ct.nodes {
 		if c.sendQueue != nil {
 			close(c.sendQueue)
 		}
 	}
-	ct.nodesMu.RUnlock()
+	ct.nodesMu.Unlock()
 	ct.eventsMu.Unlock()
 }
 
@@ -182,10 +182,11 @@ func (ct *HeliumServer) Register(_ *api.Void, stream api.HeliumHelper_RegisterSe
 			break
 		}
 	}
+	ct.Logf("done sending past events to %s, stream is live", nodeId)
 
 	// Processes the node's sendQueue. The sendQueue channel is closed when exiting the loop
 	cancelled := stream.Context().Done()
-	for !done && !ct.eventsClosed {
+	for !done {
 		select {
 		// received an event to send or closed the queue
 		case evt, more := <-sendQueue:

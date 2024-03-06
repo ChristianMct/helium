@@ -86,13 +86,14 @@ type Node struct {
 }
 
 type Config struct {
-	ID                     pkg.NodeID
-	Address                pkg.NodeAddress
-	HelperID               pkg.NodeID
-	SessionParameters      []pkg.SessionParameters
-	ProtocolExecutorConfig protocols.ExecutorConfig
-	ObjectStoreConfig      objectstore.Config
-	TLSConfig              centralized.TLSConfig
+	ID                pkg.NodeID
+	Address           pkg.NodeAddress
+	HelperID          pkg.NodeID
+	SessionParameters []pkg.SessionParameters
+	SetupConfig       setup.ServiceConfig
+	ComputeConfig     compute.ServiceConfig
+	ObjectStoreConfig objectstore.Config
+	TLSConfig         centralized.TLSConfig
 }
 
 // type lightNodeServiceTransport struct {
@@ -171,12 +172,12 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 		getCiphertext: node.GetCiphertext}
 
 	// services
-	node.setup, err = setup.NewSetupService(node.id, node, config.ProtocolExecutorConfig, node.setupTransport, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id, node, config.SetupConfig, node.setupTransport, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
 
-	node.compute, err = compute.NewComputeService(node.id, node, config.ProtocolExecutorConfig, node.setup, node.computeTransport)
+	node.compute, err = compute.NewComputeService(node.id, node, config.ComputeConfig, node.setup, node.computeTransport)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}
@@ -311,12 +312,20 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 			close(downstreamDone)
 		}()
 
-		go node.setup.Run(ctx, setupCoord)
+		go func() {
+			err := node.setup.Run(ctx, setupCoord)
+			if err != nil {
+				panic(err)
+			}
+		}()
 
 		// TODO: load and verify state from persistent storage
 		for _, sig := range sigList {
 			sig := sig
-			node.setup.RunSignature(ctx, sig)
+			err := node.setup.RunSignature(ctx, sig)
+			if err != nil {
+				panic(err)
+			}
 		}
 
 		node.Logf("all signatures run, closing setup downstream")
@@ -328,7 +337,12 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 
 		computeCoord := &coordinatorT{make(chan coordinator.Event), make(chan coordinator.Event)}
 
-		go node.compute.Run(ctx, ip, or, computeCoord)
+		go func() {
+			err := node.compute.Run(ctx, ip, or, computeCoord)
+			if err != nil {
+				panic(err)
+			}
+		}()
 
 		downstreamDone = make(chan struct{})
 		go func() {
@@ -369,10 +383,20 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		go node.sendShares(ctx)
 
 		setupCoord := &protocolCoordinator{make(chan protocols.Event), make(chan protocols.Event)}
-		go node.setup.Run(ctx, setupCoord)
+		go func() {
+			err := node.setup.Run(ctx, setupCoord)
+			if err != nil {
+				panic(err)
+			}
+		}()
 
 		computeCoord := &coordinatorT{make(chan coordinator.Event), make(chan coordinator.Event)}
-		go node.compute.Run(ctx, ip, or, computeCoord)
+		go func() {
+			err := node.compute.Run(ctx, ip, or, computeCoord)
+			if err != nil {
+				panic(err)
+			}
+		}()
 
 		go func() {
 			for ev := range events {

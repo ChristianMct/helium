@@ -80,15 +80,17 @@ func TestCloudAssistedSetup(t *testing.T) {
 				clou := new(testnode)
 				all["helper"] = clou
 
-				peconf := protocols.ExecutorConfig{
-					SigQueueSize:     300,
-					MaxProtoPerNode:  1,
-					MaxAggregation:   1,
-					MaxParticipation: 1,
+				conf := ServiceConfig{
+					Protocols: protocols.ExecutorConfig{
+						SigQueueSize:     300,
+						MaxProtoPerNode:  1,
+						MaxAggregation:   1,
+						MaxParticipation: 1,
+					},
 				}
 
 				srvTrans := &testNodeTrans{Transport: protoTrans}
-				clou.Service, err = NewSetupService(hid, testSess.HelperSession, peconf, srvTrans, testSess.HelperSession.ObjectStore)
+				clou.Service, err = NewSetupService(hid, testSess.HelperSession, conf, srvTrans, testSess.HelperSession.ObjectStore)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -99,7 +101,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 					cli := &testnode{}
 					cli.Session = testSess.NodeSessions[nid]
 					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], peconf, srvTrans, testSess.NodeSessions[nid].ObjectStore)
+					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], conf, srvTrans, testSess.NodeSessions[nid].ObjectStore)
 					if err != nil {
 						t.Fatal(err)
 					}

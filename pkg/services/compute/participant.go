@@ -3,7 +3,6 @@ package compute
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"golang.org/x/exp/maps"
 
@@ -16,80 +15,67 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
 )
 
-type completedProt struct {
-	wg              sync.WaitGroup
-	completedProtMu sync.RWMutex
-	completedProt   map[string]chan protocols.Descriptor
-}
-
-func newCompletedProt(sigs []protocols.Signature) *completedProt {
-	cp := new(completedProt)
-	cp.completedProt = make(map[string]chan protocols.Descriptor)
-	for _, sig := range sigs {
-		cp.completedProt[sig.String()] = make(chan protocols.Descriptor, 1)
-	}
-	cp.wg.Add(len(sigs))
-	return cp
-}
-
-func (p *completedProt) CompletedProtocol(pd protocols.Descriptor) error {
-	p.completedProtMu.Lock()
-	pdc, expected := p.completedProt[pd.Signature.String()]
-	p.completedProtMu.Unlock()
-	if !expected {
-		return fmt.Errorf("unexpected completed descriptor for signature: %s", pd.Signature)
-	}
-
-	pdc <- pd
-
-	p.wg.Done()
-	return nil
-}
-
-func (p *completedProt) AwaitCompletedDescriptorFor(sig protocols.Signature) (pdp *protocols.Descriptor, err error) {
-	p.completedProtMu.RLock()
-	incDesc, has := p.completedProt[sig.String()]
-	p.completedProtMu.RUnlock()
-	if !has {
-		return nil, fmt.Errorf("not waiting for completed protocol for sig %s", sig)
-	}
-
-	pd := <-incDesc
-	return &pd, nil
-}
-
-func (p *completedProt) Wait() error {
-	p.wg.Wait()
-	return nil // TODO error here ?
-}
-
 type participant struct {
+
+	// inst
 	ctx           context.Context // TODO: check if storing this context this way is a problem
 	cd            circuits.Descriptor
 	sess          *pkg.Session
 	inputProvider InputProvider
-	cpk           rlwe.PublicKey
 	trans         Transport
 	or            OutputReceiver
+	incpd         chan protocols.Descriptor // buffer for pd incoming before Init
 
-	*completedProt
+	// init
+	*protocols.CompleteMap
+	*rlwe.Encryptor
+
+	// eval
+
 	dummyEvaluator
 }
 
-func NewParticipant(ctx context.Context, cd circuits.Descriptor, ci *circuits.Info, sess *pkg.Session, ip InputProvider, cpk rlwe.PublicKey, trans Transport, or OutputReceiver) (*participant, error) {
-	return &participant{
-		ctx:           ctx,
-		cd:            cd,
-		sess:          sess,
-		inputProvider: ip,
-		cpk:           cpk,
-		or:            or,
-		trans:         trans,
-		completedProt: newCompletedProt(maps.Values(ci.KeySwitchOps)),
-	}, nil
+// Service interface
+
+func (p *participant) Init(ctx context.Context, ci circuits.Info, pkbk pkg.PublicKeyBackend) (err error) {
+	cpk, err := pkbk.GetCollectivePublicKey(ctx)
+	if err != nil {
+		return err
+	}
+
+	p.Encryptor, err = rlwe.NewEncryptor(p.sess.Params, cpk) // TODO pooling of encryptors
+	if err != nil {
+		return err
+	}
+
+	p.CompleteMap = protocols.NewCompletedProt(maps.Values(ci.KeySwitchOps))
+	return
 }
 
-// Service interface
+func (p *participant) Eval(ctx context.Context, c circuits.Circuit) error {
+
+	go func() {
+		for pd := range p.incpd {
+			if err := p.CompleteMap.CompletedProtocol(pd); err != nil {
+				panic(err)
+			}
+		}
+	}()
+
+	err := c(p)
+	if err != nil {
+		return err
+	}
+
+	err = p.Wait()
+	if err != nil {
+		return err
+	}
+
+	close(p.incpd)
+
+	return nil
+}
 
 func (p *participant) IncomingOperand(_ circuits.Operand) error {
 	panic("participant should not receive incoming operands")
@@ -116,6 +102,11 @@ func (p *participant) GetFutureOperand(ctx context.Context, opl circuits.Operand
 	return fop, true
 }
 
+func (p *participant) CompletedProtocol(pd protocols.Descriptor) error {
+	p.incpd <- pd
+	return nil
+}
+
 // Circuit Interface
 
 // Input reads an input operand with the given label from the context.
@@ -132,12 +123,7 @@ func (p *participant) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 		panic(fmt.Errorf("could not get inputs from input provider: %w", err)) // TODO return error
 	}
 
-	enc, err := rlwe.NewEncryptor(p.sess.Params, &p.cpk) // TODO: Encryptor-provider interface instead of passing cpk
-	if err != nil {
-		panic(err)
-	}
-
-	ct, err := enc.EncryptNew(in)
+	ct, err := p.EncryptNew(in)
 	if err != nil {
 		panic(err)
 	}

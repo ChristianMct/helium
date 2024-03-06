@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	defaultSigQueueSize = 300 // as coordinator, capacity of the pending signature channel
+	defaultSigQueueSize = 256 // as coordinator, capacity of the pending signature channel
 
-	defaultMaxParticipation = 5 // as participant, max number of parallel proto participation
-	defaultMaxAggregation   = 5 // as aggregator, max number of parallel proto aggrations
-	defaultMaxProtoPerNode  = 5 // as coordinator, max number of parallel proto per participant
+	defaultMaxParticipation = 8 // as participant, max number of parallel proto participation
+	defaultMaxAggregation   = 8 // as aggregator, max number of parallel proto aggrations
+	defaultMaxProtoPerNode  = 8 // as coordinator, max number of parallel proto per participant
 )
 
 type ExecutorConfig struct {
@@ -204,58 +204,75 @@ func (s *Executor) Run(ctx context.Context) error {
 		}
 	})
 
-	protoRoutines := errgroup.Group{}
-
+	protoRoutines, prctx := errgroup.WithContext(ctx)
 	// processes the protocol signature queue as coordinator and aggregator
 	for i := 0; i < s.config.MaxAggregation; i++ {
 		protoRoutines.Go(
 			func() error {
-				for qsig := range s.queuedSig {
-					err := s.runSignature(qsig.ctx, qsig.sig, qsig.rec)
-					if err != nil {
-						return fmt.Errorf("error in signature queue processing: %w", err)
+				for {
+					select {
+					case qsig, more := <-s.queuedSig:
+						if !more {
+							return nil
+						}
+						err := s.runSignature(qsig.ctx, qsig.sig, qsig.rec)
+						if err != nil {
+							return fmt.Errorf("error in signature queue processing: %w", err)
+						}
+					case <-prctx.Done():
+						return nil
 					}
+
 				}
-				return nil
 			})
 	}
 
 	// processes the protocol descriptor queue as participant
 	for i := 0; i < s.config.MaxParticipation; i++ {
 		protoRoutines.Go(func() error {
-			for qpd := range s.queuedPart {
-				if err := s.runAsParticipant(qpd.ctx, qpd.pd); err != nil {
-					return fmt.Errorf("error during protocol execution as participant: %w", err)
+			for {
+				select {
+				case qpd, more := <-s.queuedPart:
+					if !more {
+						return nil
+					}
+					if err := s.runAsParticipant(qpd.ctx, qpd.pd); err != nil {
+						return fmt.Errorf("error during protocol execution as participant: %w", err)
+					}
+				case <-prctx.Done():
+					return nil
 				}
+
 			}
-			return nil
 		})
 	}
 
-	// processes incoming coordinator events
-	for ev := range s.coordinator.Incoming() {
+	go func() {
+		// processes incoming coordinator events
+		for ev := range s.coordinator.Incoming() {
 
-		if ev.EventType != Started {
-			continue
+			if ev.EventType != Started {
+				continue
+			}
+
+			if !s.isParticipantFor(ev.Descriptor) {
+				continue
+			}
+
+			if s.isKeySwitchReceiver(ev.Descriptor) {
+				continue
+			}
+
+			s.queuedPart <- struct {
+				pd  Descriptor
+				ctx context.Context
+			}{pd: ev.Descriptor, ctx: ctx}
 		}
 
-		if !s.isParticipantFor(ev.Descriptor) {
-			continue
-		}
-
-		if s.isKeySwitchReceiver(ev.Descriptor) {
-			continue
-		}
-
-		s.queuedPart <- struct {
-			pd  Descriptor
-			ctx context.Context
-		}{pd: ev.Descriptor, ctx: ctx}
-	}
-
-	s.Logf("upstream coordinator closed, closing queues")
-	close(s.queuedSig)
-	close(s.queuedPart)
+		s.Logf("upstream coordinator closed, closing queues")
+		close(s.queuedSig)
+		close(s.queuedPart)
+	}()
 
 	err := protoRoutines.Wait()
 	if err != nil {
@@ -424,16 +441,20 @@ func (s *Executor) runAsParticipant(ctx context.Context, pd Descriptor) error {
 		return fmt.Errorf("session could not extract session from context")
 	}
 
+	s.Logf("started protocol %s as participant", pd.HID())
+
 	input, err := s.inputProvider(ctx, pd)
 	if err != nil {
+		s.Logf("ERROR:%s", err)
 		return fmt.Errorf("error while retreiving input: %w", err)
 	}
 
 	proto, err := NewProtocol(pd, sess, input)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
+	s.Logf("sending share for %s", pd.HID())
 	// runs the share generation and sending to aggregator
 	share := proto.AllocateShare()
 	err = proto.GenShare(&share)

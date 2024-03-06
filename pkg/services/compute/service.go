@@ -10,7 +10,6 @@ import (
 	"github.com/ldsec/helium/pkg/coordinator"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
@@ -51,6 +50,10 @@ type CircuitInstance interface {
 
 	// // LocalInput provides the local inputs to the circuit executing within this context.
 	// LocalInputs([]pkg.Operand) error
+
+	Init(ctx context.Context, ci circuits.Info, pkbk pkg.PublicKeyBackend) (err error)
+
+	Eval(ctx context.Context, c circuits.Circuit) (err error)
 
 	IncomingOperand(circuits.Operand) error
 
@@ -99,8 +102,8 @@ type Service struct {
 	queuedCircuits chan circuits.Descriptor
 
 	runningCircuitsMu sync.RWMutex
-	runningCircuitWg  sync.WaitGroup
-	runningCircuits   map[circuits.ID]CircuitInstance
+	//runningCircuitWg  sync.WaitGroup
+	runningCircuits map[circuits.ID]CircuitInstance
 
 	//running chan struct{}
 
@@ -125,10 +128,10 @@ type ServiceConfig struct {
 	Protocols            protocols.ExecutorConfig
 }
 
-func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, seconf ServiceConfig, pkbk PublicKeyBackend, trans Transport) (s *Service, err error) {
+func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf ServiceConfig, pkbk PublicKeyBackend, trans Transport) (s *Service, err error) {
 	s = new(Service)
 
-	s.config = seconf
+	s.config = conf
 	if s.config.CircQueueSize == 0 {
 		s.config.CircQueueSize = DefaultCircQueueSize
 	}
@@ -138,14 +141,14 @@ func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, seconf Se
 
 	s.self = ownId
 	s.sessions = sessions
-	s.Executor, err = protocols.NewExectutor(seconf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
+	s.Executor, err = protocols.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
 	s.transport = trans
 	s.pubkeyBackend = pkbk
 
-	s.queuedCircuits = make(chan circuits.Descriptor, seconf.CircQueueSize)
+	s.queuedCircuits = make(chan circuits.Descriptor, conf.CircQueueSize)
 
 	s.runningCircuits = make(map[circuits.ID]CircuitInstance)
 
@@ -165,10 +168,13 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 	s.coordinator = coord
 	s.inputProvider = ip
-	go s.Executor.Run(ctx)
+	go func() {
+		if err := s.Executor.Run(ctx); err != nil {
+			panic(err) // TODO: return in Run
+		}
+	}()
 
 	// process incoming upstream Events
-	upstreamDone := make(chan struct{})
 	go func() {
 		for ev := range coord.Incoming() {
 
@@ -190,8 +196,11 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					cid := opl.Circuit()
 
 					s.runningCircuitsMu.RLock()
-					c := s.runningCircuits[cid]
+					c, has := s.runningCircuits[cid]
 					s.runningCircuitsMu.RUnlock()
+					if !has {
+						panic(fmt.Errorf("circuit is not runnig: %s", cid))
+					}
 
 					c.CompletedProtocol(pev.Descriptor)
 				}
@@ -203,6 +212,10 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 			s.Logf("new coordination event: CIRCUIT %s", cev)
 			switch ev.CircuitEvent.Status {
 			case circuits.Started:
+				err := s.createCircuit(ctx, cev.Descriptor)
+				if err != nil {
+					panic(err)
+				}
 				s.queuedCircuits <- cev.Descriptor
 			case circuits.Completed, circuits.Failed:
 				s.runningCircuitsMu.Lock()
@@ -210,7 +223,8 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 				s.runningCircuitsMu.Unlock()
 			}
 		}
-		close(upstreamDone)
+		s.Logf("upstream coordinator done")
+		close(s.queuedCircuits)
 	}()
 
 	//	close(s.running)
@@ -271,10 +285,6 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		}
 	}()
 
-	<-upstreamDone
-	s.Logf("upstream coordinator done")
-	close(s.queuedCircuits)
-
 	err := evalRoutines.Wait()
 	if err != nil {
 		return err
@@ -290,7 +300,53 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	return nil
 }
 
+func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
+	var ci CircuitInstance
+	sess, has := s.sessions.GetSessionFromContext(ctx) // put session unwrap earlier
+	if !has {
+		return fmt.Errorf("session not found from context")
+	}
+
+	if s.isEvaluator(cd) {
+		ci = &evaluator{
+			ctx:       ctx,
+			cDesc:     cd,
+			sess:      sess,
+			protoExec: s,
+		}
+	} else {
+		ci = &participant{
+			ctx:           ctx,
+			cd:            cd,
+			sess:          sess,
+			inputProvider: s.inputProvider,
+			or:            s.localOutputs,
+			trans:         s.transport,
+			incpd:         make(chan protocols.Descriptor, 100), // TODO: not ideal
+		}
+
+	}
+	s.runningCircuitsMu.Lock()
+	_, has = s.runningCircuits[cd.ID]
+	if has {
+		s.runningCircuitsMu.Unlock()
+		return fmt.Errorf("circuit with id %s is already runnning", cd.ID)
+	}
+	s.runningCircuits[cd.ID] = ci
+	s.runningCircuitsMu.Unlock()
+
+	s.Logf("created circuit %s", cd.ID)
+	return
+}
+
 func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
+
+	s.runningCircuitsMu.RLock()
+	cinst, has := s.runningCircuits[cd.ID]
+	s.runningCircuitsMu.RUnlock()
+	if !has {
+		return fmt.Errorf("circuit %s was not created", cd.ID)
+	}
 
 	c, has := s.library[cd.Name]
 	if !has {
@@ -304,54 +360,35 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err e
 
 	params := *sess.Params
 
-	ci, err := circuits.Parse(c, cd, params)
+	cinf, err := circuits.Parse(c, cd, params)
 	if err != nil {
 		return err
 	}
 
+	err = cinst.Init(ctx, *cinf, s.pubkeyBackend)
+	if err != nil {
+		return fmt.Errorf("error at circuit initialization: %w", err)
+	}
 	//<-s.running // waits for the Run function to be called
 
-	if s.isEvaluator(cd, *ci) {
-		err = s.runCircuitAsEvaluator(ctx, c, cd, ci, params)
+	if s.isEvaluator(cd) {
+		err = s.runCircuitAsEvaluator(ctx, c, cinst, cd, cinf)
 	} else {
-		err = s.runCircuitAsParticipant(ctx, c, cd, ci, params)
+		err = s.runCircuitAsParticipant(ctx, c, cinst, cd)
 	}
 
 	return err
 }
 
 // TODO: include cd in ci ?
-func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, cd circuits.Descriptor, ci *circuits.Info, params bgv.Parameters) (err error) {
+func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, ev CircuitInstance, cd circuits.Descriptor, ci *circuits.Info) (err error) {
 	s.Logf("started circuit %s as evaluator", cd.ID)
-
-	sessid, _ := pkg.SessionIDFromContext(ctx)
-
-	ev, err := newEvaluator(ctx, sessid, c, cd, params, s.pubkeyBackend, s)
-	if err != nil {
-		return err
-	}
-
-	if _, has := s.runningCircuits[cd.ID]; has {
-		return fmt.Errorf("circuit with id %s is already runnning", cd.ID)
-	}
-
-	s.runningCircuitWg.Add(1)
-	s.runningCircuitsMu.Lock()
-	s.runningCircuits[cd.ID] = ev
-	s.runningCircuitsMu.Unlock()
 
 	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
 
-	// evalDone := make(chan struct{})
-	//go func() {
-	err = c(ev)
+	err = ev.Eval(ctx, c)
 	if err != nil {
-		panic(err)
-	}
-
-	err = ev.Wait() // all protocol events have been sent on upstream
-	if err != nil {
-		panic(err)
+		return fmt.Errorf("error at circuit evaluation: %w", err)
 	}
 
 	for outLabel := range ci.OutputSet {
@@ -378,7 +415,7 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit,
 	delete(s.runningCircuits, cd.ID)
 	nRunning := len(s.runningCircuits)
 	s.runningCircuitsMu.Unlock()
-	s.runningCircuitWg.Done()
+	//s.runningCircuitWg.Done()
 
 	s.Logf("completed circuit %s as evaluator, %d running", cd.ID, nRunning)
 	// close(evalDone)
@@ -386,42 +423,17 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit,
 	return nil
 }
 
-func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, cd circuits.Descriptor, ci *circuits.Info, params bgv.Parameters) error {
+func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, part CircuitInstance, cd circuits.Descriptor) error {
 
 	s.Logf("started circuit %s as participant", cd.ID)
 
-	sess, has := s.sessions.GetSessionFromContext(ctx) // put session unwrap earlier
-	if !has {
-		panic("does not find sess")
-	}
-
-	cpk, err := s.pubkeyBackend.GetCollectivePublicKey(ctx)
-	if err != nil {
-		return fmt.Errorf("cannot create encryptor: %w", err)
-	}
-
-	part, err := NewParticipant(ctx, cd, ci, sess, s.inputProvider, *cpk, s.transport, s.localOutputs)
+	err := part.Eval(ctx, c)
 	if err != nil {
 		return err
 	}
 
-	s.runningCircuitWg.Add(1)
-	s.runningCircuitsMu.Lock()
-	s.runningCircuits[cd.ID] = part
-	s.runningCircuitsMu.Unlock()
-
-	go func() {
-		err := c(part)
-		if err != nil {
-			panic(err)
-		}
-		err = part.Wait()
-		if err != nil {
-			panic(err)
-		}
-		s.runningCircuitWg.Done() // TODO: get the circuit complete message in this function to so that all runningcircuit management takes place here
-		s.Logf("completed circuit %s as participant", cd.ID)
-	}()
+	//s.runningCircuitWg.Done() // TODO: get the circuit complete message in this function to so that all runningcircuit management takes place here
+	s.Logf("completed circuit %s as participant", cd.ID)
 
 	// if s.isInputProvider(cd, *ci) {
 	// 	// create encryptor TODO: reuse encryptors
@@ -686,7 +698,7 @@ func (s *Service) isOutputReceiver(cd circuits.Descriptor, ci circuits.Info) boo
 	return len(ci.OutputsFor[s.self]) > 0
 }
 
-func (s *Service) isEvaluator(cd circuits.Descriptor, ci circuits.Info) bool {
+func (s *Service) isEvaluator(cd circuits.Descriptor) bool {
 	return cd.Evaluator == s.self
 }
 

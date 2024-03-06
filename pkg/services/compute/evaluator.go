@@ -24,18 +24,21 @@ type fheEvaluator struct {
 }
 
 type evaluator struct {
-	ctx    context.Context // TODO: check if storing this context this way is a problem
-	cDesc  circuits.Descriptor
-	c      circuits.Circuit
-	params bgv.Parameters
-	sessid pkg.SessionID
 
+	// init
+	ctx   context.Context // TODO: check if storing this context this way is a problem
+	cDesc circuits.Descriptor
+	//c      circuits.Circuit
+	//params bgv.Parameters
+	sess *pkg.Session
+
+	// eval
 	// keys
 	pubKeyBackend PublicKeyBackend
 
 	// protocols
 	protoExec ProtocolExecutor
-	*completedProt
+	*protocols.CompleteMap
 
 	// data
 
@@ -46,71 +49,43 @@ type evaluator struct {
 	*fheEvaluator
 }
 
-func newEvaluator(ctx context.Context, sessid pkg.SessionID, c circuits.Circuit, cd circuits.Descriptor, params bgv.Parameters, pkbk PublicKeyBackend, pe ProtocolExecutor) (ev *evaluator, err error) {
-	ev = new(evaluator)
-	ev.ctx = ctx
-	ev.c = c
-	ev.cDesc = cd
-	ev.pubKeyBackend = pkbk
-	ev.protoExec = pe
-	ev.params = params
-	ev.sessid = sessid
+// CircuitInstance (framework-facing) API
 
-	ci, err := circuits.Parse(c, cd, params)
-	if err != nil {
-		return nil, err
-	}
-	ev.ops = make(map[circuits.OperandLabel]*circuits.FutureOperand)
-	ev.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
+func (se *evaluator) Init(ctx context.Context, ci circuits.Info, pkbk pkg.PublicKeyBackend) (err error) {
+
+	se.ops = make(map[circuits.OperandLabel]*circuits.FutureOperand)
+	se.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	for inLabel := range ci.InputSet {
 		fop := circuits.NewFutureOperand(inLabel)
-		ev.inputs[inLabel] = fop
-		ev.ops[inLabel] = fop
+		se.inputs[inLabel] = fop
+		se.ops[inLabel] = fop
 	}
 
-	ev.outputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
+	se.outputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	for outLabel := range ci.OutputSet {
 		fop := circuits.NewFutureOperand(outLabel)
-		ev.outputs[outLabel] = fop
-		ev.ops[outLabel] = fop
+		se.outputs[outLabel] = fop
+		se.ops[outLabel] = fop
 	}
 
-	ev.completedProt = newCompletedProt(maps.Values(ci.KeySwitchOps))
+	se.CompleteMap = protocols.NewCompletedProt(maps.Values(ci.KeySwitchOps))
 
-	ev.fheEvaluator, err = newLattigoEvaluator(ctx, *ci, params, pkbk)
+	se.fheEvaluator, err = newLattigoEvaluator(ctx, ci, *se.sess.Params, pkbk)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	return ev, nil
+	return
 }
 
-func newLattigoEvaluator(ctx context.Context, ci circuits.Info, params bgv.Parameters, pkbk PublicKeyBackend) (eval *fheEvaluator, err error) {
-	rlk := new(rlwe.RelinearizationKey)
-	if ci.NeedRlk {
-		rlk, err = pkbk.GetRelinearizationKey(ctx)
-		if err != nil {
-			return nil, err
-		}
+func (se *evaluator) Eval(ctx context.Context, c circuits.Circuit) (err error) {
+	err = c(se)
+	if err != nil {
+		return err
 	}
+	return se.Wait()
 
-	gks := make([]*rlwe.GaloisKey, 0, len(ci.GaloisKeys))
-	for galEl := range ci.GaloisKeys {
-		var err error
-		gk, err := pkbk.GetGaloisKey(ctx, galEl)
-		if err != nil {
-			return nil, err
-		}
-		gks = append(gks, gk)
-	}
-
-	//rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
-	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
-	eval = &fheEvaluator{bgv.NewEvaluator(params, evk)}
-	return eval, nil
 }
 
-// CircuitInstance (framework-facing) API
 func (se *evaluator) IncomingOperand(op circuits.Operand) error {
 	fop, has := se.inputs[op.OperandLabel]
 	if !has {
@@ -172,7 +147,7 @@ func (se *evaluator) keyOpExec(sig protocols.Signature, in circuits.Operand) (er
 
 	// var isOutput bool
 
-	ctx := pkg.NewContext(&se.sessid, (*pkg.CircuitID)(&se.cDesc.ID))
+	ctx := pkg.NewContext(&se.sess.ID, (*pkg.CircuitID)(&se.cDesc.ID))
 
 	if err := se.protoExec.RunKeyOperation(ctx, sig); err != nil {
 		return err
@@ -225,7 +200,7 @@ func (se *evaluator) Output(op circuits.Operand, nid pkg.NodeID) {
 }
 
 func (se *evaluator) Parameters() bgv.Parameters {
-	return se.params
+	return *se.sess.Params
 }
 
 func (se *evaluator) NewEvaluator() circuits.Evaluator {
@@ -245,4 +220,29 @@ func (ew *fheEvaluator) NewDecompQPBuffer() []ringqp.Poly {
 		buffDecompQP[i] = ringQP.NewPoly()
 	}
 	return buffDecompQP
+}
+
+func newLattigoEvaluator(ctx context.Context, ci circuits.Info, params bgv.Parameters, pkbk PublicKeyBackend) (eval *fheEvaluator, err error) {
+	rlk := new(rlwe.RelinearizationKey)
+	if ci.NeedRlk {
+		rlk, err = pkbk.GetRelinearizationKey(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	gks := make([]*rlwe.GaloisKey, 0, len(ci.GaloisKeys))
+	for galEl := range ci.GaloisKeys {
+		var err error
+		gk, err := pkbk.GetGaloisKey(ctx, galEl)
+		if err != nil {
+			return nil, err
+		}
+		gks = append(gks, gk)
+	}
+
+	//rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
+	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
+	eval = &fheEvaluator{bgv.NewEvaluator(params, evk)}
+	return eval, nil
 }

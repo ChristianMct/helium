@@ -120,7 +120,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 				clou := new(testnode)
 				all["helper"] = clou
 
-				seconf := ServiceConfig{
+				conf := ServiceConfig{
 					CircQueueSize:        300,
 					MaxCircuitEvaluation: 5,
 					Protocols: protocols.ExecutorConfig{
@@ -133,7 +133,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 				srvTrans := &testNodeTrans{Transport: protoTrans}
 				clou.Coordinator = coord
-				clou.Service, err = NewComputeService(hid, testSess.HelperSession, seconf, testSess, srvTrans)
+				clou.Service, err = NewComputeService(hid, testSess.HelperSession, conf, testSess, srvTrans)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -145,7 +145,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 					cli := new(testnode)
 					cli.Session = testSess.NodeSessions[nid]
 					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-					cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], seconf, testSess, srvTrans)
+					cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], conf, testSess, srvTrans)
 					if err != nil {
 						t.Fatal(err)
 					}
