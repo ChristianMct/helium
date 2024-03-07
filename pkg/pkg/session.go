@@ -213,6 +213,9 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 	}
 
 	params, err := bgv.NewParametersFromLiteral(sessParams.RLWEParams)
+	if err != nil {
+		return nil, fmt.Errorf("could not create session parameters: %s", err)
+	}
 	sess.Params = &params
 
 	if sessParams.T == 0 {

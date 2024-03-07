@@ -42,6 +42,11 @@ type participant struct {
 
 func (p *participant) Init(ctx context.Context, ci circuits.Info) (err error) {
 
+	p.Encoder, err = p.fheProvider.GetEncoder(ctx)
+	if err != nil {
+		return err
+	}
+
 	p.Encryptor, err = p.fheProvider.GetEncryptor(ctx)
 	if err != nil {
 		return err

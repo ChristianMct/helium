@@ -10,6 +10,7 @@ import (
 	"github.com/ldsec/helium/pkg/coordinator"
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,6 +39,7 @@ type OperandBackend interface {
 }
 
 type FHEProvider interface {
+	GetEncoder(ctx context.Context) (*bgv.Encoder, error)
 	GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error)
 	GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
 	GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error)
@@ -369,11 +371,34 @@ func (s *Service) sendCompletedPdToCircuit(pd protocols.Descriptor) error {
 	return c.CompletedProtocol(pd)
 }
 
+// validateCircuitDescriptor checks that a circuit descriptor is valid and can be executed by
+// the service.
+func (s *Service) validateCircuitDescriptor(cd circuits.Descriptor) error {
+	if len(cd.ID) == 0 {
+		return fmt.Errorf("circuit descriptor has no id")
+	}
+	if len(cd.Name) == 0 {
+		return fmt.Errorf("circuit descriptor has no name")
+	}
+	if len(cd.NodeMapping) == 0 {
+		return fmt.Errorf("circuit descriptor has no node mapping")
+	}
+	if len(cd.Evaluator) == 0 {
+		return fmt.Errorf("circuit descriptor has no evaluator")
+	}
+	// TODO: further checks
+	return nil
+}
+
 func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
 	var ci CircuitInstance
 	sess, has := s.sessions.GetSessionFromContext(ctx) // put session unwrap earlier
 	if !has {
 		return fmt.Errorf("session not found from context")
+	}
+
+	if err := s.validateCircuitDescriptor(cd); err != nil {
+		return fmt.Errorf("invalid circuit descriptor: %w", err)
 	}
 
 	if s.isEvaluator(cd) {
@@ -686,6 +711,15 @@ func (s *Service) Outgoing() chan<- protocols.Event {
 }
 
 // FHEProvider interface
+func (s *Service) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("no session found for this context")
+	}
+
+	return bgv.NewEncoder(*sess.Params), nil
+}
+
 func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)

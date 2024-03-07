@@ -1,0 +1,26 @@
+version: '3'
+services:
+  helper:
+    container_name: helper
+    image: helium:vec-mul
+    command: -id helper -address :40000
+
+  node-1:
+    container_name: node-1
+    image: helium:vec-mul
+    command: -id node-1
+
+  node-2:
+    container_name: node-2
+    image: helium:vec-mul
+    command: -id node-2
+
+  node-3:
+    container_name: node-3
+    image: helium:vec-mul
+    command: -id node-3
+
+  node-4:
+    container_name: node-4
+    image: helium:vec-mul
+    command: -id node-4

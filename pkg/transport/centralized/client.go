@@ -19,6 +19,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const (
+	ClientConnectTimeout = 3 * time.Second
+)
+
 type HeliumClient struct {
 	ownId, helperId pkg.NodeID
 	helperAddress   pkg.NodeAddress
@@ -48,7 +52,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer transport.Dialer) error {
 
 	opts := []grpc.DialOption{
 		grpc.WithContextDialer(dialer),
-		grpc.WithBlock(), // TODO: this prevents clients from sending errors on connection refused. Should check if there is a retry policy at client level
+		grpc.WithBlock(),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.DefaultConfig, MinConnectTimeout: 1 * time.Second}),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(MaxMsgSize),
@@ -59,9 +63,10 @@ func (hc *HeliumClient) ConnectWithDialer(dialer transport.Dialer) error {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 
-	cc, err := grpc.Dial(string(hc.helperAddress), opts...)
+	ctx, _ := context.WithTimeout(context.Background(), ClientConnectTimeout)
+	cc, err := grpc.DialContext(ctx, string(hc.helperAddress), opts...)
 	if err != nil {
-		return fmt.Errorf("fail to dial: %w", err)
+		return fmt.Errorf("fail establish connection to the helper at tcp://%s: %w", hc.helperAddress, err)
 	}
 
 	hc.HeliumHelperClient = api.NewHeliumHelperClient(cc)

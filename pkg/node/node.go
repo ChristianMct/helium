@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"time"
 
 	"github.com/ldsec/helium/pkg/api"
@@ -15,6 +16,7 @@ import (
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
 	"github.com/ldsec/helium/pkg/transport/centralized"
+	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -146,7 +148,7 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	for _, sp := range config.SessionParameters {
 		_, err = node.CreateNewSession(sp, node.ObjectStore)
 		if err != nil {
-			panic(err)
+			return nil, err
 		}
 	}
 
@@ -189,6 +191,28 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	node.computeDone = make(chan struct{})
 
 	return node, err
+}
+
+func (n *Node) Connect(ctx context.Context) error {
+	if n.HasAddress() {
+		listener, err := net.Listen("tcp", string(n.addr))
+		if err != nil {
+			return err
+		}
+		n.Logf("starting server at %s", n.addr)
+		go func() {
+			if err := n.srv.Server.Serve(listener); err != nil {
+				log.Fatalf("error in grpc serve: %v", err)
+			}
+		}()
+	} else {
+		n.Logf("connecting to %s at %s", n.helperId, n.nodeList.AddressOf(n.helperId))
+		err := n.cli.Connect()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // // NewNodeWithTransport creates a new Helium node from the provided config, node list and user-defined transport layer.
@@ -775,6 +799,9 @@ func (node *Node) GetSessionFromIncomingContext(ctx context.Context) (*pkg.Sessi
 
 // Close releases all the resources allocated by the node.
 func (node *Node) Close() error {
+	if node.HasAddress() {
+		node.srv.Server.GracefulStop()
+	}
 	return node.sessions.Close()
 }
 
@@ -839,4 +866,17 @@ func (n *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey,
 func (n *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
 	n.WaitForSetupDone()
 	return n.setup.GetRelinearizationKey(ctx)
+}
+
+// FHEProvider interface implementation
+func (n *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
+	return n.compute.GetEncoder(ctx)
+}
+
+func (n *Node) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
+	return n.compute.GetEncryptor(ctx)
+}
+
+func (n *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
+	return n.compute.GetDecryptor(ctx)
 }
