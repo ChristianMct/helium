@@ -195,7 +195,7 @@ func TestNodeCompute(t *testing.T) {
 			for _, cli := range clients {
 				pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
 				testSess.Encoder.Encode(NodeIDtoTestInput(string(cli.id)), pt)
-				cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (*rlwe.Plaintext, error) {
+				cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (any, error) {
 					return pt, nil
 				}
 			}
@@ -316,7 +316,7 @@ func TestNodeMatMul(t *testing.T) {
 		cli.Node = n
 		pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
 		testSess.Encoder.Encode(NodeIDtoTestInput(string(n.id)), pt)
-		cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (*rlwe.Plaintext, error) {
+		cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (any, error) {
 			return pt, nil
 		}
 	}

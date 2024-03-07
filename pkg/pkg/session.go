@@ -16,11 +16,12 @@ import (
 	"sync"
 )
 
-type NodesList []struct {
+type NodeInfo struct {
 	NodeID
 	NodeAddress
-	DelegateID NodeID
 }
+
+type NodesList []NodeInfo
 
 func (nl NodesList) AddressOf(id NodeID) NodeAddress {
 	for _, node := range nl {
@@ -34,8 +35,8 @@ func (nl NodesList) AddressOf(id NodeID) NodeAddress {
 func (nl NodesList) String() string {
 	str := "[ "
 	for _, node := range nl {
-		str += fmt.Sprintf(`{ ID: %s, Address: %s, DelegateID: %s } `,
-			node.NodeID, node.NodeAddress, node.DelegateID)
+		str += fmt.Sprintf(`{ID: %s, Address: %s} `,
+			node.NodeID, node.NodeAddress)
 	}
 	return str + "]"
 }

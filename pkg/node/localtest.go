@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"fmt"
 	"log"
 	"math/big"
 	"net"
@@ -104,11 +103,7 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 			Address: pkg.NodeAddress("local"),
 		}
 		ncs = append(ncs, nc)
-		nl = append(nl, struct {
-			pkg.NodeID
-			pkg.NodeAddress
-			DelegateID pkg.NodeID
-		}{nc.ID, nc.Address, ""})
+		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
 		sessionNodesIds = append(sessionNodesIds, nc.ID)
 
 		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
@@ -122,11 +117,7 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 			HelperID: "helper-0",
 		}
 		ncs = append(ncs, nc)
-		nl = append(nl, struct {
-			pkg.NodeID
-			pkg.NodeAddress
-			DelegateID pkg.NodeID
-		}{nc.ID, nc.Address, pkg.NodeID(fmt.Sprintf("helper-%d", i%config.HelperNodes))})
+		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
 		sessionNodesIds = append(sessionNodesIds, nc.ID)
 
 		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
@@ -141,11 +132,7 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 			HelperID: "helper-0",
 		}
 		ncs = append(ncs, nc)
-		nl = append(nl, struct {
-			pkg.NodeID
-			pkg.NodeAddress
-			DelegateID pkg.NodeID
-		}{nc.ID, nc.Address, ""})
+		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
 	}
 
 	for i := 0; i < config.ExternalNodes; i++ {
@@ -154,11 +141,7 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 			ID: nodeID,
 		}
 		ncs = append(ncs, nc)
-		nl = append(nl, struct {
-			pkg.NodeID
-			pkg.NodeAddress
-			DelegateID pkg.NodeID
-		}{nc.ID, nc.Address, pkg.NodeID(fmt.Sprintf("helper-%d", i%config.HelperNodes))})
+		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
 	}
 
 	tlsConfigs, err := createTLSConfigs(config, nl)

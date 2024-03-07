@@ -153,7 +153,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 					pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
 					testSess.Encoder.Encode(NodeIDtoTestInput(string(nid)), pt)
-					cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (*rlwe.Plaintext, error) {
+					cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (any, error) {
 						return pt, nil
 					}
 					cli.OutputReceiver = make(chan circuits.Output)

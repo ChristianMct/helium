@@ -62,11 +62,11 @@ type CircuitInstance interface {
 	Wait() error
 }
 
-type InputProvider func(context.Context, circuits.OperandLabel) (*rlwe.Plaintext, error)
+type InputProvider func(context.Context, circuits.OperandLabel) (any, error)
 
 type OutputReceiver chan<- circuits.Output
 
-var NoInput InputProvider = func(_ context.Context, _ circuits.OperandLabel) (*rlwe.Plaintext, error) { return nil, nil }
+var NoInput InputProvider = func(_ context.Context, _ circuits.OperandLabel) (any, error) { return nil, nil }
 
 var NoOutput OutputReceiver = nil
 

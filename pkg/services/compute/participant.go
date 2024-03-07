@@ -29,6 +29,7 @@ type participant struct {
 
 	// init
 	*protocols.CompleteMap
+	*bgv.Encoder
 	*rlwe.Encryptor
 	*rlwe.Decryptor
 
@@ -126,12 +127,44 @@ func (p *participant) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 		panic(fmt.Errorf("could not get inputs from input provider: %w", err)) // TODO return error
 	}
 
-	ct, err := p.EncryptNew(in)
-	if err != nil {
-		panic(err)
+	isValidBGVPlaintextType := func(in interface{}) bool {
+		switch in.(type) {
+		case []uint64, []int64:
+			return true
+		default:
+			return false
+
+		}
 	}
 
-	err = p.trans.PutCiphertext(p.ctx, pkg.Ciphertext{Ciphertext: *ct, CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(opl)}})
+	var inct pkg.Ciphertext
+	switch {
+	case isValidBGVPlaintextType(in):
+		inpt := rlwe.NewPlaintext(p.sess.Params, p.sess.Params.MaxLevel())
+		err = p.Encoder.Encode(in, inpt)
+		if err != nil {
+			panic(err)
+		}
+		in = inpt
+		fallthrough
+	case isRLWEPLaintext(in):
+		inpt := in.(*rlwe.Plaintext)
+		inct, err := p.EncryptNew(inpt)
+		if err != nil {
+			panic(err)
+		}
+		in = inct
+		fallthrough
+	case isRLWECiphertext(in):
+		inct = pkg.Ciphertext{
+			Ciphertext:         *in.(*rlwe.Ciphertext),
+			CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(opl)},
+		}
+	default:
+		panic("invalid input type")
+	}
+
+	err = p.trans.PutCiphertext(p.ctx, inct)
 	if err != nil {
 		panic(err)
 	}
@@ -273,4 +306,14 @@ func (de *dummyEvaluator) NewDecompQPBuffer() []ringqp.Poly {
 
 func (de *dummyEvaluator) NewEvaluator() circuits.Evaluator {
 	return de
+}
+
+func isRLWEPLaintext(in interface{}) bool {
+	_, ok := in.(*rlwe.Plaintext)
+	return ok
+}
+
+func isRLWECiphertext(in interface{}) bool {
+	_, ok := in.(*rlwe.Ciphertext)
+	return ok
 }
