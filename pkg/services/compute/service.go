@@ -19,10 +19,6 @@ type Transport interface {
 
 	PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error
 	GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error)
-
-	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
-	// aggregated share of the designated protocol.
-	//GetAggregationOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
 type Coordinator interface {
@@ -41,31 +37,22 @@ type OperandBackend interface {
 	Get(circuits.OperandLabel) (*circuits.Operand, error)
 }
 
+type FHEProvider interface {
+	GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error)
+	GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
+	GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error)
+}
+
 // CircuitInstance defines the interface that is available to the service
 // to access evaluation contexts of a particular circuit evaluation.
 type CircuitInstance interface {
-
-	// // CircuitDescription returns the CircuitDescription for the circuit executing within this context.
-	// CircuitDescription() CircuitDescription
-
-	// // LocalInput provides the local inputs to the circuit executing within this context.
-	// LocalInputs([]pkg.Operand) error
-
-	Init(ctx context.Context, ci circuits.Info, pkbk pkg.PublicKeyBackend) (err error)
+	Init(ctx context.Context, ci circuits.Info) (err error)
 
 	Eval(ctx context.Context, c circuits.Circuit) (err error)
 
 	IncomingOperand(circuits.Operand) error
 
 	CompletedProtocol(protocols.Descriptor) error
-
-	//IncomingAggregationOutput(protocols.AggregationOutput) error
-
-	// // LocalOutput returns a channel where the circuit executing within this context will write its outputs.
-	// LocalOutputs() chan pkg.Operand
-
-	// // Execute executes the circuit of the context.
-	// Execute(context.Context) error
 
 	// // Get returns the executing circuit operand with the given label.
 	GetOperand(context.Context, circuits.OperandLabel) (*circuits.Operand, bool)
@@ -147,7 +134,7 @@ func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Serv
 		return nil, err
 	}
 	s.transport = trans
-	s.pubkeyBackend = pkbk
+	s.pubkeyBackend = pkg.NewCachedPublicKeyBackend(pkbk)
 
 	s.queuedCircuits = make(chan circuits.Descriptor, conf.CircQueueSize)
 
@@ -391,10 +378,11 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 
 	if s.isEvaluator(cd) {
 		ci = &evaluator{
-			ctx:       ctx,
-			cDesc:     cd,
-			sess:      sess,
-			protoExec: s,
+			ctx:         ctx,
+			cDesc:       cd,
+			sess:        sess,
+			protoExec:   s,
+			fheProvider: s,
 		}
 	} else {
 		ci = &participant{
@@ -404,6 +392,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 			inputProvider: s.inputProvider,
 			or:            s.localOutputs,
 			trans:         s.transport,
+			fheProvider:   s,
 			incpd:         make(chan protocols.Descriptor, 100), // TODO: not ideal
 		}
 
@@ -447,7 +436,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err e
 		return err
 	}
 
-	err = cinst.Init(ctx, *cinf, s.pubkeyBackend)
+	err = cinst.Init(ctx, *cinf)
 	if err != nil {
 		return fmt.Errorf("error at circuit initialization: %w", err)
 	}
@@ -516,45 +505,6 @@ func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circui
 
 	//s.runningCircuitWg.Done() // TODO: get the circuit complete message in this function to so that all runningcircuit management takes place here
 	s.Logf("completed circuit %s as participant", cd.ID)
-
-	// if s.isInputProvider(cd, *ci) {
-	// 	// create encryptor TODO: reuse encryptors
-	// 	cpk, err := s.pubkeyBackend.GetCollectivePublicKey()
-	// 	if err != nil {
-	// 		return fmt.Errorf("cannot create encryptor: %w", err)
-	// 	}
-	// 	encryptor, err := bgv.NewEncryptor(params, cpk)
-	// 	if err != nil {
-	// 		return fmt.Errorf("cannot create encryptor: %w", err)
-	// 	}
-
-	// 	for inLabel := range ci.InputsFor[s.self] {
-	// 		pt, err := s.inputProvider(ctx, inLabel)
-	// 		if err != nil {
-	// 			return err
-	// 		}
-	// 		ct, err := encryptor.EncryptNew(pt)
-	// 		if err != nil {
-	// 			return err
-	// 		}
-	// 		pkgct := pkg.Ciphertext{CiphertextMetadata: pkg.CiphertextMetadata{ID: pkg.CiphertextID(inLabel)}, Ciphertext: *ct}
-	// 		if err = s.transport.PutCiphertext(ctx, pkgct); err != nil { // sends to evaluator
-	// 			return err
-	// 		}
-	// 	}
-	// }
-
-	// go func() {
-	// 	// TODO wait for COMPLETE ?
-	// 	for outLabel := range ci.OutputsFor[s.self] {
-	// 		ct, err := s.transport.GetCiphertext(ctx, pkg.CiphertextID(outLabel))
-	// 		if err != nil {
-	// 			s.Logf("error while retrieving output: %s", err)
-	// 		}
-	// 		s.localOutputs <- circuits.Output{ID: cd.ID, Operand: circuits.Operand{OperandLabel: outLabel, Ciphertext: &ct.Ciphertext}}
-	// 	}
-	// 	s.runningCircuitWg.Done()
-	// }()
 
 	return nil
 }
@@ -681,11 +631,6 @@ func (s *Service) Put(ctx context.Context, aggOut protocols.AggregationOutput) e
 		return fmt.Errorf("invalid aggregation output: descriptor does not provide input operand label")
 	}
 
-	// inOp, has := c.GetOperand(circuits.OperandLabel(inOpl))
-	// if !has {
-	// 	return fmt.Errorf("invalid aggregation output: unknown input operand")
-	// }
-
 	outOpl := keyOpOutputLabel(circuits.OperandLabel(inOpl), aggOut.Descriptor.Signature)
 
 	fop, has := c.GetFutureOperand(ctx, outOpl)
@@ -731,12 +676,48 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor)
 
 }
 
+// protocols.Coordinator interface
 func (s *Service) Incoming() <-chan protocols.Event {
 	return s.incoming
 }
 
 func (s *Service) Outgoing() chan<- protocols.Event {
 	return s.outgoing
+}
+
+// FHEProvider interface
+func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
+
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("no session found for this context")
+	}
+
+	cpk, err := s.pubkeyBackend.GetCollectivePublicKey(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot retrieve the collective public key : %w", err)
+	}
+
+	return rlwe.NewEncryptor(sess.Params, cpk)
+}
+
+func (s *Service) GetEvaluator(ctx context.Context, relin bool, galEls []uint64) (*fheEvaluator, error) {
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("no session found for this context")
+	}
+
+	return newLattigoEvaluator(ctx, relin, galEls, *sess.Params, s.pubkeyBackend)
+}
+
+func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("no session found for this context")
+	}
+
+	return rlwe.NewDecryptor(sess.Params, rlwe.NewSecretKey(sess.Params)) // decryptor under sk=0 (sk is determined at output)
+
 }
 
 func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitInstance, error) {

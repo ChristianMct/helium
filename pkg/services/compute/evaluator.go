@@ -30,11 +30,8 @@ type evaluator struct {
 	cDesc circuits.Descriptor
 	//c      circuits.Circuit
 	//params bgv.Parameters
-	sess *pkg.Session
-
-	// eval
-	// keys
-	pubKeyBackend PublicKeyBackend
+	sess        *pkg.Session
+	fheProvider FHEProvider
 
 	// protocols
 	protoExec ProtocolExecutor
@@ -51,7 +48,7 @@ type evaluator struct {
 
 // CircuitInstance (framework-facing) API
 
-func (se *evaluator) Init(ctx context.Context, ci circuits.Info, pkbk pkg.PublicKeyBackend) (err error) {
+func (se *evaluator) Init(ctx context.Context, ci circuits.Info) (err error) {
 
 	se.ops = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	se.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
@@ -70,7 +67,7 @@ func (se *evaluator) Init(ctx context.Context, ci circuits.Info, pkbk pkg.Public
 
 	se.CompleteMap = protocols.NewCompletedProt(maps.Values(ci.KeySwitchOps))
 
-	se.fheEvaluator, err = newLattigoEvaluator(ctx, ci, *se.sess.Params, pkbk)
+	se.fheEvaluator, err = se.fheProvider.GetEvaluator(ctx, ci.NeedRlk, ci.GaloisKeys.Elements())
 	if err != nil {
 		return err
 	}
@@ -222,17 +219,17 @@ func (ew *fheEvaluator) NewDecompQPBuffer() []ringqp.Poly {
 	return buffDecompQP
 }
 
-func newLattigoEvaluator(ctx context.Context, ci circuits.Info, params bgv.Parameters, pkbk PublicKeyBackend) (eval *fheEvaluator, err error) {
+func newLattigoEvaluator(ctx context.Context, relin bool, galEls []uint64, params bgv.Parameters, pkbk PublicKeyBackend) (eval *fheEvaluator, err error) {
 	rlk := new(rlwe.RelinearizationKey)
-	if ci.NeedRlk {
+	if relin {
 		rlk, err = pkbk.GetRelinearizationKey(ctx)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	gks := make([]*rlwe.GaloisKey, 0, len(ci.GaloisKeys))
-	for galEl := range ci.GaloisKeys {
+	gks := make([]*rlwe.GaloisKey, 0, len(galEls))
+	for _, galEl := range galEls {
 		var err error
 		gk, err := pkbk.GetGaloisKey(ctx, galEl)
 		if err != nil {

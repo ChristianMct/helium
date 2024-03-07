@@ -24,11 +24,13 @@ type participant struct {
 	inputProvider InputProvider
 	trans         Transport
 	or            OutputReceiver
+	fheProvider   FHEProvider
 	incpd         chan protocols.Descriptor // buffer for pd incoming before Init
 
 	// init
 	*protocols.CompleteMap
 	*rlwe.Encryptor
+	*rlwe.Decryptor
 
 	// eval
 
@@ -37,13 +39,14 @@ type participant struct {
 
 // Service interface
 
-func (p *participant) Init(ctx context.Context, ci circuits.Info, pkbk pkg.PublicKeyBackend) (err error) {
-	cpk, err := pkbk.GetCollectivePublicKey(ctx)
+func (p *participant) Init(ctx context.Context, ci circuits.Info) (err error) {
+
+	p.Encryptor, err = p.fheProvider.GetEncryptor(ctx)
 	if err != nil {
 		return err
 	}
 
-	p.Encryptor, err = rlwe.NewEncryptor(p.sess.Params, cpk) // TODO pooling of encryptors
+	p.Decryptor, err = p.fheProvider.GetDecryptor(ctx)
 	if err != nil {
 		return err
 	}
@@ -190,17 +193,15 @@ func (p *participant) DEC(in circuits.Operand, rec pkg.NodeID, params map[string
 		panic(err)
 	}
 
-	sk, err := p.sess.GetSecretKeyForGroup(pd.Participants)
+	skg, err := p.sess.GetSecretKeyForGroup(pd.Participants)
 	if err != nil {
 		return err
 	}
 
-	dec, err := rlwe.NewDecryptor(p.sess.Params, sk)
-	if err != nil {
-		return err
-	}
+	decg := p.Decryptor.WithKey(skg)
 
-	pt := dec.DecryptNew(&ct.Ciphertext)
+	pt := rlwe.NewPlaintext(p.sess.Params, p.sess.Params.MaxLevel())
+	decg.Decrypt(&ct.Ciphertext, pt) // TODO: bug in lattigo ShallowCopy/WithKey function: params not copied but needed by DecryptNew
 
 	p.or <- circuits.Output{ID: p.cd.ID, Operand: circuits.Operand{OperandLabel: outLabel, Ciphertext: &rlwe.Ciphertext{Operand: pt.Operand}}}
 
