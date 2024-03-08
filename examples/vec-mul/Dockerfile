@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=0 go build -v -o
 #########################################
 #  Image                                #
 #########################################
-FROM ubuntu:latest
+FROM scratch
 
 WORKDIR /helium
 

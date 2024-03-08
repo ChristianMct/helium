@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"strconv"
-	"unicode"
 
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/node"
@@ -21,14 +21,21 @@ import (
 )
 
 var (
+
+	// sessionParams defines the session parameters for the example application
 	sessionParams = pkg.SessionParameters{
-		ID:          "example-session",
-		Nodes:       []pkg.NodeID{"node-1", "node-2", "node-3", "node-4"},
-		RLWEParams:  bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{30, 30, 39, 31}, LogP: []int{39}},
-		T:           4,
-		ShamirPks:   map[pkg.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4},
-		PublicSeed:  []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},
-		PrivateSeed: []byte{}, // read from helium secret file
+		ID:    "example-session",                                    // the id of the session must be unique
+		Nodes: []pkg.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
+		RLWEParams: bgv.ParametersLiteral{
+			T:    79873,
+			LogN: 14,
+			LogQ: []int{56, 55, 55, 54, 54, 54},
+			LogP: []int{55, 55},
+		},
+		Threshold:      3,
+		ShamirPks:      map[pkg.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4},
+		PublicSeed:     []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},
+		SessionSecrets: nil, // read from /var/run/secrets
 	}
 
 	lightNodeConfig = node.Config{
@@ -86,11 +93,13 @@ var (
 	nodeID   pkg.NodeID
 	nodeAddr pkg.NodeAddress
 	helperID pkg.NodeID = "helper"
+	input    uint64
 )
 
 func init() {
 	flag.StringVar((*string)(&nodeID), "id", "", "the node's id")
 	flag.StringVar((*string)(&nodeAddr), "address", "", "the node's address")
+	flag.Uint64Var(&input, "input", 0, "the private input value")
 }
 
 func main() {
@@ -113,7 +122,14 @@ func main() {
 		config.Address = nodeAddr
 	} else {
 		config = lightNodeConfig
-		config.SessionParameters[0].PrivateSeed = []byte("secret") // TODO read from helium secret file
+		if config.SessionParameters[0].Threshold == 0 {
+			config.SessionParameters[0].Threshold = len(config.SessionParameters[0].Nodes)
+		}
+		secrets, err := loadSecrets(config.SessionParameters[0], nodeID)
+		if err != nil {
+			log.Fatalf("could not load node's secrets: %s", err)
+		}
+		config.SessionParameters[0].SessionSecrets = secrets
 	}
 	config.ID = nodeID
 
@@ -123,14 +139,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	sess, _ := n.GetSessionFromID(sessionParams.ID)
+
 	ip = func(ctx context.Context, ol circuits.OperandLabel) (any, error) {
-		olr, err := pkg.ParseURL(string(ol))
-		if err != nil {
-			return nil, err
+		in := make([]uint64, sess.Params.PlaintextSlots())
+		for i := range in {
+			in[i] = input % sessionParams.RLWEParams.T
 		}
-		nidInt := extractFirstInteger(string(olr.NodeID()))
-		cidInt := extractFirstInteger(string(olr.CircuitID()))
-		return []uint64{(nidInt * cidInt) % sessionParams.RLWEParams.T}, nil
+		return in, nil
 	}
 
 	if err := n.Connect(context.Background()); err != nil {
@@ -157,23 +173,56 @@ func main() {
 	if err != nil {
 		log.Fatalf("%s | [main] error getting session encoder: %v\n", nodeID, err)
 	}
-	for out := range outputs {
+
+	out, hasOut := <-outputs
+
+	n.Close()
+
+	if hasOut {
 		pt := &rlwe.Plaintext{Operand: out.Ciphertext.Operand, Value: out.Ciphertext.Value[0]}
 		res := make([]uint64, encoder.Parameters().PlaintextSlots())
 		encoder.Decode(pt, res)
 		log.Printf("%s | [main] output: %v\n", nodeID, res)
 	}
-	n.Close()
 }
 
-func extractFirstInteger(s string) uint64 {
-	var start, stop int
-	for start = 0; start < len(s) && !unicode.IsDigit(rune(s[start])); start++ {
+// simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
+func loadSecrets(sp pkg.SessionParameters, nid pkg.NodeID) (secrets *pkg.SessionSecrets, err error) {
+
+	ss, err := pkg.GenTestSecretKeys(sp)
+	if err != nil {
+		return nil, err
 	}
-	for stop = start; stop < len(s) && unicode.IsDigit(rune(s[stop])); stop++ {
+
+	secrets, ok := ss[nid]
+	if !ok {
+		return nil, fmt.Errorf("node %s not in session", nid)
 	}
-	if i, err := strconv.ParseUint(s[start:stop], 10, 64); err == nil {
-		return i
-	}
-	return 0
+
+	return
+	// data, err := os.ReadFile(fmt.Sprintf("/run/secrets/secret_%s", nodeID))
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// lines := strings.Split(string(data), "\n")
+
+	// secrets = new(pkg.SessionSecrets)
+	// secrets.PrivateSeed = []byte(lines[0])
+
+	// if threshold {
+	// 	if len(lines) < 2 {
+	// 		return nil, fmt.Errorf("invalid secret file for threshold < N: expected 2 lines, got %d", len(lines))
+	// 	}
+
+	// 	secrets.ThresholdSecretKey = &drlwe.ShamirSecretShare{}
+	// 	tskdata, err := base64.StdEncoding.DecodeString(lines[1])
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	err = secrets.ThresholdSecretKey.UnmarshalBinary(tskdata)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	//}
 }
