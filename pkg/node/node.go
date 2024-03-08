@@ -766,7 +766,6 @@ type SignatureParameters struct {
 
 // CreateNewSession takes an int id and creates a new rlwe session with this node and its peers and a sessionID constructed using the given id.
 func (node *Node) CreateNewSession(sessParams pkg.SessionParameters, objstore objectstore.ObjectStore) (sess *pkg.Session, err error) {
-	// note: this creates a session with no secret key for nodes outside the session.
 	sess, err = node.sessions.NewRLWESession(sessParams, node.id, objstore)
 	if err != nil {
 		return sess, err

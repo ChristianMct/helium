@@ -38,10 +38,10 @@ var testCircuits = []TestCircuitSig{
 
 var testSettings = []testSetting{
 	{N: 2, CircuitSigs: testCircuits, Reciever: "light-0"},
-	{N: 2, CircuitSigs: testCircuits, Reciever: "helper-0"},
+	{N: 2, CircuitSigs: testCircuits, Reciever: "helper"},
 	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "light-0"},
-	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper-0"},
-	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper-0", Rep: 10},
+	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper"},
+	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper", Rep: 10},
 }
 
 type testNode struct {
@@ -54,7 +54,7 @@ type testNode struct {
 func NewTestNodes(lt *LocalTest) (all, clients map[pkg.NodeID]*testNode, cloud *testNode) {
 	all = make(map[pkg.NodeID]*testNode, len(lt.Nodes))
 	cloud = &testNode{}
-	cloud.Node = lt.HelperNodes[0]
+	cloud.Node = lt.HelperNode
 	cloud.InputProvider = compute.NoInput
 	cloud.Outputs = make(map[circuits.ID]circuits.Output)
 	all[cloud.id] = cloud
@@ -98,13 +98,12 @@ func TestNodeSetup(t *testing.T) {
 			sessParams := pkg.SessionParameters{
 				ID:         "test-session",
 				RLWEParams: params.ParametersLiteral(),
-				T:          ts.T,
+				Threshold:  ts.T,
 			}
 
 			lt, err := NewLocalTest(LocalTestConfig{
-				LightNodes:  ts.N,
-				HelperNodes: 1,
-				Session:     &sessParams,
+				LightNodes:    ts.N,
+				SessionParams: &sessParams,
 			})
 			require.Nil(t, err)
 
@@ -178,13 +177,12 @@ func TestNodeCompute(t *testing.T) {
 			sessParams := pkg.SessionParameters{
 				ID:         "test-session",
 				RLWEParams: params.ParametersLiteral(),
-				T:          ts.T,
+				Threshold:  ts.T,
 			}
 
 			lt, err := NewLocalTest(LocalTestConfig{
-				LightNodes:  ts.N,
-				HelperNodes: 1,
-				Session:     &sessParams,
+				LightNodes:    ts.N,
+				SessionParams: &sessParams,
 			})
 			require.Nil(t, err)
 
@@ -240,7 +238,7 @@ func TestNodeCompute(t *testing.T) {
 				})
 			}
 
-			nodemap := map[string]pkg.NodeID{"p1": "light-0", "p2": "light-1", "eval": "helper-0", "rec": ts.Reciever}
+			nodemap := map[string]pkg.NodeID{"p1": "light-0", "p2": "light-1", "eval": "helper", "rec": ts.Reciever}
 			cdesc := <-cdescs
 			expResult := make(map[circuits.ID]uint64)
 			for _, tc := range ts.CircuitSigs {
@@ -291,13 +289,12 @@ func TestNodeMatMul(t *testing.T) {
 	sessParams := pkg.SessionParameters{
 		ID:         "test-session",
 		RLWEParams: params.ParametersLiteral(),
-		T:          T,
+		Threshold:  T,
 	}
 
 	lt, err := NewLocalTest(LocalTestConfig{
-		LightNodes:  N,
-		HelperNodes: 1,
-		Session:     &sessParams,
+		LightNodes:    N,
+		SessionParams: &sessParams,
 	})
 	require.Nil(t, err)
 
@@ -305,7 +302,7 @@ func TestNodeMatMul(t *testing.T) {
 
 	all := make([]testNode, 1+N)
 	cloud := &all[0]
-	cloud.Node = lt.HelperNodes[0]
+	cloud.Node = lt.HelperNode
 	cloud.InputProvider = compute.NoInput
 
 	clients := all[1:]

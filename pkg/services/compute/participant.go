@@ -253,7 +253,7 @@ func (p *participant) PCKS(in circuits.Operand, rec pkg.NodeID, params map[strin
 
 // Parameters returns the encryption parameters for the circuit.
 func (p *participant) Parameters() bgv.Parameters {
-	return *p.sess.Params
+	return p.sess.Params
 }
 
 type dummyEvaluator struct{}

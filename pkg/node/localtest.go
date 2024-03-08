@@ -29,11 +29,11 @@ import (
 // LocalTestConfig is a configuration structure for LocalTest types. It is used to
 // specify the number of full, light and helper nodes in the local test.
 type LocalTestConfig struct {
-	FullNodes     int // Number of full nodes in the session
-	LightNodes    int // Number of light nodes in the session
-	HelperNodes   int // number of helper nodes (full nodes that are not in the session key)
-	ExternalNodes int
-	Session       *pkg.SessionParameters
+	//FullNodes     int // Number of full nodes in the session
+	LightNodes int // Number of light nodes in the session
+	//HelperNodes   int // number of helper nodes (full nodes that are not in the session key)
+	//ExternalNodes int
+	SessionParams *pkg.SessionParameters
 	//DoThresholdSetup bool
 	InsecureChannels  bool // are we using (m)TLS to establish the channels between nodes?
 	ObjectStoreConfig *objectstore.Config
@@ -43,15 +43,16 @@ type LocalTestConfig struct {
 // LocalTest represent a local test setting with several nodes and a single
 // session with group secret key.
 type LocalTest struct {
-	Nodes         []*Node
-	FullNodes     []*Node
-	LightNodes    []*Node
-	HelperNodes   []*Node
-	ExternalNodes []*Node
-	Params        bgv.Parameters
+	Nodes []*Node
+	//FullNodes     []*Node
+	LightNodes []*Node
+	HelperNode *Node
+	//ExternalNodes []*Node
+	Params bgv.Parameters
 
 	*pkg.TestSession
-	NodeConfigs []Config
+	HelperConfig    Config
+	SessNodeConfigs []Config
 	pkg.NodesList
 	//compute.PublicKeyBackend
 }
@@ -59,110 +60,66 @@ type LocalTest struct {
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
 func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test = new(LocalTest)
-	//memPkBackend := &compute.MemoryKeyBackend{}
-	//test.PublicKeyBackend = memPkBackend
-	test.NodeConfigs, test.NodesList = genNodeConfigs(config)
-	test.Nodes = make([]*Node, config.FullNodes+config.LightNodes+config.HelperNodes+config.ExternalNodes)
-	for i, nc := range test.NodeConfigs {
-		var err error
-		test.Nodes[i], err = NewNode(nc, test.NodesList)
-		if err != nil {
-			return nil, err
-		}
-	}
-	test.FullNodes = test.Nodes[:config.FullNodes]
-	test.LightNodes = test.Nodes[config.FullNodes : config.FullNodes+config.LightNodes]
-	test.HelperNodes = test.Nodes[config.FullNodes+config.LightNodes : config.FullNodes+config.LightNodes+config.HelperNodes]
-	test.ExternalNodes = test.Nodes[config.FullNodes+config.LightNodes+config.HelperNodes:]
 
-	if config.Session != nil {
-		test.TestSession, err = pkg.NewTestSessionFromParams(*config.Session, test.HelperNodes[0].id)
+	helperId := pkg.NodeID("helper")
+	sessNodesId := make([]pkg.NodeID, config.LightNodes)
+	shamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint, config.LightNodes)
+	test.NodesList = make(pkg.NodesList, 1+config.LightNodes)
+	for i := range sessNodesId {
+		nid := pkg.NodeID("light-" + strconv.Itoa(i))
+		sessNodesId[i] = nid
+		shamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
+		test.NodesList[i] = pkg.NodeInfo{NodeID: nid}
+	}
+	test.NodesList[len(sessNodesId)] = pkg.NodeInfo{NodeID: helperId, NodeAddress: "local"}
+
+	config.SessionParams.Nodes = sessNodesId
+	config.SessionParams.ShamirPks = shamirPks
+	config.SessionParams.ID = "test-session"
+	config.SessionParams.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
+
+	nodeSecrets, err := pkg.GenTestSecretKeys(*config.SessionParams)
+	if err != nil {
+		return nil, err
+	}
+
+	test.SessNodeConfigs, test.HelperConfig = genNodeConfigs(config, test.NodesList, nodeSecrets)
+
+	if config.SessionParams != nil {
+		test.TestSession, err = pkg.NewTestSessionFromParams(*config.SessionParams, test.HelperConfig.ID)
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	test.Nodes = make([]*Node, 1+config.LightNodes)
+	test.HelperNode, err = NewNode(test.HelperConfig, test.NodesList)
+	if err != nil {
+		return nil, err
+	}
+	test.Nodes[0] = test.HelperNode
+	for i, nc := range test.SessNodeConfigs {
+		var err error
+		test.Nodes[i+1], err = NewNode(nc, test.NodesList)
+		if err != nil {
+			return nil, err
+		}
+	}
+	//test.FullNodes = test.Nodes[:config.FullNodes]
+	test.LightNodes = test.Nodes[1:]
+	//test.HelperNodes = test.Nodes[config.FullNodes+config.LightNodes : config.FullNodes+config.LightNodes+config.HelperNodes]
+	//test.ExternalNodes = test.Nodes[config.FullNodes+config.LightNodes+config.HelperNodes:]
 
 	return test, nil
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
-func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
-
-	ncs := make([]Config, 0, config.FullNodes+config.HelperNodes+config.LightNodes+config.ExternalNodes)
-	nl := pkg.NodesList{}
-
-	sessionNodesIds := make([]pkg.NodeID, 0, config.FullNodes+config.LightNodes)
-	nodeShamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
-
-	shamirPk := 1
-
-	for i := 0; i < config.FullNodes; i++ {
-		nodeID := pkg.NodeID("full-" + strconv.Itoa(i))
-		nc := Config{
-			ID:      nodeID,
-			Address: pkg.NodeAddress("local"),
-		}
-		ncs = append(ncs, nc)
-		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
-		sessionNodesIds = append(sessionNodesIds, nc.ID)
-
-		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
-		shamirPk++
-	}
-
-	for i := 0; i < config.LightNodes; i++ {
-		nodeID := pkg.NodeID("light-" + strconv.Itoa(i))
-		nc := Config{
-			ID:       nodeID,
-			HelperID: "helper-0",
-		}
-		ncs = append(ncs, nc)
-		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
-		sessionNodesIds = append(sessionNodesIds, nc.ID)
-
-		nodeShamirPks[nc.ID] = drlwe.ShamirPublicPoint(shamirPk)
-		shamirPk++
-	}
-
-	for i := 0; i < config.HelperNodes; i++ {
-		nodeID := pkg.NodeID("helper-" + strconv.Itoa(i))
-		nc := Config{
-			ID:       nodeID,
-			Address:  pkg.NodeAddress("local"),
-			HelperID: "helper-0",
-		}
-		ncs = append(ncs, nc)
-		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
-	}
-
-	for i := 0; i < config.ExternalNodes; i++ {
-		nodeID := pkg.NodeID("external-" + strconv.Itoa(i))
-		nc := Config{
-			ID: nodeID,
-		}
-		ncs = append(ncs, nc)
-		nl = append(nl, pkg.NodeInfo{nc.ID, nc.Address})
-	}
+func genNodeConfigs(config LocalTestConfig, nl pkg.NodesList, secrets map[pkg.NodeID]*pkg.SessionSecrets) (sessNodesConfig []Config, helperNodeConfig Config) {
 
 	tlsConfigs, err := createTLSConfigs(config, nl)
 	if err != nil {
 		log.Println(err)
 		panic("failed to generate tls configs - got err")
-	}
-	for i := range ncs {
-		ncs[i].TLSConfig = tlsConfigs[ncs[i].ID]
-	}
-
-	// sets session-specific variables with test values
-	if config.Session != nil {
-		config.Session.ID = "test-session" // forces the session id
-		config.Session.Nodes = sessionNodesIds
-		config.Session.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
-
-		for i := range ncs {
-			ncs[i].SessionParameters = []pkg.SessionParameters{*config.Session}
-			ncs[i].SessionParameters[0].ShamirPks = nodeShamirPks // forces the Shamir pts
-		}
 	}
 
 	objstoreconf := objectstore.Config{
@@ -171,11 +128,32 @@ func genNodeConfigs(config LocalTestConfig) ([]Config, pkg.NodesList) {
 	if config.ObjectStoreConfig != nil {
 		objstoreconf = *config.ObjectStoreConfig
 	}
-	for i := range ncs {
-		ncs[i].ObjectStoreConfig = objstoreconf
+
+	sp := config.SessionParams
+	hid := nl[len(nl)-1].NodeID
+	sessNodesConfig = make([]Config, config.LightNodes)
+	for i := range sessNodesConfig {
+		nid := nl[i].NodeID
+		sessNodesConfig[i] = Config{
+			ID:                nid,
+			HelperID:          hid,
+			SessionParameters: []pkg.SessionParameters{*sp},
+			TLSConfig:         tlsConfigs[nid],
+			ObjectStoreConfig: objstoreconf,
+		}
+		sessNodesConfig[i].SessionParameters[0].SessionSecrets = secrets[nid]
 	}
 
-	return ncs, nl
+	helperNodeConfig = Config{
+		ID:                hid,
+		Address:           "local",
+		HelperID:          hid,
+		SessionParameters: []pkg.SessionParameters{*sp},
+		TLSConfig:         tlsConfigs[hid],
+		ObjectStoreConfig: objstoreconf,
+	}
+
+	return sessNodesConfig, helperNodeConfig
 }
 
 type nodeCrypto struct {
@@ -329,7 +307,7 @@ const buffConBufferSize = 65 * 1024 * 1024
 func (lc LocalTest) Start() {
 	lis := bufconn.Listen(buffConBufferSize)
 
-	go lc.HelperNodes[0].srv.Server.Serve(lis)
+	go lc.HelperNode.srv.Server.Serve(lis)
 
 	var wg sync.WaitGroup
 	for _, node := range lc.SessionNodes() {
@@ -350,7 +328,7 @@ func (lc LocalTest) Start() {
 // SessionNodes returns the set of nodes in the local test that are part of the
 // session.
 func (lc LocalTest) SessionNodes() []*Node {
-	return lc.Nodes[:len(lc.FullNodes)+len(lc.LightNodes)]
+	return lc.Nodes[1:]
 }
 
 func (lc LocalTest) SessionNodesIds() []pkg.NodeID {

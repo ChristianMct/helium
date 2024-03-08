@@ -159,8 +159,8 @@ type protocol struct {
 
 func newProtocol(pd Descriptor, sess *pkg.Session) (*protocol, error) {
 
-	if len(pd.Participants) < sess.T {
-		return nil, fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.T)
+	if len(pd.Participants) < sess.Threshold {
+		return nil, fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.Threshold)
 	}
 
 	for _, p := range pd.Participants {

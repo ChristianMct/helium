@@ -197,7 +197,7 @@ func (se *evaluator) Output(op circuits.Operand, nid pkg.NodeID) {
 }
 
 func (se *evaluator) Parameters() bgv.Parameters {
-	return *se.sess.Params
+	return se.sess.Params
 }
 
 func (se *evaluator) NewEvaluator() circuits.Evaluator {

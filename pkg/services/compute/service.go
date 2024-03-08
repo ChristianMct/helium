@@ -302,7 +302,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					panic(fmt.Errorf("could not retrieve session from the context"))
 				}
 
-				params := *sess.Params
+				params := sess.Params
 
 				cinf, err := circuits.Parse(c, cd, params)
 				if err != nil {
@@ -454,7 +454,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err e
 		return fmt.Errorf("could not retrieve session from the context")
 	}
 
-	params := *sess.Params
+	params := sess.Params
 
 	cinf, err := circuits.Parse(c, cd, params)
 	if err != nil {
@@ -717,7 +717,7 @@ func (s *Service) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
 		return nil, fmt.Errorf("no session found for this context")
 	}
 
-	return bgv.NewEncoder(*sess.Params), nil
+	return bgv.NewEncoder(sess.Params), nil
 }
 
 func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
@@ -741,7 +741,7 @@ func (s *Service) GetEvaluator(ctx context.Context, relin bool, galEls []uint64)
 		return nil, fmt.Errorf("no session found for this context")
 	}
 
-	return newLattigoEvaluator(ctx, relin, galEls, *sess.Params, s.pubkeyBackend)
+	return newLattigoEvaluator(ctx, relin, galEls, sess.Params, s.pubkeyBackend)
 }
 
 func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {

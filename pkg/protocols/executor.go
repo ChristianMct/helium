@@ -553,13 +553,13 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *pkg.Session) Descr
 	for {
 		available = s.getAvailable()
 		available.Remove(selected.Elements()...)
-		if len(selected)+len(available) >= sess.T {
+		if len(selected)+len(available) >= sess.Threshold {
 			break
 		}
 		s.connectedNodesCond.Wait()
 	}
 
-	selected.AddAll(utils.GetRandomSetOfSize(sess.T-len(selected), available))
+	selected.AddAll(utils.GetRandomSetOfSize(sess.Threshold-len(selected), available))
 	pd.Participants = selected.Elements()
 	for nid := range selected {
 		nodeProto := s.connectedNodes[nid]

@@ -2,18 +2,18 @@ package pkg
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
+	"slices"
 
 	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
+	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v4/utils/sampling"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/tuneinsight/lattigo/v4/drlwe"
-
-	"sync"
 )
 
 type NodeInfo struct {
@@ -158,102 +158,135 @@ func (pid ProtocolID) String() string {
 
 // Session is the context of an MPC protocol execution.
 type Session struct {
-	ID     SessionID
+	SessionParameters
 	NodeID NodeID
-	Nodes  []NodeID
+	Params bgv.Parameters
 
-	T    int
-	SPKS map[NodeID]drlwe.ShamirPublicPoint
-	//sk       *rlwe.SecretKey
-	//tsk      *drlwe.ShamirSecretShare
-	rlkEphSk *rlwe.SecretKey
-
-	PublicSeed, PrivateSeed []byte
-	Params                  *bgv.Parameters
+	//sessSecrets *SessionSecrets
+	secretKey *rlwe.SecretKey
+	rlkEphSk  *rlwe.SecretKey
 
 	*CiphertextStore
 	objectstore.ObjectStore
+}
 
-	mutex sync.RWMutex
+type SessionSecrets struct {
+	PrivateSeed        []byte
+	ThresholdSecretKey *drlwe.ShamirSecretShare
 }
 
 // SessionParameters contains data used to initialize a Session.
 type SessionParameters struct {
-	ID                      SessionID
-	Nodes                   []NodeID
-	RLWEParams              bgv.ParametersLiteral
-	T                       int
-	ShamirPks               map[NodeID]drlwe.ShamirPublicPoint
-	PublicSeed, PrivateSeed []byte
+	ID         SessionID
+	Nodes      []NodeID
+	RLWEParams bgv.ParametersLiteral
+	Threshold  int
+	ShamirPks  map[NodeID]drlwe.ShamirPublicPoint
+	PublicSeed []byte
+	*SessionSecrets
 }
 
 func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstore.ObjectStore) (sess *Session, err error) {
 	sess = new(Session)
 	sess.NodeID = nodeID
 	sess.ObjectStore = objStore
-	sess.ID = sessParams.ID
-	sess.Nodes = sessParams.Nodes
-	if sessParams.T > 0 && sessParams.T < len(sessParams.Nodes) {
-		sess.T = sessParams.T
-	} else {
-		sess.T = len(sessParams.Nodes)
+
+	if len(sessParams.ID) == 0 {
+		return nil, fmt.Errorf("invalid session parameters: unspecified session id")
 	}
-	sess.PublicSeed = sessParams.PublicSeed
-	sess.SPKS = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
-	for id, spk := range sessParams.ShamirPks {
-		sess.SPKS[id] = spk
+	sess.ID = sessParams.ID
+
+	if len(sessParams.Nodes) < 2 {
+		return nil, fmt.Errorf("invalid session parameters: less than two session nodes")
+	}
+	sess.Nodes = slices.Clone(sessParams.Nodes)
+
+	if sessParams.Threshold > len(sessParams.Nodes) {
+		return nil, fmt.Errorf("invalid session parameters: threshold greater than number of session nodes")
+	}
+	if sessParams.Threshold > 0 {
+		sess.Threshold = sessParams.Threshold
+	} else {
+		sess.Threshold = len(sessParams.Nodes)
 	}
 
-	if len(sessParams.PrivateSeed) == 0 {
-		sess.PrivateSeed = make([]byte, 32, 32)
-		_, err := rand.Read(sess.PrivateSeed)
-		if err != nil {
-			return nil, fmt.Errorf("could not create session private seed: %s", err)
+	if len(sessParams.PublicSeed) == 0 {
+		return nil, fmt.Errorf("invalid session parameters: unspecified public seed")
+	}
+	sess.PublicSeed = slices.Clone(sessParams.PublicSeed)
+
+	sess.ShamirPks = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
+	for _, nid := range sess.Nodes {
+		var has bool
+		if sess.ShamirPks[nid], has = sessParams.ShamirPks[nid]; !has {
+			return nil, fmt.Errorf("invalid session parameters: missing Shamir public point for node %s", nid)
 		}
 	}
 
-	params, err := bgv.NewParametersFromLiteral(sessParams.RLWEParams)
+	sess.Params, err = bgv.NewParametersFromLiteral(sessParams.RLWEParams)
 	if err != nil {
 		return nil, fmt.Errorf("could not create session parameters: %s", err)
 	}
-	sess.Params = &params
 
-	if sessParams.T == 0 {
-		sessParams.T = len(sessParams.Nodes)
-	}
-
-	kgen := rlwe.NewKeyGenerator(*sess.Params)
-
-	// node generates its secret-key for the session
+	// node re-generates its secret-key material for the session
 	if utils.NewSet(sessParams.Nodes).Contains(nodeID) {
 
-		sk, errSk := sess.GetSecretKey()
-		tsk, errTsk := sess.GetThresholdSecretKey()
-
-		if errSk != nil || errTsk != nil {
-			//log.Printf("%s | no sk and tsk found, node will generate them\n", sess.NodeID)
-			sk, tsk, err = GetTestSecretKeys(sessParams, nodeID) // TODO: local generation for testing
-			if err != nil {
-				panic(err)
-			}
-			sess.SetSecretKey(sk)
-			if tsk != nil {
-				sess.SetThresholdSecretKey(tsk)
-			}
+		if sessParams.SessionSecrets == nil || len(sessParams.SessionSecrets.PrivateSeed) == 0 {
+			return nil, fmt.Errorf("session nodes must specify session secrets")
 		}
 
-		sess.rlkEphSk = kgen.GenSecretKeyNew() // TODO: generates a new ephSK on restart so correctness error
-		sess.SetRLKEphemeralSecretKey(sess.rlkEphSk)
-	} else {
-		sk, pk := kgen.GenKeyPairNew()
-		sess.SetSecretKey(sk)
-		sess.SetPublicKey(pk)
+		sess.SessionSecrets = new(SessionSecrets)
+		sess.PrivateSeed = slices.Clone(sessParams.SessionSecrets.PrivateSeed)
+
+		sessPrng, err := sampling.NewKeyedPRNG(sessParams.SessionSecrets.PrivateSeed)
+		if err != nil {
+			return nil, fmt.Errorf("could not create session PRNG: %s", err)
+		}
+
+		sess.secretKey, err = genSecretKey(sess.Params, sessPrng)
+		if err != nil {
+			return nil, fmt.Errorf("could not generate secret key: %s", err)
+		}
+
+		sess.rlkEphSk, err = genSecretKey(sess.Params, sessPrng)
+		if err != nil {
+			return nil, fmt.Errorf("could not generate rlk eph secret key: %s", err)
+		}
+
+		if sessParams.Threshold < len(sessParams.Nodes) {
+			if sessParams.ThresholdSecretKey == nil {
+				return nil, fmt.Errorf("session nodes must specify threshold secret key when session threshold is less than the number of nodes")
+			}
+			sess.ThresholdSecretKey = &drlwe.ShamirSecretShare{Poly: *sessParams.ThresholdSecretKey.CopyNew()} // TODO: add copy method to Lattigo
+		}
 	}
 
 	//sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
 	sess.CiphertextStore = NewCiphertextStore()
 
 	return sess, nil
+}
+
+func genSecretKey(params rlwe.ParametersInterface, prng sampling.PRNG) (sk *rlwe.SecretKey, err error) {
+
+	ts, err := ring.NewSampler(prng, params.RingQ(), params.Xs(), false)
+	if err != nil {
+		return nil, err
+	}
+
+	sk = new(rlwe.SecretKey)
+	ringQP := params.RingQP()
+	sk.Value = ringQP.NewPoly()
+	levelQ, levelP := sk.LevelQ(), sk.LevelP()
+	ts.Read(sk.Value.Q)
+
+	if levelP > -1 {
+		ringQP.ExtendBasisSmallNormAndCenter(sk.Value.Q, levelP, sk.Value.Q, sk.Value.P)
+	}
+
+	ringQP.AtLevel(levelQ, levelP).NTT(sk.Value, sk.Value)
+	ringQP.AtLevel(levelQ, levelP).MForm(sk.Value, sk.Value)
+	return
 }
 
 // // GetCollectivePublicKey loads the collective public key from the ObjectStore.
@@ -315,72 +348,67 @@ func NewSession(sessParams SessionParameters, nodeID NodeID, objStore objectstor
 // 	return nil
 // }
 
-func (s *Session) GetPublicKey() (*rlwe.PublicKey, error) {
-	cpk := new(rlwe.PublicKey)
+// func (s *Session) GetPublicKey() (*rlwe.PublicKey, error) {
+// 	cpk := new(rlwe.PublicKey)
 
-	if err := s.ObjectStore.Load("PK", cpk); err != nil {
-		return nil, fmt.Errorf("error while loading the collective public key: %w", err)
-	}
+// 	if err := s.ObjectStore.Load("PK", cpk); err != nil {
+// 		return nil, fmt.Errorf("error while loading the collective public key: %w", err)
+// 	}
 
-	return cpk, nil
-}
+// 	return cpk, nil
+// }
 
-func (s *Session) SetPublicKey(cpk *rlwe.PublicKey) error {
-	if err := s.ObjectStore.Store("PK", cpk); err != nil {
-		return fmt.Errorf("error while storing the collective public key: %w", err)
-	}
+// func (s *Session) SetPublicKey(cpk *rlwe.PublicKey) error {
+// 	if err := s.ObjectStore.Store("PK", cpk); err != nil {
+// 		return fmt.Errorf("error while storing the collective public key: %w", err)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
-// GetOutputPkForNode loads the output public key for a node from the ObjectStore.
-func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists error) {
-	outputPk := rlwe.NewPublicKey(*s.Params)
+// // GetOutputPkForNode loads the output public key for a node from the ObjectStore.
+// func (s *Session) GetOutputPkForNode(nid NodeID) (pk *rlwe.PublicKey, exists error) {
+// 	outputPk := rlwe.NewPublicKey(s.Params)
 
-	if err := s.ObjectStore.Load(fmt.Sprintf("PK(Sender=%s)", nid), outputPk); err != nil {
-		return nil, fmt.Errorf("error while loading the output public key of node %s: %w", nid, err)
-	}
+// 	if err := s.ObjectStore.Load(fmt.Sprintf("PK(Sender=%s)", nid), outputPk); err != nil {
+// 		return nil, fmt.Errorf("error while loading the output public key of node %s: %w", nid, err)
+// 	}
 
-	return outputPk, nil
-}
+// 	return outputPk, nil
+// }
 
-// SetOutputPkForNode stores the output public key for a node into the ObjectStore.
-func (s *Session) SetOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error {
-	if err := s.ObjectStore.Store(fmt.Sprintf("PK(Sender=%s)", nid), outputPk); err != nil {
-		return fmt.Errorf("error while storing the output public key of node %s: %w", nid, err)
-	}
+// // SetOutputPkForNode stores the output public key for a node into the ObjectStore.
+// func (s *Session) SetOutputPkForNode(nid NodeID, outputPk *rlwe.PublicKey) error {
+// 	if err := s.ObjectStore.Store(fmt.Sprintf("PK(Sender=%s)", nid), outputPk); err != nil {
+// 		return fmt.Errorf("error while storing the output public key of node %s: %w", nid, err)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err error) {
 	switch {
 	case len(parties) == len(sess.Nodes):
-		sk, err := sess.GetSecretKey()
-		if err != nil {
-			return nil, err
-		}
-		if sk == nil {
+		if sess.secretKey == nil {
 			return nil, fmt.Errorf("party has no secret-key in the session")
 		}
-		return sk, nil
-	case len(parties) >= sess.T:
-		sk = rlwe.NewSecretKey(*sess.Params)
+		return sess.secretKey, nil
+	case len(parties) >= sess.Threshold:
+		sk = rlwe.NewSecretKey(sess.Params)
 		spks := make([]drlwe.ShamirPublicPoint, len(parties))
 		for i, pid := range parties {
 			var has bool
-			if spks[i], has = sess.SPKS[pid]; !has {
+			if spks[i], has = sess.ShamirPks[pid]; !has {
 				return nil, fmt.Errorf("unknown Shamir public point for party %s", pid)
 			}
 		}
-		tsk, err := sess.GetThresholdSecretKey()
-		if err != nil {
-			return nil, err
+		if sess.ThresholdSecretKey == nil {
+			return nil, fmt.Errorf("node has no threshold secret key")
 		}
-		drlwe.NewCombiner(*&sess.Params.Parameters,
+		drlwe.NewCombiner(sess.Params.Parameters,
 			sess.GetShamirPublicPoints()[sess.NodeID],
 			sess.GetShamirPublicPointsList(),
-			sess.T).GenAdditiveShare(spks, sess.SPKS[sess.NodeID], *tsk, sk)
+			sess.Threshold).GenAdditiveShare(spks, sess.ShamirPks[sess.NodeID], *sess.ThresholdSecretKey, sk)
 		return sk, nil
 	default:
 		return nil, fmt.Errorf("group of size %d is not enough participants to reconstruct", len(parties))
@@ -409,67 +437,61 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 
 // GetSecretKey loads the secret key from the ObjectStore.
 func (s *Session) GetSecretKey() (*rlwe.SecretKey, error) {
-	sk := new(rlwe.SecretKey)
-	if err := s.ObjectStore.Load("sessionSK", sk); err != nil {
-		return nil, fmt.Errorf("error while loading the session secret key: %w", err)
+	if s.secretKey == nil {
+		return nil, fmt.Errorf("node has no secret-key in the session")
 	}
-
-	return sk, nil
+	return s.secretKey, nil
 }
 
 func (s *Session) GetRLKEphemeralSecretKey() (*rlwe.SecretKey, error) {
-	sk := new(rlwe.SecretKey)
-	if err := s.ObjectStore.Load("rlkEphSK", sk); err != nil {
-		return nil, fmt.Errorf("error while loading the session rlk ephemeral secret key: %w", err)
+	if s.rlkEphSk == nil {
+		return nil, fmt.Errorf("node has no rlk ephemeral secret-key in the session")
 	}
-
-	return sk, nil
+	return s.rlkEphSk, nil
 }
 
 // GetThresholdSecretKey loads the secret key from the ObjectStore.
 func (s *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
-	tsk := new(drlwe.ShamirSecretShare)
-	if err := s.ObjectStore.Load("sessionThresholdSK", tsk); err != nil {
-		return nil, fmt.Errorf("error while loading the session secret key: %w", err)
+	if s.ThresholdSecretKey == nil {
+		return nil, fmt.Errorf("node has no threshold secret-key in the session")
 	}
-
-	return tsk, nil
+	return s.ThresholdSecretKey, nil
 }
 
-// SetSecretKey stores the secret key into the ObjectStore.
-func (s *Session) SetSecretKey(sk *rlwe.SecretKey) error {
-	if err := s.ObjectStore.Store("sessionSK", sk); err != nil {
-		return fmt.Errorf("error while storing the session secret key: %w", err)
-	}
-	return nil
-}
+// // SetSecretKey stores the secret key into the ObjectStore.
+// func (s *Session) SetSecretKey(sk *rlwe.SecretKey) error {
+// 	if err := s.ObjectStore.Store("sessionSK", sk); err != nil {
+// 		return fmt.Errorf("error while storing the session secret key: %w", err)
+// 	}
+// 	return nil
+// }
 
-// SetThresholdSecretKey stores the secret key into the ObjectStore.
-func (s *Session) SetThresholdSecretKey(tsk *drlwe.ShamirSecretShare) error {
-	if err := s.ObjectStore.Store("sessionThresholdSK", tsk); err != nil {
-		return fmt.Errorf("error while storing the session threshold secret key: %w", err)
-	}
-	return nil
-}
+// // SetThresholdSecretKey stores the secret key into the ObjectStore.
+// func (s *Session) SetThresholdSecretKey(tsk *drlwe.ShamirSecretShare) error {
+// 	if err := s.ObjectStore.Store("sessionThresholdSK", tsk); err != nil {
+// 		return fmt.Errorf("error while storing the session threshold secret key: %w", err)
+// 	}
+// 	return nil
+// }
 
-func (s *Session) SetRLKEphemeralSecretKey(sk *rlwe.SecretKey) error {
-	if err := s.ObjectStore.Store("rlkEphSK", sk); err != nil {
-		return fmt.Errorf("error while storing the session rlk ephemeral  secret key: %w", err)
-	}
-	return nil
-}
+// func (s *Session) SetRLKEphemeralSecretKey(sk *rlwe.SecretKey) error {
+// 	if err := s.ObjectStore.Store("rlkEphSK", sk); err != nil {
+// 		return fmt.Errorf("error while storing the session rlk ephemeral  secret key: %w", err)
+// 	}
+// 	return nil
+// }
 
 func (s *Session) GetShamirPublicPoints() map[NodeID]drlwe.ShamirPublicPoint {
-	spts := make(map[NodeID]drlwe.ShamirPublicPoint, len(s.SPKS))
-	for p, spt := range s.SPKS {
+	spts := make(map[NodeID]drlwe.ShamirPublicPoint, len(s.ShamirPks))
+	for p, spt := range s.ShamirPks {
 		spts[p] = spt
 	}
 	return spts
 }
 
 func (s *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
-	spts := make([]drlwe.ShamirPublicPoint, 0, len(s.SPKS))
-	for _, spt := range s.SPKS {
+	spts := make([]drlwe.ShamirPublicPoint, 0, len(s.ShamirPks))
+	for _, spt := range s.ShamirPks {
 		spts = append(spts, spt)
 	}
 	return spts
@@ -507,5 +529,5 @@ func (s *Session) String() string {
 		Nodes: %v,
 		T: %d,
 		CRSKey: %v,
-	}`, s.ID, s.NodeID, s.Nodes, s.T, s.PublicSeed)
+	}`, s.ID, s.NodeID, s.Nodes, s.Threshold, s.PublicSeed)
 }
