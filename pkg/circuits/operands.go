@@ -10,29 +10,49 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
-type OperandLabel string
-
+// Operand is a type for representing circuit operands.
+// Each operand within a circuit must have a unique label.
 type Operand struct {
 	OperandLabel
 	*rlwe.Ciphertext
 }
 
+// OperandLabel is a type operand labels. Operand labels have the following format:
+//
+//	//<node-id>/<circuit-id>/<ciphertext-id>
+//
+// where:
+//   - node-id is the id of the node that owns the operand,
+//   - circuit-id is the id of the circuit in which this operand is used,
+//   - ciphertext-id is the id of the ciphertext within the circuit.
+//
+// The circuit-id part is optional and can be omitted (1) in the context of a circuit definition, where it
+// will be automatically expanded by the framework and (2) in the context of a global ciphertext that is
+// available session-wide.
+type OperandLabel string
+
+// FutureOperand is a type for operands for which the actual ciphertext
+// is not known yet and will be set later. It enables waiting on operands.
 type FutureOperand struct {
 	Operand
 	c chan struct{}
 }
 
-// FutureOperand must have labels
+// NewFutureOperand creates a new future operand with the given label.
 func NewFutureOperand(opl OperandLabel) *FutureOperand {
 	return &FutureOperand{Operand: Operand{OperandLabel: opl}, c: make(chan struct{})}
 }
 
+// NewDummyFutureOperand creates a new future operand with the given label, but for which
+// the ciphertext is immediatly set to nil. It is used in the context of circuit parsing.
 func NewDummyFutureOperand(opl OperandLabel) *FutureOperand {
 	c := make(chan struct{})
 	close(c)
 	return &FutureOperand{Operand: Operand{OperandLabel: opl}, c: c}
 }
 
+// Set sets the actual ciphertext for the future operand and unlocks the routines waiting
+// in the Get method.
 func (fo *FutureOperand) Set(op Operand) {
 	if fo.Ciphertext != nil { // TODO that only the main circuit routine calls set
 		return
@@ -41,12 +61,14 @@ func (fo *FutureOperand) Set(op Operand) {
 	close(fo.c)
 }
 
+// Get returns the actual operand, waiting for the ciphertext to be set if necessary.
 func (fo *FutureOperand) Get() Operand {
 	<-fo.c
 	return fo.Operand
 }
 
-func (opl OperandLabel) Host() pkg.NodeID {
+// NodeID returns the node id part of the operand label.
+func (opl OperandLabel) NodeID() pkg.NodeID {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
@@ -54,7 +76,8 @@ func (opl OperandLabel) Host() pkg.NodeID {
 	return pkg.NodeID(nopl.Host)
 }
 
-func (opl OperandLabel) Circuit() ID {
+// CircuitID returns the circuit id part of the operand label.
+func (opl OperandLabel) CircuitID() ID {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
@@ -62,7 +85,8 @@ func (opl OperandLabel) Circuit() ID {
 	return ID(strings.Trim(path.Dir(nopl.Path), "/"))
 }
 
-func (opl OperandLabel) HasHost(id pkg.NodeID) bool {
+// HasNode returns true if the operand label has the given host id.
+func (opl OperandLabel) HasNode(id pkg.NodeID) bool {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
@@ -70,6 +94,8 @@ func (opl OperandLabel) HasHost(id pkg.NodeID) bool {
 	return nopl.Host == string(id)
 }
 
+// ForCircuit returns a new operand label for the given circuit id, with
+// the circuit id part set to cid.
 func (opl OperandLabel) ForCircuit(cid ID) OperandLabel {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
@@ -79,6 +105,8 @@ func (opl OperandLabel) ForCircuit(cid ID) OperandLabel {
 	return OperandLabel(nopl.String())
 }
 
+// ForMapping returns a new operand label with the node id part replaced by the
+// corresponding value in the provided mapping.
 func (opl OperandLabel) ForMapping(nodeMapping map[string]pkg.NodeID) OperandLabel {
 	if nodeMapping == nil {
 		return opl

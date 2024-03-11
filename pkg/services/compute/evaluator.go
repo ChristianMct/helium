@@ -52,26 +52,26 @@ type evaluatorRuntime struct {
 
 // CircuitInstance (framework-facing) API
 
-func (se *evaluatorRuntime) Init(ctx context.Context, ci circuits.Info) (err error) {
+func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata) (err error) {
 
 	se.ops = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	se.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
-	for inLabel := range ci.InputSet {
+	for inLabel := range md.InputSet {
 		fop := circuits.NewFutureOperand(inLabel)
 		se.inputs[inLabel] = fop
 		se.ops[inLabel] = fop
 	}
 
 	se.outputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
-	for outLabel := range ci.OutputSet {
+	for outLabel := range md.OutputSet {
 		fop := circuits.NewFutureOperand(outLabel)
 		se.outputs[outLabel] = fop
 		se.ops[outLabel] = fop
 	}
 
-	se.CompleteMap = protocols.NewCompletedProt(maps.Values(ci.KeySwitchOps))
+	se.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
 
-	se.fheEvaluator, err = se.fheProvider.GetEvaluator(ctx, ci.NeedRlk, ci.GaloisKeys.Elements())
+	se.fheEvaluator, err = se.fheProvider.GetEvaluator(ctx, md.NeedRlk, md.GaloisKeys.Elements())
 	if err != nil {
 		return err
 	}

@@ -15,7 +15,7 @@ func getApiEvent(event coordinator.Event) *api.Event {
 	apiEvent := &api.Event{}
 	if event.CircuitEvent != nil {
 		apiEvent.CircuitEvent = &api.CircuitEvent{
-			Type:        api.EventType(event.CircuitEvent.Status),
+			Type:        api.EventType(event.CircuitEvent.EventType),
 			Descriptor_: getAPICircuitDesc(event.CircuitEvent.Descriptor),
 		}
 	}
@@ -30,7 +30,7 @@ func getEventFromAPI(apiEvent *api.Event) coordinator.Event {
 	event := coordinator.Event{}
 	if apiEvent.CircuitEvent != nil {
 		event.CircuitEvent = &circuits.Event{
-			Status:     circuits.Status(apiEvent.CircuitEvent.Type),
+			EventType:  circuits.EventType(apiEvent.CircuitEvent.Type),
 			Descriptor: *getCircuitDescFromAPI(apiEvent.CircuitEvent.Descriptor_),
 		}
 	}

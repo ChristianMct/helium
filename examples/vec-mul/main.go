@@ -71,7 +71,7 @@ var (
 			Rlk: true,
 		},
 		Circuits: map[circuits.Name]circuits.Circuit{
-			"mul-4-dec": func(ec circuits.EvaluationContext) error {
+			"mul-4-dec": func(ec circuits.Runtime) error {
 				in0, in1, in2, in3 := ec.Input("//p0/in"), ec.Input("//p1/in"), ec.Input("//p2/in"), ec.Input("//p3/in")
 
 				opRes := ec.NewOperand("//eval/prod")

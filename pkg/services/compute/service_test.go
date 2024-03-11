@@ -204,7 +204,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 				}
 
 				for _, cd := range cds {
-					coord.New(coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}})
+					coord.New(coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}})
 				}
 				coord.Close()
 

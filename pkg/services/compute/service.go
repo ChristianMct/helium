@@ -58,8 +58,8 @@ type FHEProvider interface {
 //   - participant: the node that provides input to the circuit, participates in the protocols
 //     and recieve outputs.
 type CircuitRuntime interface {
-	// Init provides the circuit runtime with the circuit's information.
-	Init(ctx context.Context, ci circuits.Info) (err error)
+	// Init provides the circuit runtime with the circuit's metadata.
+	Init(ctx context.Context, md circuits.Metadata) (err error)
 
 	// Eval runs the circuit evaluation, given the circuit.
 	Eval(ctx context.Context, c circuits.Circuit) (err error)
@@ -289,7 +289,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 			cev := *ev.CircuitEvent
 			s.Logf("new coordination event: CIRCUIT %s", cev)
-			switch ev.CircuitEvent.Status {
+			switch ev.CircuitEvent.EventType {
 			case circuits.Started:
 				err := s.createCircuit(ctx, cev.Descriptor)
 				if err != nil {
@@ -320,7 +320,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 				}
 
 				opl := circuits.OperandLabel(opls)
-				cid := opl.Circuit()
+				cid := opl.CircuitID()
 
 				s.runningCircuitsMu.RLock()
 				c, has := s.runningCircuits[cid]
@@ -420,7 +420,7 @@ func (s *Service) sendCompletedPdToCircuit(pd protocols.Descriptor) error {
 	}
 
 	opl := circuits.OperandLabel(opls)
-	cid := opl.Circuit()
+	cid := opl.CircuitID()
 
 	s.runningCircuitsMu.RLock()
 	c, has := s.runningCircuits[cid]
@@ -452,7 +452,7 @@ func (s *Service) validateCircuitDescriptor(cd circuits.Descriptor) error {
 }
 
 func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
-	var ci CircuitRuntime
+	var cr CircuitRuntime
 	sess, has := s.sessions.GetSessionFromContext(ctx) // put session unwrap earlier
 	if !has {
 		return fmt.Errorf("session not found from context")
@@ -463,7 +463,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 	}
 
 	if s.isEvaluator(cd) {
-		ci = &evaluatorRuntime{
+		cr = &evaluatorRuntime{
 			ctx:         ctx,
 			cDesc:       cd,
 			sess:        sess,
@@ -471,7 +471,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 			fheProvider: s,
 		}
 	} else {
-		ci = &participantRuntime{
+		cr = &participantRuntime{
 			ctx:           ctx,
 			cd:            cd,
 			sess:          sess,
@@ -489,7 +489,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 		s.runningCircuitsMu.Unlock()
 		return fmt.Errorf("circuit with id %s is already runnning", cd.ID)
 	}
-	s.runningCircuits[cd.ID] = ci
+	s.runningCircuits[cd.ID] = cr
 	s.runningCircuitsMu.Unlock()
 
 	s.Logf("created circuit %s", cd.ID)
@@ -537,19 +537,18 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err e
 	return err
 }
 
-// TODO: include cd in ci ?
-func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, ev CircuitRuntime, ci circuits.Info) (err error) {
-	cd := ci.Descriptor
+func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, ev CircuitRuntime, md circuits.Metadata) (err error) {
+	cd := md.Descriptor
 	s.Logf("started circuit %s as evaluator", cd.ID)
 
-	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
+	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}}
 
 	err = ev.Eval(ctx, c)
 	if err != nil {
 		return fmt.Errorf("error at circuit evaluation: %w", err)
 	}
 
-	for outLabel := range ci.OutputSet {
+	for outLabel := range md.OutputSet {
 		op, has := ev.GetOperand(ctx, outLabel)
 		if !has {
 			panic(fmt.Errorf("circuit should have output operand %s", outLabel))
@@ -559,7 +558,7 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit,
 		s.outputsMu.Unlock()
 	}
 
-	for outLabel := range ci.OutputsFor[s.self] {
+	for outLabel := range md.OutputsFor[s.self] {
 		fop, has := ev.GetOperand(ctx, outLabel)
 		if !has {
 			panic(fmt.Errorf("circuit instance has no output label %s", outLabel))
@@ -567,7 +566,7 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit,
 		s.localOutputs <- circuits.Output{ID: cd.ID, Operand: *fop}
 	}
 
-	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Completed, Descriptor: cd}}
+	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Completed, Descriptor: cd}}
 
 	s.runningCircuitsMu.Lock()
 	delete(s.runningCircuits, cd.ID)
@@ -579,9 +578,9 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit,
 	return nil
 }
 
-func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, part CircuitRuntime, ci circuits.Info) error {
+func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, part CircuitRuntime, md circuits.Metadata) error {
 
-	s.Logf("started circuit %s as participant, has input: %v, has output: %v", ci.Descriptor.ID, s.isInputProvider(ci), s.isOutputReceiver(ci))
+	s.Logf("started circuit %s as participant, has input: %v, has output: %v", md.Descriptor.ID, s.isInputProvider(md), s.isOutputReceiver(md))
 
 	err := part.Eval(ctx, c)
 	if err != nil {
@@ -589,7 +588,7 @@ func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circui
 	}
 
 	//s.runningCircuitWg.Done() // TODO: get the circuit complete message in this function to so that all runningcircuit management takes place here
-	s.Logf("completed circuit %s as participant", ci.Descriptor.ID)
+	s.Logf("completed circuit %s as participant", md.Descriptor.ID)
 
 	return nil
 }
@@ -826,7 +825,7 @@ func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitRuntime, er
 
 func (s *Service) getCircuitFromOperandLabel(opl circuits.OperandLabel) (CircuitRuntime, error) {
 
-	cid := opl.Circuit()
+	cid := opl.CircuitID()
 
 	s.runningCircuitsMu.RLock()
 	c, envExists := s.runningCircuits[circuits.ID(cid)]
@@ -837,12 +836,12 @@ func (s *Service) getCircuitFromOperandLabel(opl circuits.OperandLabel) (Circuit
 	return c, nil
 }
 
-func (s *Service) isInputProvider(ci circuits.Info) bool {
-	return len(ci.InputsFor[s.self]) > 0
+func (s *Service) isInputProvider(md circuits.Metadata) bool {
+	return len(md.InputsFor[s.self]) > 0
 }
 
-func (s *Service) isOutputReceiver(ci circuits.Info) bool {
-	return len(ci.OutputsFor[s.self]) > 0
+func (s *Service) isOutputReceiver(md circuits.Metadata) bool {
+	return len(md.OutputsFor[s.self]) > 0
 }
 
 func (s *Service) isEvaluator(cd circuits.Descriptor) bool {

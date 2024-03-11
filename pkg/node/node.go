@@ -248,7 +248,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 			<-node.setupDone
 			for cd := range cds {
 				node.Logf("new circuit descriptor: %s", cd)
-				cev := coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
+				cev := coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}}
 				computeCoord.incoming <- cev
 			}
 			node.Logf("user closed circuit discription channel, closing downstream")
@@ -561,7 +561,7 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 
 		if ev.IsComputeEvent() {
 			cid := ev.CircuitEvent.ID
-			switch ev.CircuitEvent.Status {
+			switch ev.CircuitEvent.EventType {
 			case circuits.Started:
 				runCircuit[cid] = ev.CircuitEvent.Descriptor
 			case circuits.Executing:
@@ -575,7 +575,7 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 					return
 				}
 				delete(runCircuit, cid)
-				if ev.CircuitEvent.Status == circuits.Completed {
+				if ev.CircuitEvent.EventType == circuits.Completed {
 					completedCirc = append(completedCirc, ev.CircuitEvent.Descriptor)
 				}
 			}

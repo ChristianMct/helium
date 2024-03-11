@@ -45,7 +45,7 @@ type InputProvider func(ctx context.Context, pd Descriptor) (Input, error)
 
 type AggregationOutputReceiver func(context.Context, AggregationOutput) error
 
-type EventType int32
+type EventType int8
 
 const (
 	Completed EventType = iota

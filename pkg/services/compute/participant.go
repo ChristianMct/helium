@@ -49,7 +49,7 @@ type participantRuntime struct {
 
 // Service interface
 
-func (p *participantRuntime) Init(ctx context.Context, ci circuits.Info) (err error) {
+func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata) (err error) {
 
 	p.Encoder, err = p.fheProvider.GetEncoder(ctx)
 	if err != nil {
@@ -66,7 +66,7 @@ func (p *participantRuntime) Init(ctx context.Context, ci circuits.Info) (err er
 		return err
 	}
 
-	p.CompleteMap = protocols.NewCompletedProt(maps.Values(ci.KeySwitchOps))
+	p.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
 	return
 }
 
@@ -132,7 +132,7 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 
 	opl = opl.ForCircuit(p.cd.ID).ForMapping(p.cd.NodeMapping)
 
-	if opl.Host() != p.sess.NodeID {
+	if opl.NodeID() != p.sess.NodeID {
 		return circuits.NewDummyFutureOperand(opl)
 	}
 

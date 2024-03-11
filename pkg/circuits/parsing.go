@@ -15,27 +15,20 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
 )
 
-type Info struct {
-	Descriptor
-	InputSet, Ops, OutputSet utils.Set[OperandLabel]
-	InputsFor, OutputsFor    map[pkg.NodeID]utils.Set[OperandLabel]
-	KeySwitchOps             map[string]protocols.Signature
-	NeedRlk                  bool
-	GaloisKeys               utils.Set[uint64]
-}
-
-func Parse(c Circuit, cd Descriptor, params bgv.Parameters) (*Info, error) {
+// Parse parses a circuit and returns its metadata.
+// The parsing is done by symbolic execution of the circuit.
+func Parse(c Circuit, cd Descriptor, params bgv.Parameters) (*Metadata, error) {
 	dummyCtx := newCircuitParserCtx(cd, params)
 	if err := c(dummyCtx); err != nil {
 		return nil, fmt.Errorf("error while parsing circuit: %w", err)
 	}
-	return &dummyCtx.ci, nil
+	return &dummyCtx.md, nil
 }
 
 type circuitParserContext struct {
 	dummyEvaluator
 	cd     Descriptor
-	ci     Info
+	md     Metadata
 	SubCtx map[pkg.CircuitID]*circuitParserContext
 	params bgv.Parameters
 	l      sync.Mutex
@@ -44,7 +37,7 @@ type circuitParserContext struct {
 func newCircuitParserCtx(cd Descriptor, params bgv.Parameters) *circuitParserContext {
 	cpc := &circuitParserContext{
 		cd: cd,
-		ci: Info{
+		md: Metadata{
 			Descriptor:   cd,
 			InputSet:     utils.NewEmptySet[OperandLabel](),
 			Ops:          utils.NewEmptySet[OperandLabel](),
@@ -61,8 +54,8 @@ func newCircuitParserCtx(cd Descriptor, params bgv.Parameters) *circuitParserCon
 	return cpc
 }
 
-func (e *circuitParserContext) CircuitInfos() Info {
-	return e.ci
+func (e *circuitParserContext) CircuitMetadata() Metadata {
+	return e.md
 }
 
 func (e *circuitParserContext) String() string {
@@ -79,13 +72,13 @@ func (e *circuitParserContext) Input(in OperandLabel) *FutureOperand {
 	e.l.Lock()
 	defer e.l.Unlock()
 	opl := in.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping)
-	e.ci.InputSet.Add(opl)
+	e.md.InputSet.Add(opl)
 
-	from := opl.Host()
-	inset, exists := e.ci.InputsFor[from]
+	from := opl.NodeID()
+	inset, exists := e.md.InputsFor[from]
 	if !exists {
 		inset = utils.NewEmptySet[OperandLabel]()
-		e.ci.InputsFor[from] = inset
+		e.md.InputsFor[from] = inset
 	}
 	inset.Add(opl)
 
@@ -101,7 +94,7 @@ func (e *circuitParserContext) Load(in OperandLabel) *Operand {
 func (e *circuitParserContext) NewOperand(opl OperandLabel) Operand {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping))
+	e.md.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping))
 	return Operand{OperandLabel: opl}
 }
 
@@ -109,13 +102,13 @@ func (e *circuitParserContext) Set(op Operand) {
 	e.l.Lock()
 	defer e.l.Unlock()
 	opl := op.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping)
-	e.ci.Ops.Add(opl)
+	e.md.Ops.Add(opl)
 }
 
 func (e *circuitParserContext) Get(opl OperandLabel) Operand {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping))
+	e.md.Ops.Add(opl.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping))
 	return Operand{OperandLabel: opl}
 }
 
@@ -127,18 +120,18 @@ func (e *circuitParserContext) Output(out Operand, to pkg.NodeID) {
 
 func (e *circuitParserContext) output(out Operand, to pkg.NodeID) {
 	opl := out.OperandLabel.ForCircuit(e.cd.ID).ForMapping(e.cd.NodeMapping)
-	e.ci.OutputSet.Add(opl)
-	e.ci.Ops.Add(opl)
+	e.md.OutputSet.Add(opl)
+	e.md.Ops.Add(opl)
 
 	tonid, has := e.cd.NodeMapping[string(to)]
 	if !has {
 		panic(fmt.Errorf("unknown node mapping for output reciever: %s", to))
 	}
 
-	outset, exists := e.ci.OutputsFor[tonid]
+	outset, exists := e.md.OutputsFor[tonid]
 	if !exists {
 		outset = utils.NewEmptySet[OperandLabel]()
-		e.ci.OutputsFor[tonid] = outset
+		e.md.OutputsFor[tonid] = outset
 	}
 	outset.Add(opl)
 }
@@ -156,11 +149,11 @@ func (e *circuitParserContext) registerKeyOps(sig protocols.Signature) error {
 	}
 	sig.Args["target"] = string(nid)
 
-	if _, exists := e.ci.KeySwitchOps[sig.String()]; exists {
+	if _, exists := e.md.KeySwitchOps[sig.String()]; exists {
 		return fmt.Errorf("protocol with id %s exists", sig.String())
 	}
 
-	e.ci.KeySwitchOps[sig.String()] = sig
+	e.md.KeySwitchOps[sig.String()] = sig
 	return nil
 }
 
@@ -224,35 +217,35 @@ func (e *circuitParserContext) Parameters() bgv.Parameters {
 func (e *circuitParserContext) MulRelin(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.NeedRlk = true
+	e.md.NeedRlk = true
 	return nil
 }
 
 func (e *circuitParserContext) MulRelinNew(op0 *rlwe.Ciphertext, op1 interface{}) (opOut *rlwe.Ciphertext, err error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.NeedRlk = true
+	e.md.NeedRlk = true
 	return nil, nil
 }
 
 func (e *circuitParserContext) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.NeedRlk = true
+	e.md.NeedRlk = true
 	return nil
 }
 
 func (e *circuitParserContext) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.GaloisKeys.AddAll(utils.NewSet(e.ctx.params.GaloisElementsForInnerSum(batchSize, n)))
+	e.md.GaloisKeys.AddAll(utils.NewSet(e.ctx.params.GaloisElementsForInnerSum(batchSize, n)))
 	return nil
 }
 
 func (e *circuitParserContext) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.ci.GaloisKeys.Add(galEl)
+	e.md.GaloisKeys.Add(galEl)
 	return nil
 }
 
