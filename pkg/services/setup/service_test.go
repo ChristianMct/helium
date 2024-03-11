@@ -112,21 +112,14 @@ func TestCloudAssistedSetup(t *testing.T) {
 				}
 
 				sd := Description{
-					Cpk: sessParams.Nodes,
-					GaloisKeys: []struct {
-						GaloisEl  uint64
-						Receivers []pkg.NodeID
-					}{
-						{5, []pkg.NodeID{hid}},
-						{25, []pkg.NodeID{hid}},
-						{125, []pkg.NodeID{hid}},
-					},
-					Rlk: []pkg.NodeID{hid},
+					Cpk: true,
+					Rlk: true,
+					Gks: []uint64{5, 25, 125},
 				}
 
 				// runs the setup
 				go func() {
-					sigList, _ := DescriptionToSignatureList(sd)
+					sigList := DescriptionToSignatureList(sd)
 					for _, sig := range sigList {
 						clou.RunSignature(ctx, sig)
 					}
@@ -149,80 +142,6 @@ func TestCloudAssistedSetup(t *testing.T) {
 				for _, n := range all {
 					CheckTestSetup(ctx, t, n.self, testSess, sd, n)
 				}
-
-				// 	// Start public key generation
-				// 	t.Run("DelayedSetup", func(t *testing.T) {
-
-				// 		g := new(errgroup.Group)
-
-				// 		// runs the cloud
-				// 		g.Go(func() error {
-
-				// 			errExec := clou.Service.RunProtocol(ctx, pd)
-				// 			if errExec != nil {
-				// 				errExec = fmt.Errorf("helper error: %w", errExec)
-				// 			}
-				// 			return errExec
-				// 		})
-
-				// 		// This test simulate erratic peer nodes that may not be online when the
-				// 		// setup begins (but connect eventually).
-				// 		nDelayed := ts.N - ts.T
-				// 		if ts.N == ts.T {
-				// 			nDelayed = 1
-				// 		}
-				// 		split := len(clients) - nDelayed
-				// 		online, delayed := utils.NewSet(clients[:split]), utils.NewSet(clients[split:])
-
-				// 		// runs the online clients
-				// 		for c := range online {
-				// 			c := c
-				// 			g.Go(func() error {
-				// 				errExec := c.Execute(ctx, sd)
-				// 				if errExec != nil {
-				// 					errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
-				// 				}
-				// 				return errExec
-				// 			})
-				// 		}
-
-				// 		// if T < N, the online parties should be able to complete the setup
-				// 		// by themselves, so we wait for them to finish and check their
-				// 		// sessions. Otherwise, we wait for a bit before running the others.
-				// 		if len(online) >= ts.T {
-				// 			err = g.Wait()
-				// 			if err != nil {
-				// 				t.Fatal(err)
-				// 			}
-				// 			checkKeyGenProt(t, localTest, sd, clou)
-				// 			for c := range online {
-				// 				checkKeyGenProt(t, localTest, sd, &c)
-				// 			}
-				// 		} else {
-				// 			<-time.After(time.Second >> 4)
-				// 		}
-
-				// 		// runs the delayed clients
-				// 		for c := range delayed {
-				// 			c := c
-				// 			g.Go(func() error {
-				// 				errExec := c.Execute(ctx, sd)
-				// 				if errExec != nil {
-				// 					errExec = fmt.Errorf("client (%s) error: %w", c.Node.ID(), errExec)
-				// 				}
-				// 				return errExec
-				// 			})
-				// 		}
-				// 		err = g.Wait()
-				// 		if err != nil {
-				// 			t.Fatal(err)
-				// 		}
-
-				// 		checkKeyGenProt(t, localTest, sd, clou)
-				// 		for _, node := range clients {
-				// 			checkKeyGenProt(t, localTest, sd, &node)
-				// 		}
-				// 	})
 			})
 		}
 	}

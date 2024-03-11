@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"golang.org/x/exp/maps"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 )
@@ -29,6 +28,12 @@ type testSetting struct {
 	CircuitSigs []TestCircuitSig
 	Reciever    pkg.NodeID
 	Rep         int // numer of repetition for each circuit
+}
+
+var testSetupDescription = setup.Description{
+	Cpk: true,
+	Rlk: true,
+	Gks: []uint64{5, 25, 125},
 }
 
 var testCircuits = []TestCircuitSig{
@@ -110,24 +115,12 @@ func TestNodeSetup(t *testing.T) {
 			testSess := lt.TestSession
 
 			all, clients, cloud := NewTestNodes(lt)
+			_, _ = clients, cloud
 
 			ctx := pkg.NewContext(&sessParams.ID, nil)
 
-			hid := cloud.id
-
 			app := App{
-				SetupDescription: &setup.Description{
-					Cpk: maps.Keys(clients),
-					GaloisKeys: []struct {
-						GaloisEl  uint64
-						Receivers []pkg.NodeID
-					}{
-						{5, []pkg.NodeID{hid}},
-						{25, []pkg.NodeID{hid}},
-						{125, []pkg.NodeID{hid}},
-					},
-					Rlk: []pkg.NodeID{hid},
-				},
+				SetupDescription: &testSetupDescription,
 			}
 
 			lt.Start()
@@ -202,19 +195,8 @@ func TestNodeCompute(t *testing.T) {
 			hid := cloud.id
 
 			app := App{
-				SetupDescription: &setup.Description{
-					Cpk: maps.Keys(clients),
-					GaloisKeys: []struct {
-						GaloisEl  uint64
-						Receivers []pkg.NodeID
-					}{
-						{5, []pkg.NodeID{hid}},
-						{25, []pkg.NodeID{hid}},
-						{125, []pkg.NodeID{hid}},
-					},
-					Rlk: []pkg.NodeID{hid},
-				},
-				Circuits: circuits.TestCircuits,
+				SetupDescription: &testSetupDescription,
+				Circuits:         circuits.TestCircuits,
 			}
 
 			lt.Start()

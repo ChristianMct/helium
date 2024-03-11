@@ -1,3 +1,7 @@
+// package compute implements the MHE compute phase as a service.
+// This service is responsible for evaluating circuits and running
+// associated the protocols.
+// It stats a protocol.Executor and acts as a coordinator for it.
 package compute
 
 import (
@@ -15,29 +19,32 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+func init() {
+	close(NoOutput)
+}
+
+// Transport defines the transport interface necessary for the compute service.
+// In the current implementation (helper-assisted setting), this corresponds to the helper interface.
 type Transport interface {
 	protocols.Transport
 
+	// PutCiphertext registers a ciphertext within the transport
 	PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error
+
+	// GetCiphertext requests a ciphertext from the transport.
 	GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error)
 }
 
-type Coordinator interface {
-	Incoming() <-chan coordinator.Event
-	Outgoing() chan<- coordinator.Event
-}
-
-type PublicKeyBackend interface {
+// PublicKeyProvider is an interface for querying public encryption- and evaluation-keys.
+// The setup service is a notable implementation of this interface.
+type PublicKeyProvider interface {
 	GetCollectivePublicKey(context.Context) (*rlwe.PublicKey, error)
 	GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error)
 	GetRelinearizationKey(context.Context) (*rlwe.RelinearizationKey, error)
 }
 
-type OperandBackend interface {
-	Set(circuits.Operand) error
-	Get(circuits.OperandLabel) (*circuits.Operand, error)
-}
-
+// FHEProvider is an interface for requesting FHE-related objects as implemented
+// in the Lattigo library.
 type FHEProvider interface {
 	GetEncoder(ctx context.Context) (*bgv.Encoder, error)
 	GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error)
@@ -45,33 +52,64 @@ type FHEProvider interface {
 	GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error)
 }
 
-// CircuitInstance defines the interface that is available to the service
-// to access evaluation contexts of a particular circuit evaluation.
-type CircuitInstance interface {
+// CircuitRuntime is the interface of a circuit's execution environment.
+// There are two notable instantiation of this interface:
+//   - evaluator: the node that evaluates the circuit
+//   - participant: the node that provides input to the circuit, participates in the protocols
+//     and recieve outputs.
+type CircuitRuntime interface {
+	// Init provides the circuit runtime with the circuit's information.
 	Init(ctx context.Context, ci circuits.Info) (err error)
 
+	// Eval runs the circuit evaluation, given the circuit.
 	Eval(ctx context.Context, c circuits.Circuit) (err error)
 
+	// IncomingOperand provides the circuit runtime with an incoming operand.
 	IncomingOperand(circuits.Operand) error
 
+	// CompletedProtocol informs the circuit runtime that a protocol has been completed.
 	CompletedProtocol(protocols.Descriptor) error
 
-	// // Get returns the executing circuit operand with the given label.
+	// GetOperand returns the operand with the given label, if it exists.
 	GetOperand(context.Context, circuits.OperandLabel) (*circuits.Operand, bool)
 
+	// GetFutureOperand returns the future operand with the given label, if it exists.
 	GetFutureOperand(context.Context, circuits.OperandLabel) (*circuits.FutureOperand, bool)
 
+	// Wait blocks until the circuit executing in this runtime (including its related protocols) completes.
 	Wait() error
 }
 
+// InputProvider is a type for providing input to a circuit.
+// It is generally provided by the user, and lets the framework query for
+// inputs to the circuit by their label. See circuits.OperandLabel for more information on operand labels.
+// Input providers are expected to return one of the following types:
+// - *rlwe.Ciphertext: an encrypted input
+// - *rlwe.Plaintext: a Lattigo plaintext input, which will be encrypted by the framework
+// - []uint64: a Go plaintext input, which will be encoded and encrypted by the framework
 type InputProvider func(context.Context, circuits.OperandLabel) (any, error)
 
-type OutputReceiver chan<- circuits.Output
-
+// NoInput is an input provider that returns nil for all inputs.
 var NoInput InputProvider = func(_ context.Context, _ circuits.OperandLabel) (any, error) { return nil, nil }
 
-var NoOutput OutputReceiver = nil
+// OutputReceiver is a type for receiving outputs from a circuit.
+type OutputReceiver chan<- circuits.Output
 
+// NoOutput is an output receiver that do not send any input
+var NoOutput OutputReceiver = make(OutputReceiver)
+
+// ServiceConfig is the configuration of a compute service.
+type ServiceConfig struct {
+	// CircQueueSize is the size of the circuit execution queue.
+	// Passed this size, attempting to queue circuit for execution will block.
+	CircQueueSize int
+	// MaxCircuitEvaluation is the maximum number of circuits that can be evaluated concurrently.
+	MaxCircuitEvaluation int
+	// Protocols is the configuration of the protocol executor.
+	Protocols protocols.ExecutorConfig
+}
+
+// Service represents a compute service instance.
 type Service struct {
 	config ServiceConfig
 	self   pkg.NodeID
@@ -80,7 +118,7 @@ type Service struct {
 	*protocols.Executor
 	transport Transport
 
-	pubkeyBackend PublicKeyBackend
+	pubkeyBackend PublicKeyProvider
 
 	inputProvider InputProvider
 	localOutputs  chan circuits.Output
@@ -91,14 +129,12 @@ type Service struct {
 	queuedCircuits chan circuits.Descriptor
 
 	runningCircuitsMu sync.RWMutex
-	//runningCircuitWg  sync.WaitGroup
-	runningCircuits map[circuits.ID]CircuitInstance
+	runningCircuits   map[circuits.ID]CircuitRuntime
 
 	completedCircuits chan circuits.Descriptor
-	//running chan struct{}
 
 	// upstream coordinator
-	coordinator Coordinator
+	coordinator coordinator.Coordinator
 
 	// downstream coordinator
 	incoming, outgoing chan protocols.Event
@@ -108,17 +144,14 @@ type Service struct {
 }
 
 const (
-	DefaultCircQueueSize        = 100
+	// DefaultCircQueueSize is the default size of the circuit execution queue.
+	DefaultCircQueueSize = 512
+	// DefaultMaxCircuitEvaluation is the default maximum number of circuits that can be evaluated concurrently.
 	DefaultMaxCircuitEvaluation = 10
 )
 
-type ServiceConfig struct {
-	CircQueueSize        int
-	MaxCircuitEvaluation int
-	Protocols            protocols.ExecutorConfig
-}
-
-func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf ServiceConfig, pkbk PublicKeyBackend, trans Transport) (s *Service, err error) {
+// NewComputeService creates a new compute service instance.
+func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf ServiceConfig, pkbk PublicKeyProvider, trans Transport) (s *Service, err error) {
 	s = new(Service)
 
 	s.config = conf
@@ -140,7 +173,7 @@ func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Serv
 
 	s.queuedCircuits = make(chan circuits.Descriptor, conf.CircQueueSize)
 
-	s.runningCircuits = make(map[circuits.ID]CircuitInstance)
+	s.runningCircuits = make(map[circuits.ID]CircuitRuntime)
 
 	// coordinator
 	s.incoming = make(chan protocols.Event)
@@ -154,6 +187,32 @@ func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Serv
 	return s, nil
 }
 
+// RegisterCircuit registers a circuit to the service's library.
+// It returns an error if the circuit is already registered.
+func (s *Service) RegisterCircuit(name circuits.Name, circ circuits.Circuit) error {
+	if s.library == nil {
+		s.library = make(map[circuits.Name]circuits.Circuit)
+	}
+	if _, has := s.library[name]; has {
+		return fmt.Errorf("circuit name \"%s\" already registered", name)
+	}
+	s.library[name] = circ
+	return nil
+}
+
+// RegisterCircuits registers a set of circuits to the service's library.
+// It returns an error if any of the circuits is already registered.
+func (s *Service) RegisterCircuits(cs map[circuits.Name]circuits.Circuit) error {
+	for cn, c := range cs {
+		if err := s.RegisterCircuit(cn, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Init initializes the compute service with the currently completed and running circuits and protocols.
+// It queues running circuits and protocols for execution.
 func (s *Service) Init(ctx context.Context, complCd, runCd []circuits.Descriptor, complPd, runPd []protocols.Descriptor) error {
 
 	// stacks the completed circuit in a queue for processing by Run
@@ -193,7 +252,11 @@ func (s *Service) Init(ctx context.Context, complCd, runCd []circuits.Descriptor
 	return nil
 }
 
-func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, coord Coordinator) error {
+// Run runs the compute service. The service processes incoming events from the upstream coordinator and acts as a
+// coordinator for the protocol executor. It also processes the circuit execution queue and fetches the output for
+// completed circuits.
+// The method returns when the upstream coordinator is done and all circuits are completed.
+func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, coord coordinator.Coordinator) error {
 
 	s.coordinator = coord
 	s.inputProvider = ip
@@ -242,8 +305,6 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		s.Logf("upstream coordinator done")
 		close(s.queuedCircuits)
 	}()
-
-	//	close(s.running)
 
 	// process downstream incoming coordination events
 	downstreamDone := make(chan struct{})
@@ -391,7 +452,7 @@ func (s *Service) validateCircuitDescriptor(cd circuits.Descriptor) error {
 }
 
 func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
-	var ci CircuitInstance
+	var ci CircuitRuntime
 	sess, has := s.sessions.GetSessionFromContext(ctx) // put session unwrap earlier
 	if !has {
 		return fmt.Errorf("session not found from context")
@@ -402,7 +463,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 	}
 
 	if s.isEvaluator(cd) {
-		ci = &evaluator{
+		ci = &evaluatorRuntime{
 			ctx:         ctx,
 			cDesc:       cd,
 			sess:        sess,
@@ -410,7 +471,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 			fheProvider: s,
 		}
 	} else {
-		ci = &participant{
+		ci = &participantRuntime{
 			ctx:           ctx,
 			cd:            cd,
 			sess:          sess,
@@ -468,16 +529,17 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err e
 	//<-s.running // waits for the Run function to be called
 
 	if s.isEvaluator(cd) {
-		err = s.runCircuitAsEvaluator(ctx, c, cinst, cd, cinf)
+		err = s.runCircuitAsEvaluator(ctx, c, cinst, *cinf)
 	} else {
-		err = s.runCircuitAsParticipant(ctx, c, cinst, cd)
+		err = s.runCircuitAsParticipant(ctx, c, cinst, *cinf)
 	}
 
 	return err
 }
 
 // TODO: include cd in ci ?
-func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, ev CircuitInstance, cd circuits.Descriptor, ci *circuits.Info) (err error) {
+func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, ev CircuitRuntime, ci circuits.Info) (err error) {
+	cd := ci.Descriptor
 	s.Logf("started circuit %s as evaluator", cd.ID)
 
 	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{Status: circuits.Started, Descriptor: cd}}
@@ -511,17 +573,15 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit,
 	delete(s.runningCircuits, cd.ID)
 	nRunning := len(s.runningCircuits)
 	s.runningCircuitsMu.Unlock()
-	//s.runningCircuitWg.Done()
 
 	s.Logf("completed circuit %s as evaluator, %d running", cd.ID, nRunning)
-	// close(evalDone)
-	//}()
+
 	return nil
 }
 
-func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, part CircuitInstance, cd circuits.Descriptor) error {
+func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, part CircuitRuntime, ci circuits.Info) error {
 
-	s.Logf("started circuit %s as participant", cd.ID)
+	s.Logf("started circuit %s as participant, has input: %v, has output: %v", ci.Descriptor.ID, s.isInputProvider(ci), s.isOutputReceiver(ci))
 
 	err := part.Eval(ctx, c)
 	if err != nil {
@@ -529,25 +589,29 @@ func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circui
 	}
 
 	//s.runningCircuitWg.Done() // TODO: get the circuit complete message in this function to so that all runningcircuit management takes place here
-	s.Logf("completed circuit %s as participant", cd.ID)
+	s.Logf("completed circuit %s as participant", ci.Descriptor.ID)
 
 	return nil
 }
 
+// KeyOperationRunner interface
+
+// RunKeyOperation runs a key operation (e.g. key switching) on the service's executor.
 func (s *Service) RunKeyOperation(ctx context.Context, sig protocols.Signature) (err error) {
-	s.Logf("running key operation: %s", sig)
-	err = s.Executor.RunSignature(ctx, sig, s.Put)
+	err = s.Executor.RunSignature(ctx, sig, s.AggregationOutputHandler)
 	return err
 }
 
+// Transport interface
+
+// GetCiphertext retreives a ciphertext from the corresponding circuit runtime.
+// The runtime is identified by the circuit ID part of the ciphertext ids.
 func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
 
-	_, exists := s.sessions.GetSessionFromContext(ctx) // TODO per session circuits
+	_, exists := s.sessions.GetSessionFromContext(ctx)
 	if !exists {
 		return nil, fmt.Errorf("invalid session id")
 	}
-
-	//s.Logf("%s queried for ciphertext id %s", pkg.SenderIDFromIncomingContext(ctx), ctID)
 
 	ctURL, err := pkg.ParseURL(string(ctID))
 	if err != nil {
@@ -564,7 +628,6 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 	}
 
 	var ct *pkg.Ciphertext
-
 	var op *circuits.Operand
 	var isOutput, isInCircuit bool
 	s.outputsMu.RLock()
@@ -588,9 +651,11 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 	return ct, nil
 }
 
+// PutCiphertext provides the ciphertext to the corresponding circuit runtime.
+// The runtime is identified by the circuit ID part of the ciphertext ids.
 func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 
-	_, exists := s.sessions.GetSessionFromContext(ctx) // TODO per-session ciphertexts
+	_, exists := s.sessions.GetSessionFromContext(ctx)
 	if !exists {
 		sessid, _ := pkg.SessionIDFromContext(ctx)
 		return fmt.Errorf("invalid session id \"%s\"", sessid)
@@ -625,27 +690,8 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 	return nil
 }
 
-func (s *Service) RegisterCircuits(cs map[circuits.Name]circuits.Circuit) error {
-	for cn, c := range cs {
-		if err := s.RegisterCircuit(cn, c); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Service) RegisterCircuit(name circuits.Name, circ circuits.Circuit) error {
-	if s.library == nil {
-		s.library = make(map[circuits.Name]circuits.Circuit)
-	}
-	if _, has := s.library[name]; has {
-		return fmt.Errorf("circuit name \"%s\" already registered", name)
-	}
-	s.library[name] = circ
-	return nil
-}
-
-func (s *Service) Put(ctx context.Context, aggOut protocols.AggregationOutput) error {
+// AggregationOutputHandler recieves the completed protocol aggregations from the executor.
+func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocols.AggregationOutput) error {
 	c, err := s.getCircuitFromContext(ctx)
 	if err != nil {
 		return err
@@ -676,10 +722,9 @@ func (s *Service) Put(ctx context.Context, aggOut protocols.AggregationOutput) e
 
 }
 
-func (s *Service) Get(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-	return nil, fmt.Errorf("compute service do not enable retrieving aggregation outputs directly")
-}
-
+// GetProtocolInput returns the input for a protocol from the corresponding circuit runtime.
+// The input is the ciphertext identified by the "op" protocol argument.
+// The runtime is identified by the circuit ID part of the operand label.
 func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor) (in protocols.Input, err error) {
 
 	opl, has := pd.Signature.Args["op"]
@@ -702,15 +747,20 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor)
 }
 
 // protocols.Coordinator interface
+
+// Incoming returns the incoming event channel.
 func (s *Service) Incoming() <-chan protocols.Event {
 	return s.incoming
 }
 
+// Outgoing returns the outgoing event channel.
 func (s *Service) Outgoing() chan<- protocols.Event {
 	return s.outgoing
 }
 
 // FHEProvider interface
+
+// GetEncoder returns a new encoder from the context's session.
 func (s *Service) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
@@ -720,6 +770,7 @@ func (s *Service) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
 	return bgv.NewEncoder(sess.Params), nil
 }
 
+// GetEncryptor returns a new encryptor from the context's session and the collective public key.
 func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
@@ -735,6 +786,7 @@ func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
 	return rlwe.NewEncryptor(sess.Params, cpk)
 }
 
+// GetEvaluator returns a new evaluator from the context's session and relevant evaluation keys.
 func (s *Service) GetEvaluator(ctx context.Context, relin bool, galEls []uint64) (*fheEvaluator, error) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
@@ -744,6 +796,8 @@ func (s *Service) GetEvaluator(ctx context.Context, relin bool, galEls []uint64)
 	return newLattigoEvaluator(ctx, relin, galEls, sess.Params, s.pubkeyBackend)
 }
 
+// GetDecryptor returns a new decryptor from the context's session.
+// The decryptor is inialized with a secret key of 0.
 func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
@@ -754,7 +808,7 @@ func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 
 }
 
-func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitInstance, error) {
+func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitRuntime, error) {
 	cid, has := pkg.CircuitIDFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("should have circuit id in context")
@@ -770,7 +824,7 @@ func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitInstance, e
 	return c, nil
 }
 
-func (s *Service) getCircuitFromOperandLabel(opl circuits.OperandLabel) (CircuitInstance, error) {
+func (s *Service) getCircuitFromOperandLabel(opl circuits.OperandLabel) (CircuitRuntime, error) {
 
 	cid := opl.Circuit()
 
@@ -783,15 +837,11 @@ func (s *Service) getCircuitFromOperandLabel(opl circuits.OperandLabel) (Circuit
 	return c, nil
 }
 
-func (s *Service) isParticipant(cd circuits.Descriptor, ci circuits.Info) bool {
-	return s.isInputProvider(cd, ci) || s.isOutputReceiver(cd, ci)
-}
-
-func (s *Service) isInputProvider(cd circuits.Descriptor, ci circuits.Info) bool {
+func (s *Service) isInputProvider(ci circuits.Info) bool {
 	return len(ci.InputsFor[s.self]) > 0
 }
 
-func (s *Service) isOutputReceiver(cd circuits.Descriptor, ci circuits.Info) bool {
+func (s *Service) isOutputReceiver(ci circuits.Info) bool {
 	return len(ci.OutputsFor[s.self]) > 0
 }
 

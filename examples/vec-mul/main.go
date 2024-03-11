@@ -67,8 +67,8 @@ var (
 
 	app = node.App{
 		SetupDescription: &setup.Description{ // TODO: remove receivers ?
-			Cpk: sessionParams.Nodes,
-			Rlk: []pkg.NodeID{"helper"},
+			Cpk: true,
+			Rlk: true,
 		},
 		Circuits: map[circuits.Name]circuits.Circuit{
 			"mul-4-dec": func(ec circuits.EvaluationContext) error {

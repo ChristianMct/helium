@@ -48,7 +48,7 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Servic
 	s = new(Service)
 
 	s.self = ownId
-	s.execuctor, err = protocols.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetInputs, trans)
+	s.execuctor, err = protocols.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +66,7 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Servic
 // Completed protocols are marked as such, and running protocols are queued for execution.
 func (s *Service) Init(ctx context.Context, complPd, runPd []protocols.Descriptor) error {
 
+	// mark completed protocols
 	for _, cpd := range complPd {
 
 		if !cpd.Signature.Type.IsSetup() {
@@ -76,6 +77,7 @@ func (s *Service) Init(ctx context.Context, complPd, runPd []protocols.Descripto
 		}
 	}
 
+	// queue running protocols
 	for _, rpd := range runPd {
 		if !rpd.Signature.Type.IsSetup() {
 			continue
@@ -87,6 +89,8 @@ func (s *Service) Init(ctx context.Context, complPd, runPd []protocols.Descripto
 }
 
 // Run runs the setup service as coordinated by the given coordinator.
+// It processes and forwards incoming events from upstream (coordinator) and downstream (executor).
+// It returns when the upstream coordinator is done and the downstream executor is done.
 func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 
 	// processes incoming events from the coordinator
@@ -211,9 +215,9 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) 
 	return s.execuctor.GetOutput(ctx, *aggOut)
 }
 
-// GetInputs returns the protocol inputs for the given protocol descriptor.
+// GetProtocolInput returns the protocol inputs for the given protocol descriptor.
 // It is meant to be passed to a protocols.Executor as a protocols.InputProvider method.
-func (s *Service) GetInputs(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
+func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
 
 	// In the setup service, only the RKG protocols requires an input: a completed RKG_1 protocol aggregation output.
 	if pd.Signature.Type != protocols.RKG {

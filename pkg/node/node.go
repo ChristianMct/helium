@@ -184,7 +184,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		return nil, nil, fmt.Errorf("app must provide a setup description") // TODO: inference of setup description from registered circuits.
 	}
 
-	sigList, _ := setup.DescriptionToSignatureList(*app.SetupDescription)
+	sigList := setup.DescriptionToSignatureList(*app.SetupDescription)
 
 	cds := make(chan circuits.Descriptor)
 	or := make(chan circuits.Output)

@@ -16,6 +16,7 @@ import (
 )
 
 type Info struct {
+	Descriptor
 	InputSet, Ops, OutputSet utils.Set[OperandLabel]
 	InputsFor, OutputsFor    map[pkg.NodeID]utils.Set[OperandLabel]
 	KeySwitchOps             map[string]protocols.Signature
@@ -44,6 +45,7 @@ func newCircuitParserCtx(cd Descriptor, params bgv.Parameters) *circuitParserCon
 	cpc := &circuitParserContext{
 		cd: cd,
 		ci: Info{
+			Descriptor:   cd,
 			InputSet:     utils.NewEmptySet[OperandLabel](),
 			Ops:          utils.NewEmptySet[OperandLabel](),
 			OutputSet:    utils.NewEmptySet[OperandLabel](),
@@ -59,7 +61,7 @@ func newCircuitParserCtx(cd Descriptor, params bgv.Parameters) *circuitParserCon
 	return cpc
 }
 
-func (e *circuitParserContext) CircuitDescription() Info {
+func (e *circuitParserContext) CircuitInfos() Info {
 	return e.ci
 }
 
@@ -72,18 +74,6 @@ func (e *circuitParserContext) String() string {
 	}
 	return string(b)
 }
-
-// func (e *circuitParserContext) Execute(context.Context) error {
-// 	return nil
-// }
-
-// func (e *circuitParserContext) LocalInputs([]Operand) error {
-// 	return nil
-// }
-
-// func (e *circuitParserContext) LocalOutputs() chan Operand {
-// 	return nil
-// }
 
 func (e *circuitParserContext) Input(in OperandLabel) *FutureOperand {
 	e.l.Lock()

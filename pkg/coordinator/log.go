@@ -1,16 +1,11 @@
 package coordinator
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/protocols"
 )
-
-type Coordinator interface {
-	Register(context.Context) (events <-chan Event, present int, err error)
-}
 
 type EventType int32
 

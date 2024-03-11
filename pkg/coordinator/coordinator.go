@@ -4,6 +4,11 @@ import (
 	"github.com/ldsec/helium/pkg/pkg"
 )
 
+type Coordinator interface {
+	Incoming() <-chan Event
+	Outgoing() chan<- Event
+}
+
 type TestCoordinator struct {
 	incoming, outgoing chan Event
 	clients            map[pkg.NodeID]*TestCoordinator

@@ -15,7 +15,17 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
 )
 
-type participant struct {
+// participantRuntime is a runtime for a participant (a non-evaluator node) in a computation.
+// It implements the CircuitRuntime (for the service side) and the EvaluationContext (for the circuit code) interfaces.
+// This implementation:
+//   - only resolves this node's input, by calling the user-proved InputProvider, then it encrypts and sends them to the evaluator,
+//   - only performs symbolic execution of the circuit
+//   - participates to key operation protocols by querying the evaluator for input operands, and track the protocols' completion.
+//   - resolves outputs by querying them from the evaluator.
+//
+// The participantRuntime is a stateful object that is created and used for a single evaluation of a single circuit.
+// It performs automatic translation of operand labels from the circuit definition to the running instance.
+type participantRuntime struct {
 
 	// inst
 	ctx           context.Context // TODO: check if storing this context this way is a problem
@@ -34,13 +44,12 @@ type participant struct {
 	*rlwe.Decryptor
 
 	// eval
-
 	dummyEvaluator
 }
 
 // Service interface
 
-func (p *participant) Init(ctx context.Context, ci circuits.Info) (err error) {
+func (p *participantRuntime) Init(ctx context.Context, ci circuits.Info) (err error) {
 
 	p.Encoder, err = p.fheProvider.GetEncoder(ctx)
 	if err != nil {
@@ -61,7 +70,7 @@ func (p *participant) Init(ctx context.Context, ci circuits.Info) (err error) {
 	return
 }
 
-func (p *participant) Eval(ctx context.Context, c circuits.Circuit) error {
+func (p *participantRuntime) Eval(ctx context.Context, c circuits.Circuit) error {
 
 	go func() {
 		for pd := range p.incpd {
@@ -86,11 +95,11 @@ func (p *participant) Eval(ctx context.Context, c circuits.Circuit) error {
 	return nil
 }
 
-func (p *participant) IncomingOperand(_ circuits.Operand) error {
+func (p *participantRuntime) IncomingOperand(_ circuits.Operand) error {
 	panic("participant should not receive incoming operands")
 }
 
-func (p *participant) GetOperand(ctx context.Context, opl circuits.OperandLabel) (*circuits.Operand, bool) {
+func (p *participantRuntime) GetOperand(ctx context.Context, opl circuits.OperandLabel) (*circuits.Operand, bool) {
 	pkgct, err := p.trans.GetCiphertext(ctx, pkg.CiphertextID(opl))
 	if err != nil {
 		return nil, false
@@ -99,7 +108,7 @@ func (p *participant) GetOperand(ctx context.Context, opl circuits.OperandLabel)
 	return &circuits.Operand{OperandLabel: opl, Ciphertext: &pkgct.Ciphertext}, true
 }
 
-func (p *participant) GetFutureOperand(ctx context.Context, opl circuits.OperandLabel) (*circuits.FutureOperand, bool) {
+func (p *participantRuntime) GetFutureOperand(ctx context.Context, opl circuits.OperandLabel) (*circuits.FutureOperand, bool) {
 
 	fop := circuits.NewFutureOperand(opl)
 
@@ -111,7 +120,7 @@ func (p *participant) GetFutureOperand(ctx context.Context, opl circuits.Operand
 	return fop, true
 }
 
-func (p *participant) CompletedProtocol(pd protocols.Descriptor) error {
+func (p *participantRuntime) CompletedProtocol(pd protocols.Descriptor) error {
 	p.incpd <- pd
 	return nil
 }
@@ -119,7 +128,7 @@ func (p *participant) CompletedProtocol(pd protocols.Descriptor) error {
 // Circuit Interface
 
 // Input reads an input operand with the given label from the context.
-func (p *participant) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
+func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 
 	opl = opl.ForCircuit(p.cd.ID).ForMapping(p.cd.NodeMapping)
 
@@ -178,36 +187,17 @@ func (p *participant) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 }
 
 // Load reads an existing ciphertext in the session
-func (p *participant) Load(opl circuits.OperandLabel) *circuits.Operand {
+func (p *participantRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
 	return &circuits.Operand{OperandLabel: opl}
 }
 
-func (p *participant) NewOperand(opl circuits.OperandLabel) circuits.Operand {
+func (p *participantRuntime) NewOperand(opl circuits.OperandLabel) circuits.Operand {
 	opl = opl.ForCircuit(p.cd.ID).ForMapping(p.cd.NodeMapping)
 	return circuits.Operand{OperandLabel: opl}
 }
 
-// Set registers the given operand to the context.
-func (p *participant) Set(_ circuits.Operand) {
-	panic("not implemented") // TODO: Remove this method altoghether
-}
-
-// Output outputs the given operand to the context.
-func (p *participant) Output(op circuits.Operand, nid pkg.NodeID) {
-	if nid != p.sess.NodeID {
-		return
-	}
-
-	ct, err := p.trans.GetCiphertext(p.ctx, pkg.CiphertextID(op.OperandLabel))
-	if err != nil {
-		panic(err)
-	}
-
-	p.or <- circuits.Output{ID: p.cd.ID, Operand: circuits.Operand{OperandLabel: op.OperandLabel, Ciphertext: &ct.Ciphertext}}
-}
-
 // DEC runs a DEC protocol over the provided operand within the context.
-func (p *participant) DEC(in circuits.Operand, rec pkg.NodeID, params map[string]string) error {
+func (p *participantRuntime) DEC(in circuits.Operand, rec pkg.NodeID, params map[string]string) error {
 
 	rec = p.cd.NodeMapping[string(rec)]
 	if rec != p.sess.NodeID {
@@ -247,15 +237,16 @@ func (p *participant) DEC(in circuits.Operand, rec pkg.NodeID, params map[string
 }
 
 // PCKS runs a PCKS protocol over the provided operand within the context.
-func (p *participant) PCKS(in circuits.Operand, rec pkg.NodeID, params map[string]string) error {
+func (p *participantRuntime) PCKS(in circuits.Operand, rec pkg.NodeID, params map[string]string) error {
 	panic("not implemented") // TODO: Implement
 }
 
 // Parameters returns the encryption parameters for the circuit.
-func (p *participant) Parameters() bgv.Parameters {
+func (p *participantRuntime) Parameters() bgv.Parameters {
 	return p.sess.Params
 }
 
+// dummyEvaluator is an evaluator that does nothing.
 type dummyEvaluator struct{}
 
 func (de *dummyEvaluator) Add(op0 *rlwe.Ciphertext, op1 interface{}, opOut *rlwe.Ciphertext) (err error) {

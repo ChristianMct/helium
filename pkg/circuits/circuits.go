@@ -60,12 +60,6 @@ type EvaluationContext interface {
 
 	NewOperand(OperandLabel) Operand // TODO prealloc lattigo ?
 
-	// Set registers the given operand to the context.
-	Set(Operand)
-
-	// Output outputs the given operand to the context.
-	Output(Operand, pkg.NodeID)
-
 	// DEC runs a DEC protocol over the provided operand within the context.
 	DEC(in Operand, rec pkg.NodeID, params map[string]string) error
 
@@ -76,8 +70,6 @@ type EvaluationContext interface {
 	Parameters() bgv.Parameters
 
 	NewEvaluator() Evaluator
-
-	//EvalWithKey(evk rlwe.EvaluationKeySet) Evaluator
 
 	Evaluator
 }

@@ -67,7 +67,7 @@ var testSettings = []testSetting{
 
 type testnode struct {
 	*Service
-	Coordinator
+	coordinator.Coordinator
 	InputProvider
 	*pkg.Session
 

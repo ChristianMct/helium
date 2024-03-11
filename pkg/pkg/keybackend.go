@@ -8,7 +8,7 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
-type PublicKeyBackend interface {
+type PublicKeyProvider interface {
 	GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error)
 	GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error)
 	GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error)
@@ -45,12 +45,12 @@ func (pkb *MemoryKeyBackend) GetRelinearizationKey(ctx context.Context) (rlk *rl
 type CachedKeyBackend struct {
 	sync.Mutex // TODO: could be more clever
 	MemoryKeyBackend
-	PublicKeyBackend
+	PublicKeyProvider
 }
 
-func NewCachedPublicKeyBackend(kb PublicKeyBackend) (ckb *CachedKeyBackend) {
+func NewCachedPublicKeyBackend(kb PublicKeyProvider) (ckb *CachedKeyBackend) {
 	ckb = new(CachedKeyBackend)
-	ckb.PublicKeyBackend = kb
+	ckb.PublicKeyProvider = kb
 	ckb.GaloisKeys = make(map[uint64]*rlwe.GaloisKey)
 	return ckb
 }
@@ -62,7 +62,7 @@ func (ckb *CachedKeyBackend) GetCollectivePublicKey(ctx context.Context) (*rlwe.
 	if err == nil {
 		return cpk, nil
 	}
-	cpk, err = ckb.PublicKeyBackend.GetCollectivePublicKey(ctx)
+	cpk, err = ckb.PublicKeyProvider.GetCollectivePublicKey(ctx)
 	if err == nil {
 		ckb.MemoryKeyBackend.PublicKey = cpk
 		return cpk, nil
@@ -77,7 +77,7 @@ func (ckb *CachedKeyBackend) GetGaloisKey(ctx context.Context, galEl uint64) (*r
 	if err == nil {
 		return gk, nil
 	}
-	gk, err = ckb.PublicKeyBackend.GetGaloisKey(ctx, galEl)
+	gk, err = ckb.PublicKeyProvider.GetGaloisKey(ctx, galEl)
 	if err == nil {
 		ckb.MemoryKeyBackend.GaloisKeys[galEl] = gk
 		return gk, nil
@@ -92,7 +92,7 @@ func (ckb *CachedKeyBackend) GetRelinearizationKey(ctx context.Context) (*rlwe.R
 	if err == nil {
 		return rk, nil
 	}
-	rk, err = ckb.PublicKeyBackend.GetRelinearizationKey(ctx)
+	rk, err = ckb.PublicKeyProvider.GetRelinearizationKey(ctx)
 	if err == nil {
 		ckb.MemoryKeyBackend.RelinearizationKey = rk
 		return rk, nil
