@@ -1,3 +1,6 @@
+// package setup implements the MHE setup phase as a service.
+// This serices executes the key generation protocols and makes their
+// outputs available.
 package setup
 
 import (
@@ -11,10 +14,12 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
+// ServiceConfig is the configuration for the setup service.
 type ServiceConfig struct {
 	Protocols protocols.ExecutorConfig
 }
 
+// Service represents an instance of the setup service.
 type Service struct {
 	self pkg.NodeID
 
@@ -24,19 +29,21 @@ type Service struct {
 	// protocols.Coordinator
 	incoming, outgoing chan protocols.Event
 
-	ResultBackend
+	resBackend *objStoreResultBackend
 
 	//l         sync.RWMutex
 	completed *protocols.CompleteMap
 }
 
+// Transport defines the transport interface needed by the setup service.
+// In the current implementation, this corresponds to the helper interface.
 type Transport interface {
 	protocols.Transport
-	// GetAggregationFrom queries the designated node id (typically, the aggregator) for the
-	// aggregated share of the designated protocol.
+	// GetAggregationOutput returns the aggregation output for the given protocol.
 	GetAggregationOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
+// NewSetupService creates a new setup service.
 func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf ServiceConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
@@ -46,7 +53,7 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Servic
 		return nil, err
 	}
 	s.transport = trans
-	s.ResultBackend = newObjStoreResultBackend(backend)
+	s.resBackend = newObjStoreResultBackend(backend)
 	s.completed = protocols.NewCompletedProt(nil)
 
 	s.incoming = make(chan protocols.Event)
@@ -55,25 +62,8 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Servic
 	return s, nil
 }
 
-func (s *Service) processEvent(ev protocols.Event) {
-
-	if !ev.IsSetupEvent() {
-		panic("non-setup event sent to setup service")
-	}
-
-	switch ev.EventType {
-	case protocols.Started:
-	case protocols.Completed:
-		err := s.completed.CompletedProtocol(ev.Descriptor)
-		if err != nil {
-			panic(err)
-		}
-	case protocols.Failed:
-	default:
-		panic("unkown event type")
-	}
-}
-
+// Init initializes the setup service from the current state of the protocols.
+// Completed protocols are marked as such, and running protocols are queued for execution.
 func (s *Service) Init(ctx context.Context, complPd, runPd []protocols.Descriptor) error {
 
 	for _, cpd := range complPd {
@@ -96,6 +86,7 @@ func (s *Service) Init(ctx context.Context, complPd, runPd []protocols.Descripto
 	return nil
 }
 
+// Run runs the setup service as coordinated by the given coordinator.
 func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 
 	// processes incoming events from the coordinator
@@ -143,10 +134,29 @@ func (s *Service) Run(ctx context.Context, coord protocols.Coordinator) error {
 	return nil
 }
 
-// As helper
+func (s *Service) processEvent(ev protocols.Event) {
+
+	if !ev.IsSetupEvent() {
+		panic("non-setup event sent to setup service")
+	}
+
+	switch ev.EventType {
+	case protocols.Started:
+	case protocols.Completed:
+		err := s.completed.CompletedProtocol(ev.Descriptor)
+		if err != nil {
+			panic(err)
+		}
+	case protocols.Failed:
+	default:
+		panic("unkown event type")
+	}
+}
+
+// RunSignature queues the given signature for execution. This method is called by the helper.
 func (s *Service) RunSignature(ctx context.Context, sig protocols.Signature) error {
 
-	err := s.execuctor.RunSignature(ctx, sig, s.Put)
+	err := s.execuctor.RunSignature(ctx, sig, s.AggregationOutputHandler)
 	if err != nil {
 		return err
 	}
@@ -154,75 +164,36 @@ func (s *Service) RunSignature(ctx context.Context, sig protocols.Signature) err
 	return nil
 }
 
-func (s *Service) GetInputs(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
+// PublicKeyBackend interface implementation
 
-	if pd.Signature.Type != protocols.RKG {
-		return nil, nil
+// GetCollectivePublicKey returns the collective public key when available.
+// The method blocks until the corresponding protocol completes.
+func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
+	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.CKG})
+	if out.Error != nil {
+		return nil, out.Error
 	}
-
-	aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
-	if err != nil {
-		return nil, err
-	}
-
-	return aggOutR1.Share, nil
+	return out.Result.(*rlwe.PublicKey), nil
 }
 
-// Reszlts and Backend // TODO messy
-
-func (s *Service) Put(ctx context.Context, aggOut protocols.AggregationOutput) error {
-	return s.ResultBackend.Put(aggOut.Descriptor, aggOut.Share)
+// GetGaloisKey returns the Galois key for the given Galois element when available.
+// The method blocks until the corresponding protocol completes.
+func (s *Service) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
+	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
+	if out.Error != nil {
+		return nil, out.Error
+	}
+	return out.Result.(*rlwe.GaloisKey), nil
 }
 
-func (s *Service) Get(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-	share := protocols.Share{}
-	lattigoShare := pd.Signature.Type.Share()
-	err := s.ResultBackend.GetShare(pd.Signature, lattigoShare)
-	if err != nil {
-		return nil, err
+// GetRelinearizationKey returns the relinearization key when available.
+// The method blocks until the corresponding protocol completes.
+func (s *Service) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
+	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RKG})
+	if out.Error != nil {
+		return nil, out.Error
 	}
-	share.MHEShare = lattigoShare
-	share.Type = pd.Signature.Type
-	share.ProtocolID = pd.ID()
-	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
-}
-
-func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (out *protocols.AggregationOutput, err error) {
-	// first checks if it has the share locally
-	share := protocols.Share{}
-	lattigoShare := pd.Signature.Type.Share()
-	err = s.ResultBackend.GetShare(pd.Signature, lattigoShare)
-	share.MHEShare = lattigoShare
-	share.Type = pd.Signature.Type
-	share.ProtocolID = pd.ID()
-	if err == nil {
-		return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
-	}
-
-	// otherwise, query the aggregator or run the protocol
-	if pd.Aggregator != s.self {
-		if out, err = s.transport.GetAggregationOutput(ctx, pd); err != nil {
-			return nil, fmt.Errorf("error when queriying transport for aggregation output: %w", err)
-		}
-	} else {
-		aggOutC := make(chan protocols.AggregationOutput, 1)
-		err := s.execuctor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocols.AggregationOutput) error {
-			aggOutC <- ao
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		aggOut := <-aggOutC
-		out = &aggOut
-		err = s.ResultBackend.Put(pd, aggOut.Share)
-		if err != nil {
-			return nil, err
-		}
-
-	}
-
-	return out, nil
+	return out.Result.(*rlwe.RelinearizationKey), nil
 }
 
 func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) protocols.Output {
@@ -240,100 +211,107 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) 
 	return s.execuctor.GetOutput(ctx, *aggOut)
 }
 
-func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.CKG})
-	if out.Error != nil {
-		return nil, out.Error
+// GetInputs returns the protocol inputs for the given protocol descriptor.
+// It is meant to be passed to a protocols.Executor as a protocols.InputProvider method.
+func (s *Service) GetInputs(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
+
+	// In the setup service, only the RKG protocols requires an input: a completed RKG_1 protocol aggregation output.
+	if pd.Signature.Type != protocols.RKG {
+		return nil, nil
 	}
-	return out.Result.(*rlwe.PublicKey), nil
+
+	aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
+	if err != nil {
+		return nil, err
+	}
+
+	return aggOutR1.Share, nil
 }
 
-func (s *Service) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
-	if out.Error != nil {
-		return nil, out.Error
+// GetAggregationOutput returns the aggregation output for the given protocol descriptor.
+// If the output is not available locally, it queries the protocol's aggregator.
+// If called at the aggregator, it runs the protocol and returns the output.
+func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (out *protocols.AggregationOutput, err error) {
+	// first checks if it has the share locally
+	out, err = s.getAggregationOutputFromBackend(ctx, pd)
+	if err == nil {
+		return out, nil
 	}
-	return out.Result.(*rlwe.GaloisKey), nil
+
+	// otherwise, query the aggregator or run the protocol
+	if pd.Aggregator != s.self {
+		if out, err = s.transport.GetAggregationOutput(ctx, pd); err != nil {
+			return nil, fmt.Errorf("error when queriying transport for aggregation output: %w", err)
+		}
+	} else {
+		// TODO: prevent double run of protocol
+		aggOutC := make(chan protocols.AggregationOutput, 1)
+		err := s.execuctor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocols.AggregationOutput) error {
+			aggOutC <- ao
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		aggOut := <-aggOutC
+		out = &aggOut
+		err = s.resBackend.Put(ctx, pd, aggOut.Share)
+		if err != nil {
+			return nil, err
+		}
+
+	}
+
+	return out, nil
 }
 
-func (s *Service) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RKG})
-	if out.Error != nil {
-		return nil, out.Error
+func (s *Service) getAggregationOutputFromBackend(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	share := protocols.Share{}
+	lattigoShare := pd.Signature.Type.Share()
+	err := s.resBackend.GetShare(ctx, pd.Signature, lattigoShare)
+	if err != nil {
+		return nil, err
 	}
-	return out.Result.(*rlwe.RelinearizationKey), nil
+	share.MHEShare = lattigoShare
+	share.Type = pd.Signature.Type
+	share.ProtocolID = pd.ID()
+	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
 }
 
+// AggregationOutputHandler is called when a protocol aggregation completes.
+// It is meant to be passed to a protocols.Executor as a protocols.AggregationOutputHandler method.
+func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocols.AggregationOutput) error {
+	return s.resBackend.Put(ctx, aggOut.Descriptor, aggOut.Share)
+}
+
+// NodeID returns the node ID associated with this service.
 func (s *Service) NodeID() pkg.NodeID {
 	return s.self
 }
 
+// protocols.Coordinator interface implementation
+
+// Incoming returns the incoming event channel for the protocols.Coordinator interface.
 func (s *Service) Incoming() <-chan protocols.Event {
 	return s.incoming
 }
 
+// Outgoing returns the outgoing event channel for the protocols.Coordinator interface.
 func (s *Service) Outgoing() chan<- protocols.Event {
 	return s.outgoing
 }
 
-// filterSignatureList splits a SignatureList into two lists based on the presence of the protocol's output in the ObjectStore.
-func (s *Service) filterSignatureList(sl SignatureList) (noResult, hasResult SignatureList) {
-	noResult, hasResult = make(SignatureList, 0), make(SignatureList, 0)
-	for _, sig := range sl {
-		has, err := s.ResultBackend.Has(sig)
-		if err != nil {
-			panic(err)
-		}
-		if has {
-			hasResult = append(hasResult, sig)
-		} else {
-			noResult = append(noResult, sig)
-		}
-	}
-	return
-}
-
-// // storeProtocolOutput stores the protocol's output in the ObjectStore of the node.
-// func (s *Service) storeProtocolOutput(outputs chan struct {
-// 	protocols.Descriptor
-// 	protocols.Output
-// }, sess *pkg.Session) {
-// 	for output := range outputs {
-// 		// s.Logf("[Store] Storing output for protocol %s under %s", output.Descriptor.ID, output.Signature.String())
-
-// 		if output.Result != nil {
-// 			switch res := output.Result.(type) {
-// 			case *rlwe.PublicKey:
-// 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-// 					s.Logf("error on Public Key store: %s", err)
-// 				}
-// 			case *rlwe.RelinearizationKey:
-// 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-// 					s.Logf("error on Relinearization Key store: %s", err)
-// 				}
-// 			case *rlwe.GaloisKey:
-// 				if err := sess.ObjectStore.Store(output.Signature.String(), res); err != nil {
-// 					s.Logf("error on Rotation Key Store: %s", err)
-// 				}
-// 			case *drlwe.RelinearizationKeyGenShare:
-// 				if err := sess.ObjectStore.Store(output.Signature.Type.String(), res); err != nil {
-// 					s.Logf("error on Relinearization Key Share store: %s", err)
-// 				}
-// 			default:
-// 				s.Logf("got output for protocol %s: %v", output.ID(), output)
-// 			}
-// 		}
-// 	}
-// }
-
+// Register registers a connected node to the service.
 func (s *Service) Register(nid pkg.NodeID) error {
 	return s.execuctor.Register(nid)
 }
 
+// Unregister unregisters a disconnected node from the service
 func (s *Service) Unregister(nid pkg.NodeID) error {
 	return s.execuctor.Unregister(nid)
 }
 
+// Logf prints a log message.
 func (s *Service) Logf(msg string, v ...any) {
 	log.Printf("%s | [setup] %s\n", s.self, fmt.Sprintf(msg, v...))
 }

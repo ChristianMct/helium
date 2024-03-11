@@ -227,12 +227,3 @@ func TestCloudAssistedSetup(t *testing.T) {
 		}
 	}
 }
-
-func checkResultInSession(t *testing.T, sess *pkg.Session, sign protocols.Signature, expectedPresence bool) {
-	present, err := sess.IsPresent(sign.String())
-	if err != nil {
-		panic("Error in IsPresent")
-	}
-
-	require.Equal(t, expectedPresence, present)
-}
