@@ -34,10 +34,8 @@ type NodeWatcher interface {
 }
 
 type ProtocolHandler interface {
-	// GetProtocolOutput returns the aggregation output for the designated protocol
-	// or an error if such output does not exist.
 	PutShare(context.Context, protocols.Share) error
-	GetProtocolOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
+	GetAggregationOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
 }
 
 type CiphertextHandler interface {
@@ -251,7 +249,7 @@ func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.
 	}
 
 	pd := getProtocolDescFromAPI(apipd)
-	out, err := hsv.protocolHandler.GetProtocolOutput(ctx, *pd)
+	out, err := hsv.protocolHandler.GetAggregationOutput(ctx, *pd)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s", pd.HID())
 	}

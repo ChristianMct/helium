@@ -3,7 +3,6 @@ package coordinator
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/protocols"
@@ -22,13 +21,7 @@ const (
 	Failed
 )
 
-type ProtocolEvent struct {
-	EventType
-	protocols.Descriptor
-}
-
 type Event struct {
-	time.Time
 	ProtocolEvent *protocols.Event
 	CircuitEvent  *circuits.Event
 }

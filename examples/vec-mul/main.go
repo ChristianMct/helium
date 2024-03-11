@@ -38,7 +38,7 @@ var (
 		SessionSecrets: nil, // read from /var/run/secrets
 	}
 
-	lightNodeConfig = node.Config{
+	peerNodeConfig = node.Config{
 		ID:                "", // read from command line args
 		Address:           "", // read from command line args
 		HelperID:          "helper",
@@ -121,7 +121,7 @@ func main() {
 		}
 		config.Address = nodeAddr
 	} else {
-		config = lightNodeConfig
+		config = peerNodeConfig
 		if config.SessionParameters[0].Threshold == 0 {
 			config.SessionParameters[0].Threshold = len(config.SessionParameters[0].Nodes)
 		}

@@ -1,3 +1,10 @@
+// Package node provides the main entry point for the Helium library.
+// It defines the Node type, which implements the parties in the MHE-based
+// MPC procotoles.
+//
+// The current implementation specifically targets the helper-assisted setting,
+// in which a single helper node coordinates the execution of the setup and compute
+// phases, and serves as an aggregator and circuit evaluator.
 package node
 
 import (
@@ -5,7 +12,7 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
+	"slices"
 
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
@@ -19,57 +26,27 @@ import (
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc/metadata"
 )
 
-const (
-	WriteStats      = false
-	numProtoPerNode = 5
-)
-
-type protocolTransport struct {
-	outshares, inshares  chan protocols.Share
-	getAggregationOutput func(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
-}
-
-func (n *protocolTransport) IncomingShares() <-chan protocols.Share {
-	return n.inshares
-}
-
-func (n *protocolTransport) OutgoingShares() chan<- protocols.Share {
-	return n.outshares
-}
-
-func (n *protocolTransport) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-	return n.getAggregationOutput(ctx, pd)
-}
-
-type computeTransport struct {
-	protocolTransport
-	putCiphertext func(ctx context.Context, ct pkg.Ciphertext) error
-	getCiphertext func(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error)
-}
-
-func (n *computeTransport) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
-	return n.putCiphertext(ctx, ct)
-}
-
-func (n *computeTransport) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
-	return n.getCiphertext(ctx, ctID)
-}
-
+// Node represents a Helium node. It is the main entry point for the Helium library.
+// The node is responsible for managing the setup and compute services, and instantiates the transport layer.
+//
+// Two types of nodes are supported in the current implementation:
+//   - the helper node coordinates the execution of the setup and compute phases,
+//     and serves a an aggregator and circuit evaluator. The helper node must have an
+//     address.
+//   - the peer nodes connect to the helper node and provide their protocol shares and
+//     encrypted inputs to the compuation. Peer nodes do not need to have an address.
 type Node struct {
 	addr         pkg.NodeAddress
 	id, helperId pkg.NodeID
 	nodeList     pkg.NodesList
 
-	//peers    map[pkg.NodeID]*Node
-
+	// sessions and state
 	sessions *pkg.SessionStore
 	objectstore.ObjectStore
-	// pkBackend compute.PublicKeyBackend
 
-	//transport transport.Transport
+	// transport
 	srv              *centralized.HeliumServer
 	cli              *centralized.HeliumClient
 	outgoingShares   chan protocols.Share
@@ -83,53 +60,16 @@ type Node struct {
 	// postsetupHandler  func(*pkg.SessionStore, compute.PublicKeyBackend) error
 	// precomputeHandler func(*pkg.SessionStore, compute.PublicKeyBackend) error
 
-	setupDone   chan struct{}
-	computeDone chan struct{}
+	setupDone chan struct{}
 }
-
-type Config struct {
-	ID                pkg.NodeID
-	Address           pkg.NodeAddress
-	HelperID          pkg.NodeID
-	SessionParameters []pkg.SessionParameters
-	SetupConfig       setup.ServiceConfig
-	ComputeConfig     compute.ServiceConfig
-	ObjectStoreConfig objectstore.Config
-	TLSConfig         centralized.TLSConfig
-}
-
-// type lightNodeServiceTransport struct {
-// 	*centralized.HeliumClient
-// 	outgoingShares chan protocols.Share
-// }
-
-// // GetAggregationFrom queries the designated node id (typically, the aggregator) for the
-// // aggregated share of the designated protocol.
-// func (lst *lightNodeServiceTransport) GetAggregationFrom(ctx context.Context, nid pkg.NodeID, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-// 	return lst.HeliumClient.GetAggregationOutput(ctx, pd)
-// }
-
-// // IncomingShares returns the channel over which the transport sends
-// // incoming shares.
-// func (lst *lightNodeServiceTransport) IncomingShares() <-chan protocols.Share {
-// 	panic("light nodes cannot receive shares")
-// }
-
-// // OutgoingShares returns the channel over which the caller can write
-// // shares for the transport to send.
-// func (lst *lightNodeServiceTransport) OutgoingShares() chan<- protocols.Share {
-// 	return lst.outgoingShares
-// }
 
 // NewNode creates a new Helium node from the provided config and node list.
+// The method returns an error if the config is invalid or if the node list is empty.
 func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	node = new(Node)
 
-	if len(config.ID) == 0 {
-		return nil, fmt.Errorf("config must specify a node ID")
-	}
-	if len(config.HelperID) == 0 {
-		return nil, fmt.Errorf("config must specify a helper ID")
+	if err := ValidateConfig(config, nodeList); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	node.id = config.ID
@@ -146,14 +86,14 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	// session
 	node.sessions = pkg.NewSessionStore()
 	for _, sp := range config.SessionParameters {
-		_, err = node.CreateNewSession(sp, node.ObjectStore)
+		_, err = node.createNewSession(sp, node.ObjectStore)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	// transport
-	if node.HasAddress() {
+	if node.IsHelperNode() {
 		node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node, node)
 		node.srv.RegisterWatcher(node)
 	} else {
@@ -188,11 +128,13 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	// node.postsetupHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
 	// node.precomputeHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
 	node.setupDone = make(chan struct{})
-	node.computeDone = make(chan struct{})
 
 	return node, err
 }
 
+// Connect connects the node's transport layer to the network.
+// If the node has an address, it starts a server at the address.
+// If the node does not have an address, it connects to the helper node.
 func (n *Node) Connect(ctx context.Context) error {
 	if n.HasAddress() {
 		listener, err := net.Listen("tcp", string(n.addr))
@@ -215,86 +157,13 @@ func (n *Node) Connect(ctx context.Context) error {
 	return nil
 }
 
-// // NewNodeWithTransport creates a new Helium node from the provided config, node list and user-defined transport layer.
-// func NewNodeWithTransport(config Config, nodeList pkg.NodesList, trans transport.Transport) (node *Node, err error) {
-// 	node = new(Node)
-
-// 	node.addr = config.Address
-// 	node.id = config.ID
-// 	node.sessions = pkg.NewSessionStore()
-// 	node.transport = trans
-// 	node.peers = make(map[pkg.NodeID]*Node, len(nodeList))
-// 	var cloudID pkg.NodeID
-// 	for _, peer := range nodeList {
-// 		if peer.NodeID != node.id {
-// 			node.peers[peer.NodeID] = newPeerNode(peer.NodeID, peer.NodeAddress)
-// 		}
-// 		if len(peer.NodeAddress) > 0 {
-// 			cloudID = peer.NodeID
-// 		}
-// 	}
-// 	node.nodeList = nodeList
-
-// 	os, err := objectstore.NewObjectStoreFromConfig(config.ObjectStoreConfig)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	for _, sp := range config.SessionParameters {
-// 		_, err = node.CreateNewSession(sp, os)
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 	}
-
-// 	node.setup, err = setup.NewSetupService(node.id, cloudID, node, node.transport.GetSetupTransport(), os)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
-// 	}
-
-// 	node.pkBackend = compute.NewCachedPublicKeyBackend(node.setup)
-// 	node.compute, err = compute.NewComputeService(node.id, cloudID, node, node.transport.GetComputeTransport(), node.pkBackend)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
-// 	}
-
-// 	node.transport.RegisterSetupService(node.setup)
-// 	node.transport.RegisterComputeService(node.compute)
-
-// 	node.postsetupHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
-// 	node.precomputeHandler = func(sessStore *pkg.SessionStore, pkb compute.PublicKeyBackend) error { return nil }
-
-// 	node.setupDone = make(chan struct{})
-// 	node.computeDone = make(chan struct{})
-
-// 	return node, nil
-// }
-
-type protocolCoordinator struct {
-	incoming, outgoing chan protocols.Event
-}
-
-func (hcp *protocolCoordinator) Incoming() <-chan protocols.Event {
-	return hcp.incoming
-}
-
-func (hcp *protocolCoordinator) Outgoing() chan<- protocols.Event {
-	return hcp.outgoing
-}
-
-type coordinatorT struct {
-	incoming, outgoing chan coordinator.Event
-}
-
-func (hcp *coordinatorT) Incoming() <-chan coordinator.Event {
-	return hcp.incoming
-}
-
-func (hcp *coordinatorT) Outgoing() chan<- coordinator.Event {
-	return hcp.outgoing
-}
-
-// func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
+// Run runs the node with the provided app under the given context.
+// The method returns channels to send circuit descriptors and receive circuit outputs.
+//
+// In the current implementation:
+//   - the method runs the setup and compute phases sequentially.
+//   - only the helper node can issue circuit descriptors.
+//   - loading and verification of the state from persistent storage is not implemented.
 func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
 
 	// recovers the session
@@ -315,14 +184,13 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		return nil, nil, fmt.Errorf("app must provide a setup description") // TODO: inference of setup description from registered circuits.
 	}
 
-	//sigList, sigToReceiverSet := setup.DescriptionToSignatureList(setupDesc)
 	sigList, _ := setup.DescriptionToSignatureList(*app.SetupDescription)
 
 	cds := make(chan circuits.Descriptor)
 	or := make(chan circuits.Output)
 
 	// runs the setup phase
-	if node.IsFullNode() {
+	if node.IsHelperNode() {
 
 		setupCoord := &protocolCoordinator{make(chan protocols.Event), make(chan protocols.Event)}
 
@@ -330,9 +198,8 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		go func() {
 			for ev := range setupCoord.outgoing {
 				pev := ev
-				node.srv.SendEvent(coordinator.Event{Time: time.Now(), ProtocolEvent: &pev})
+				node.srv.SendEvent(coordinator.Event{ProtocolEvent: &pev})
 			}
-			//node.srv.CloseEvents()
 			close(downstreamDone)
 		}()
 
@@ -398,12 +265,13 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 			return nil, nil, err
 		}
 
-		//completedProto, runningProto, completedCirc, runningCirc, err := recoverPresentState(events, present)
+		// read the past events from the log and establish a list of completed and running protocols and circuits.
 		complPd, runPd, complCd, runCd, err := recoverPresentState(events, present)
 		if err != nil {
 			return nil, nil, err
 		}
 
+		// Service initialization
 		if err := node.setup.Init(ctx, complPd, runPd); err != nil {
 			return nil, nil, fmt.Errorf("error at setup service init: %w", err)
 		}
@@ -454,6 +322,19 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 	return cds, or, nil
 }
 
+// Close releases all the resources allocated by the node.
+// If the node is the helper node, it stops the server and
+// waits for the peers to disconnect.
+func (node *Node) Close() error {
+	if node.IsHelperNode() {
+		node.srv.Server.GracefulStop()
+	}
+	return node.sessions.Close()
+}
+
+// Transport interface implementation
+
+// PutShare is called by the transport upon receiving a new share.
 func (n *Node) PutShare(ctx context.Context, s protocols.Share) error {
 	switch {
 	case s.Type.IsSetup():
@@ -466,14 +347,26 @@ func (n *Node) PutShare(ctx context.Context, s protocols.Share) error {
 	return nil
 }
 
+// GetAggregationOutput returns the aggregation output for a given protocol descriptor.
+// If this node is the helper node, the method retrieves the output from the services.
+// If this node is a peer node, the method retrieves the output from the helper node.
 func (n *Node) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	if n.id == n.helperId {
+		switch {
+		case pd.Signature.Type.IsSetup():
+			return n.setup.GetAggregationOutput(ctx, pd)
+		// case pd.Signature.Type.IsCompute():
+		// 	return n.compute.GetProtocolOutput(ctx, pd)
+		default:
+			return nil, fmt.Errorf("unknown protocol type")
+		}
+	}
 	return n.cli.GetAggregationOutput(ctx, pd)
 }
 
-func (n *Node) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-	return n.setup.GetProtocolOutput(ctx, pd)
-}
-
+// PutCiphertext registers a new ciphertext for the compute service.
+// If this node is the helper node, the method registers the ciphertext with the service.
+// If this node is a peer node, the method sends the ciphertext to the helper node.
 func (n *Node) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 	if n.id == n.helperId {
 		return n.compute.PutCiphertext(ctx, ct)
@@ -481,6 +374,9 @@ func (n *Node) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 	return n.cli.PutCiphertext(ctx, ct)
 }
 
+// GetCiphertext returns a ciphertext from the compute service.
+// If this node is the helper node, the method retrieves the ciphertext from the service.
+// If this node is a peer node, the method retrieves the ciphertext from the helper node.
 func (n *Node) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
 	if n.id == n.helperId {
 		return n.compute.GetCiphertext(ctx, ctID)
@@ -488,14 +384,160 @@ func (n *Node) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.C
 	return n.cli.GetCiphertext(ctx, ctID)
 }
 
-// Register is called by the transport when a new peer register itself for the setup.
+// WaitForSetupDone blocks until the setup phase is done.
+func (node *Node) WaitForSetupDone() {
+	<-node.setupDone
+}
+
+// NodeList returns the list of nodes known to the node.
+func (node *Node) NodeList() pkg.NodesList {
+	return slices.Clone(node.nodeList)
+}
+
+// ID returns the node's ID.
+func (node *Node) ID() pkg.NodeID {
+	return node.id
+}
+
+// Address returns true if the node has an address.
+func (node *Node) HasAddress() bool {
+	return node.addr != ""
+}
+
+// IsHelperNode returns true if the node is the helper node.
+func (node *Node) IsHelperNode() bool {
+	return node.id == node.helperId
+}
+
+// SignatureParameters used to bootstrap the signature scheme.
+type SignatureParameters struct {
+	Type api.SignatureType
+}
+
+// SessionProvider interface implementation
+
+// GetSessionFromID returns the session with the given ID.
+func (node *Node) GetSessionFromID(sessionID pkg.SessionID) (*pkg.Session, bool) {
+	return node.sessions.GetSessionFromID(sessionID)
+}
+
+// GetSessionFromContext returns the session by extracting the session id from the
+// provided context.
+func (node *Node) GetSessionFromContext(ctx context.Context) (*pkg.Session, bool) {
+	sessID, has := pkg.SessionIDFromContext(ctx)
+	if !has {
+		return nil, false
+	}
+	return node.GetSessionFromID(sessID)
+}
+
+// Logf writes a log line with the provided message.
+func (node *Node) Logf(msg string, v ...any) {
+	log.Printf("%s | [node] %s\n", node.id, fmt.Sprintf(msg, v...))
+}
+
+// // outputStats outputs the total network usage and time take to execute a protocol phase.
+// func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
+// 	dataSent := node.GetTransport().GetNetworkStats().DataSent
+// 	dataRecv := node.GetTransport().GetNetworkStats().DataRecv
+// 	fmt.Printf("STATS: phase: %s time: %f sent: %f MB recv: %f MB\n", phase, elapsed.Seconds(), float64(dataSent)/float64(1e6), float64(dataRecv)/float64(1e6))
+// 	log.Println("==============", phase, "phase ==============")
+// 	log.Printf("%s | time %s", node.ID(), elapsed)
+// 	log.Printf("%s | network: %s\n", node.ID(), node.GetTransport().GetNetworkStats())
+// 	if write {
+// 		stats := map[string]string{
+// 			"Wall":  fmt.Sprint(elapsed),
+// 			"Sent":  fmt.Sprint(dataSent),
+// 			"Recvt": fmt.Sprint(dataRecv),
+// 			"ID":    fmt.Sprint(node.ID()),
+// 			"Phase": phase,
+// 		}
+// 		for _, md := range metadata {
+// 			for k, v := range md {
+// 				stats[k] = v
+// 			}
+// 		}
+// 		var statsJSON []byte
+// 		statsJSON, err := json.MarshalIndent(stats, "", "\t")
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s-%s.json", phase, node.ID()), statsJSON, 0600); errWrite != nil {
+// 			log.Println(errWrite)
+// 		}
+// 	}
+// }
+
+// func (node *Node) ResetNetworkStats() {
+// 	node.transport.ResetNetworkStats()
+// }
+
+// func (node *Node) RegisterPostsetupHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
+// 	node.postsetupHandler = h
+// }
+
+// func (node *Node) RegisterPrecomputeHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
+// 	node.precomputeHandler = h
+// }
+
+// pkg.PublicKeyBackend interface implementation
+
+// GetPublicKey returns the collective public key.
+func (n *Node) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
+	n.WaitForSetupDone()
+	return n.setup.GetCollectivePublicKey(ctx)
+}
+
+// GetGaliosKeys returns the Galois keys for galois element galEl.
+func (n *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
+	n.WaitForSetupDone()
+	return n.setup.GetGaloisKey(ctx, galEl)
+}
+
+// GetRelinearizationKey returns the relinearization key.
+func (n *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
+	n.WaitForSetupDone()
+	return n.setup.GetRelinearizationKey(ctx)
+}
+
+// Coordinator interface implementation
+
+// Register is called by the transport upon connection of a new peer node.
 func (s *Node) Register(peer pkg.NodeID) error {
 	return errors.Join(s.setup.Register(peer), s.compute.Register(peer))
 }
 
-// Unregister is called by the transport when a peer is unregistered from the setup.
+// Unregister is called by the transport upon disconnection of a peer node.
 func (s *Node) Unregister(peer pkg.NodeID) error {
 	return errors.Join(s.setup.Unregister(peer), s.compute.Unregister(peer))
+}
+
+// FHEProvider interface implementation
+
+// GetEncoder returns a lattigo encoder from the context's session.
+func (n *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
+	return n.compute.GetEncoder(ctx)
+}
+
+// GetEncryptor returns a lattigo encryptor from the context's session.
+// The encryptor is initialized with the collective public key.
+func (n *Node) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
+	return n.compute.GetEncryptor(ctx)
+}
+
+// GetDecryptor returns a lattigo decryptor from the context's session.
+// The decryptor is initialized with the node's secret key.
+func (n *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
+	return n.compute.GetDecryptor(ctx)
+}
+
+func (node *Node) createNewSession(sessParams pkg.SessionParameters, objstore objectstore.ObjectStore) (sess *pkg.Session, err error) {
+	sess, err = node.sessions.NewRLWESession(sessParams, node.id, objstore)
+	if err != nil {
+		return sess, err
+	}
+
+	return sess, nil
 }
 
 func (node *Node) sendShares(ctx context.Context) {
@@ -568,314 +610,4 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 	}
 
 	return
-}
-
-// func getSetupDescription(app App, sess *pkg.Session) (sd setup.Description, err error) {
-// 	// creates a setup.Description from the config and provided circuits
-// 	if app.SetupDescription != nil {
-// 		sd = setup.MergeSetupDescriptions(sd, *app.SetupDescription)
-// 	} else {
-// 		return setup.Description{}, fmt.Errorf("must provide a setup description") // TODO re enable setup inference
-// 	}
-// 	// for _, cs := range app.Circuits {
-// 	// 	// infer setup description
-// 	// 	compSd, err := CircuitToSetupDescription(cs, *sess.Params)
-// 	// 	if err != nil {
-// 	// 		return setup.Description{}, fmt.Errorf("error while converting circuit to setup description: %w", err)
-// 	// 	}
-// 	// 	// adds the circuit's required eval keys to the app's setup description
-// 	// 	sd = setup.MergeSetupDescriptions(sd, *compSd)
-// 	// }
-// 	return sd, nil
-// }
-
-// // CircuitToSetupDescription converts a CircuitDescription into a setup.Description by
-// // extractiong the keys needed for the correct circuit execution.
-// func CircuitToSetupDescription(c circuits.Circuit, params bgv.Parameters) (*setup.Description, error) {
-// 	sd := setup.Description{}
-
-// 	cDesc := circuits.Descriptor{Signature: circuits.Signature{Name: "dummy"}}
-
-// 	cd, err := circuits.Parse(c, "dummy-cid", params, nil)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	// determine session nodes
-// 	sessionNodes := make([]pkg.NodeID, 0)
-// 	for client := range cd.InputSet {
-// 		nopl, err := url.Parse(string(client))
-// 		if err != nil {
-// 			panic(fmt.Errorf("invalid operand label: %s", client))
-// 		}
-// 		sessionNodes = append(sessionNodes, pkg.NodeID(nopl.Host))
-// 	}
-// 	// log.Printf("[Convert] Session nodes are %v\n", sessionNodes)
-
-// 	// determine aggregators
-// 	aggregators := make([]pkg.NodeID, 0)
-// 	for _, ksSig := range cd.KeySwitchOps {
-// 		aggregators = append(aggregators, pkg.NodeID(ksSig.Args["aggregator"]))
-// 	}
-// 	// log.Printf("[Convert] Aggregators are %v\n", aggregators)
-
-// 	// Collective Public Key
-// 	sd.Cpk = sessionNodes
-
-// 	// Relinearization Key
-// 	if cd.NeedRlk {
-// 		sd.Rlk = aggregators
-// 	}
-
-// 	// Rotation Keys
-// 	for GaloisEl := range cd.GaloisKeys {
-// 		keyField := struct {
-// 			GaloisEl  uint64
-// 			Receivers []pkg.NodeID
-// 		}{GaloisEl, aggregators}
-// 		sd.GaloisKeys = append(sd.GaloisKeys, keyField)
-// 	}
-
-// 	// Public Keys of output receivers
-// 	// for _, ksSig := range cd.KeySwitchOps {
-// 	// 	// there is an external receiver
-// 	// 	if ksSig.Type == protocols.PCKS {
-// 	// 		sender := pkg.NodeID(ksSig.Args["target"])
-// 	// 		receivers := append(aggregators, sessionNodes...)
-// 	// 		keyField := struct {
-// 	// 			Sender    pkg.NodeID
-// 	// 			Receivers []pkg.NodeID
-// 	// 		}{sender, receivers}
-// 	// 		sd.Pk = append(sd.Pk, keyField)
-// 	// 	}
-// 	// }
-
-// 	return sd, nil
-// }
-
-// func (node *Node) Run(ctx context.Context, app App) (sigs chan circuits.Signature, outs chan compute.CircuitOutput, err error) {
-// 	sessId, _ := pkg.SessionIDFromContext(ctx)
-// 	sess, exists := node.GetSessionFromID(sessId)
-// 	if !exists {
-// 		return nil, nil, fmt.Errorf("session `%s` was not created", sessId)
-// 	}
-// 	N := len(sess.Nodes)
-// 	T := sess.T
-
-// 	for cName, circuit := range app.Circuits {
-// 		compute.RegisterCircuit(cName, circuit)
-// 	}
-
-// 	// creates a setup.Description from the config and provided circuits
-// 	var setupDesc setup.Description
-// 	if app.SetupDescription != nil {
-// 		setupDesc = setup.MergeSetupDescriptions(setupDesc, *app.SetupDescription)
-// 	}
-// 	for _, cs := range app.Circuits {
-// 		// infer setup description
-// 		compSd, err := setup.CircuitToSetupDescription(cs, *sess.Params)
-// 		if err != nil {
-// 			return nil, nil, fmt.Errorf("error while converting circuit to setup description: %w", err)
-// 		}
-// 		// adds the circuit's required eval keys to the app's setup description
-// 		setupDesc = setup.MergeSetupDescriptions(setupDesc, compSd)
-// 	}
-
-// 	setupSrv, computeSrv := node.GetSetupService(), node.GetComputeService()
-// 	// executes the setup phase
-// 	go func() {
-// 		start := time.Now()
-// 		err = setupSrv.Execute(ctx, setupDesc)
-// 		if err != nil {
-// 			panic(fmt.Errorf("error during setup: %w", err))
-// 		}
-// 		elapsed := time.Since(start)
-// 		node.OutputStats("setup", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
-// 		node.ResetNetworkStats()
-// 		node.postsetupHandler(node.sessions, node.pkBackend)
-// 		close(node.setupDone)
-// 	}()
-
-// 	sigs = make(chan circuits.Signature)
-// 	outsLocal := make(chan compute.CircuitOutput)
-
-// 	go func() {
-// 		<-node.setupDone
-// 		if err := node.precomputeHandler(node.sessions, setupSrv); err != nil {
-// 			panic(fmt.Errorf("precomputeHandler returned an error: %w", err))
-// 		}
-// 		err = computeSrv.Execute(ctx, sigs, *app.InputProvider, outsLocal)
-// 		if err != nil {
-// 			panic(fmt.Errorf("error during compute: %w", err)) // TODO return error somehow
-// 		}
-// 		close(node.computeDone)
-// 	}()
-
-// 	outsUser := make(chan compute.CircuitOutput)
-// 	go func() {
-// 		<-computeSrv.ComputeStart
-// 		start := time.Now()
-// 		for out := range outsLocal {
-// 			outsUser <- out
-// 		}
-// 		//<-node.computeDone
-// 		elapsed := time.Since(start)
-// 		node.OutputStats("compute", elapsed, WriteStats, map[string]string{"N": strconv.Itoa(N), "T": strconv.Itoa(T)})
-// 		close(outsUser)
-// 	}()
-
-// 	return sigs, outsUser, nil
-// }
-
-func (node *Node) WaitForSetupDone() {
-	<-node.setupDone
-}
-
-// func (node *Node) GetComputeService() *compute.Service {
-// 	return node.compute
-// }
-
-func (node *Node) NodeList() pkg.NodesList {
-	return node.nodeList // TODO copy
-}
-
-func (node *Node) ID() pkg.NodeID {
-	return node.id
-}
-
-func (node *Node) HasAddress() bool {
-	return node.addr != ""
-}
-
-// newPeerNode initialises a peer node with a given address.
-func newPeerNode(id pkg.NodeID, addr pkg.NodeAddress) (node *Node) {
-	node = new(Node)
-	node.id = id
-	node.addr = addr
-	return node
-}
-
-func (node *Node) IsFullNode() bool {
-	return node.HasAddress()
-}
-
-// SignatureParameters used to bootstrap the signature scheme.
-type SignatureParameters struct {
-	Type api.SignatureType
-}
-
-// CreateNewSession takes an int id and creates a new rlwe session with this node and its peers and a sessionID constructed using the given id.
-func (node *Node) CreateNewSession(sessParams pkg.SessionParameters, objstore objectstore.ObjectStore) (sess *pkg.Session, err error) {
-	sess, err = node.sessions.NewRLWESession(sessParams, node.id, objstore)
-	if err != nil {
-		return sess, err
-	}
-
-	return sess, nil
-}
-
-func (node *Node) GetOutgoingContext(sessionID pkg.SessionID) context.Context {
-	md := metadata.Pairs("session_id", string(sessionID), "node_id", string(node.id))
-	return metadata.NewOutgoingContext(context.Background(), md)
-}
-
-func (node *Node) GetSessionFromID(sessionID pkg.SessionID) (*pkg.Session, bool) {
-	return node.sessions.GetSessionFromID(sessionID)
-}
-
-func (node *Node) GetSessionFromContext(ctx context.Context) (*pkg.Session, bool) {
-	sessID, has := pkg.SessionIDFromContext(ctx)
-	if !has {
-		return nil, false
-	}
-	return node.GetSessionFromID(sessID)
-}
-
-func (node *Node) GetSessionFromIncomingContext(ctx context.Context) (*pkg.Session, bool) {
-	sessID := pkg.SessionIDFromIncomingContext(ctx)
-	return node.GetSessionFromID(sessID)
-}
-
-// Close releases all the resources allocated by the node.
-func (node *Node) Close() error {
-	if node.HasAddress() {
-		node.srv.Server.GracefulStop()
-	}
-	return node.sessions.Close()
-}
-
-func (node *Node) Logf(msg string, v ...any) {
-	log.Printf("%s | [node] %s\n", node.id, fmt.Sprintf(msg, v...))
-}
-
-// // outputStats outputs the total network usage and time take to execute a protocol phase.
-// func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
-// 	dataSent := node.GetTransport().GetNetworkStats().DataSent
-// 	dataRecv := node.GetTransport().GetNetworkStats().DataRecv
-// 	fmt.Printf("STATS: phase: %s time: %f sent: %f MB recv: %f MB\n", phase, elapsed.Seconds(), float64(dataSent)/float64(1e6), float64(dataRecv)/float64(1e6))
-// 	log.Println("==============", phase, "phase ==============")
-// 	log.Printf("%s | time %s", node.ID(), elapsed)
-// 	log.Printf("%s | network: %s\n", node.ID(), node.GetTransport().GetNetworkStats())
-// 	if write {
-// 		stats := map[string]string{
-// 			"Wall":  fmt.Sprint(elapsed),
-// 			"Sent":  fmt.Sprint(dataSent),
-// 			"Recvt": fmt.Sprint(dataRecv),
-// 			"ID":    fmt.Sprint(node.ID()),
-// 			"Phase": phase,
-// 		}
-// 		for _, md := range metadata {
-// 			for k, v := range md {
-// 				stats[k] = v
-// 			}
-// 		}
-// 		var statsJSON []byte
-// 		statsJSON, err := json.MarshalIndent(stats, "", "\t")
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s-%s.json", phase, node.ID()), statsJSON, 0600); errWrite != nil {
-// 			log.Println(errWrite)
-// 		}
-// 	}
-// }
-
-// func (node *Node) ResetNetworkStats() {
-// 	node.transport.ResetNetworkStats()
-// }
-
-// func (node *Node) RegisterPostsetupHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
-// 	node.postsetupHandler = h
-// }
-
-// func (node *Node) RegisterPrecomputeHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
-// 	node.precomputeHandler = h
-// }
-
-func (n *Node) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	n.WaitForSetupDone()
-	return n.setup.GetCollectivePublicKey(ctx)
-}
-
-func (n *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	n.WaitForSetupDone()
-	return n.setup.GetGaloisKey(ctx, galEl)
-}
-
-func (n *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	n.WaitForSetupDone()
-	return n.setup.GetRelinearizationKey(ctx)
-}
-
-// FHEProvider interface implementation
-func (n *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
-	return n.compute.GetEncoder(ctx)
-}
-
-func (n *Node) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
-	return n.compute.GetEncryptor(ctx)
-}
-
-func (n *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
-	return n.compute.GetDecryptor(ctx)
 }

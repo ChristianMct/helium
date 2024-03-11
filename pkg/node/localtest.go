@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/services/setup"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
 
 	"github.com/ldsec/helium/pkg/pkg"
@@ -26,35 +25,26 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
-// LocalTestConfig is a configuration structure for LocalTest types. It is used to
-// specify the number of full, light and helper nodes in the local test.
+// LocalTestConfig is a configuration structure for LocalTest types.
 type LocalTestConfig struct {
-	//FullNodes     int // Number of full nodes in the session
-	LightNodes int // Number of light nodes in the session
-	//HelperNodes   int // number of helper nodes (full nodes that are not in the session key)
-	//ExternalNodes int
-	SessionParams *pkg.SessionParameters
-	//DoThresholdSetup bool
-	InsecureChannels  bool // are we using (m)TLS to establish the channels between nodes?
-	ObjectStoreConfig *objectstore.Config
-	SimSetup          *setup.Description // if set, replace the pk backend for the compute service with a simulated setup backend
+	PeerNodes         int // Number of peer nodes in the session
+	SessionParams     *pkg.SessionParameters
+	InsecureChannels  bool                // use TLS for this test. TODO: fix TLS
+	ObjectStoreConfig *objectstore.Config // nodes's object store configuration for this test
 }
 
 // LocalTest represent a local test setting with several nodes and a single
 // session with group secret key.
 type LocalTest struct {
-	Nodes []*Node
-	//FullNodes     []*Node
-	LightNodes []*Node
+	Nodes      []*Node
+	PeerNodes  []*Node
 	HelperNode *Node
-	//ExternalNodes []*Node
-	Params bgv.Parameters
+	Params     bgv.Parameters
 
 	*pkg.TestSession
 	HelperConfig    Config
 	SessNodeConfigs []Config
 	pkg.NodesList
-	//compute.PublicKeyBackend
 }
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
@@ -62,11 +52,11 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test = new(LocalTest)
 
 	helperId := pkg.NodeID("helper")
-	sessNodesId := make([]pkg.NodeID, config.LightNodes)
-	shamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint, config.LightNodes)
-	test.NodesList = make(pkg.NodesList, 1+config.LightNodes)
+	sessNodesId := make([]pkg.NodeID, config.PeerNodes)
+	shamirPks := make(map[pkg.NodeID]drlwe.ShamirPublicPoint, config.PeerNodes)
+	test.NodesList = make(pkg.NodesList, 1+config.PeerNodes)
 	for i := range sessNodesId {
-		nid := pkg.NodeID("light-" + strconv.Itoa(i))
+		nid := pkg.NodeID("peer-" + strconv.Itoa(i))
 		sessNodesId[i] = nid
 		shamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
 		test.NodesList[i] = pkg.NodeInfo{NodeID: nid}
@@ -92,7 +82,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 		}
 	}
 
-	test.Nodes = make([]*Node, 1+config.LightNodes)
+	test.Nodes = make([]*Node, 1+config.PeerNodes)
 	test.HelperNode, err = NewNode(test.HelperConfig, test.NodesList)
 	if err != nil {
 		return nil, err
@@ -105,10 +95,8 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 			return nil, err
 		}
 	}
-	//test.FullNodes = test.Nodes[:config.FullNodes]
-	test.LightNodes = test.Nodes[1:]
-	//test.HelperNodes = test.Nodes[config.FullNodes+config.LightNodes : config.FullNodes+config.LightNodes+config.HelperNodes]
-	//test.ExternalNodes = test.Nodes[config.FullNodes+config.LightNodes+config.HelperNodes:]
+
+	test.PeerNodes = test.Nodes[1:]
 
 	return test, nil
 }
@@ -131,7 +119,7 @@ func genNodeConfigs(config LocalTestConfig, nl pkg.NodesList, secrets map[pkg.No
 
 	sp := config.SessionParams
 	hid := nl[len(nl)-1].NodeID
-	sessNodesConfig = make([]Config, config.LightNodes)
+	sessNodesConfig = make([]Config, config.PeerNodes)
 	for i := range sessNodesConfig {
 		nid := nl[i].NodeID
 		sessNodesConfig[i] = Config{

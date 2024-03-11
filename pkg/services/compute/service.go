@@ -288,7 +288,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		})
 	}
 
-	// fetches the output for completed circuits (light nodes only)
+	// fetches the output for completed circuits (peer nodes only)
 	go func() {
 		if or != nil {
 			for cd := range s.completedCircuits {

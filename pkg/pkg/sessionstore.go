@@ -11,7 +11,6 @@ import (
 type SessionProvider interface {
 	GetSessionFromID(sessionID SessionID) (*Session, bool)
 	GetSessionFromContext(ctx context.Context) (*Session, bool)
-	GetSessionFromIncomingContext(ctx context.Context) (*Session, bool)
 }
 
 type SessionStore struct {

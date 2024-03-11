@@ -2,8 +2,6 @@ syntax = "proto3";
 
 option go_package = "github.com/ldsec/helium/pkg/api";
 
-import "google/protobuf/timestamp.proto";
-
 package helium_proto;
 
 message ProtocolID {
@@ -44,9 +42,8 @@ message CircuitEvent {
 }
 
 message Event {
-    google.protobuf.Timestamp EventTime = 1;
-    optional ProtocolEvent ProtocolEvent = 2;
-    optional CircuitEvent CircuitEvent = 3;
+    optional ProtocolEvent ProtocolEvent = 1;
+    optional CircuitEvent CircuitEvent = 2;
 }
 
 

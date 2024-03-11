@@ -9,13 +9,10 @@ import (
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func getApiEvent(event coordinator.Event) *api.Event {
-	apiEvent := &api.Event{
-		EventTime: timestamppb.New(event.Time),
-	}
+	apiEvent := &api.Event{}
 	if event.CircuitEvent != nil {
 		apiEvent.CircuitEvent = &api.CircuitEvent{
 			Type:        api.EventType(event.CircuitEvent.Status),
@@ -30,9 +27,7 @@ func getApiEvent(event coordinator.Event) *api.Event {
 }
 
 func getEventFromAPI(apiEvent *api.Event) coordinator.Event {
-	event := coordinator.Event{
-		Time: apiEvent.EventTime.AsTime(),
-	}
+	event := coordinator.Event{}
 	if apiEvent.CircuitEvent != nil {
 		event.CircuitEvent = &circuits.Event{
 			Status:     circuits.Status(apiEvent.CircuitEvent.Type),

@@ -2,9 +2,33 @@ package node
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+
+	"github.com/ldsec/helium/pkg/objectstore"
+	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg/services/compute"
+	"github.com/ldsec/helium/pkg/services/setup"
+	"github.com/ldsec/helium/pkg/transport/centralized"
 )
 
+// Config is the configuration of a node.
+// The struct is meant to be encoded and decoded to JSON with the
+// standard library's encoding/json package.
+//
+// In the current implementation, only a single session per node is supported.
+type Config struct {
+	ID                pkg.NodeID
+	Address           pkg.NodeAddress
+	HelperID          pkg.NodeID
+	SessionParameters []pkg.SessionParameters
+	SetupConfig       setup.ServiceConfig
+	ComputeConfig     compute.ServiceConfig
+	ObjectStoreConfig objectstore.Config
+	TLSConfig         centralized.TLSConfig
+}
+
+// LoadConfigFromFile loads a node configuration from a JSON file.
 func LoadConfigFromFile(filename string) (Config, error) {
 	// Open the config file
 	file, err := os.Open(filename)
@@ -22,4 +46,18 @@ func LoadConfigFromFile(filename string) (Config, error) {
 	}
 
 	return config, nil
+}
+
+// ValidateConfig checks that the configuration is valid.
+func ValidateConfig(config Config, nl pkg.NodesList) error {
+	if len(config.ID) == 0 {
+		return fmt.Errorf("config must specify a node ID")
+	}
+	if len(config.HelperID) == 0 {
+		return fmt.Errorf("config must specify a helper ID")
+	}
+	if nl.AddressOf(config.HelperID) == "" {
+		return fmt.Errorf("helper ID not found in the node list")
+	}
+	return nil
 }

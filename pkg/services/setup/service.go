@@ -160,7 +160,7 @@ func (s *Service) GetInputs(ctx context.Context, pd protocols.Descriptor) (proto
 		return nil, nil
 	}
 
-	aggOutR1, err := s.GetProtocolOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
+	aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (s *Service) Get(ctx context.Context, pd protocols.Descriptor) (*protocols.
 	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
 }
 
-func (s *Service) GetProtocolOutput(ctx context.Context, pd protocols.Descriptor) (out *protocols.AggregationOutput, err error) {
+func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (out *protocols.AggregationOutput, err error) {
 	// first checks if it has the share locally
 	share := protocols.Share{}
 	lattigoShare := pd.Signature.Type.Share()
@@ -232,7 +232,7 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) 
 		return protocols.Output{Error: fmt.Errorf("error while waiting for signature: %w", err)}
 	}
 
-	aggOut, err := s.GetProtocolOutput(ctx, *pd)
+	aggOut, err := s.GetAggregationOutput(ctx, *pd)
 	if err != nil {
 		return protocols.Output{Error: fmt.Errorf("could not retrieve aggrgation output for %s: %w", pd.HID(), err)}
 	}
