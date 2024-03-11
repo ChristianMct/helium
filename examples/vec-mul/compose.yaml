@@ -9,37 +9,18 @@ services:
     container_name: node-1
     image: helium:vec-mul
     command: -id node-1 -input 1
-    secrets:
-      - secret_node-1
 
   node-2:
     container_name: node-2
     image: helium:vec-mul
     command: -id node-2 -input 2
-    secrets:
-      - secret_node-2
 
   node-3:
     container_name: node-3
     image: helium:vec-mul
     command: -id node-3 -input 3
-    secrets:
-      - secret_node-3
 
   node-4:
     container_name: node-4
     image: helium:vec-mul
     command: -id node-4 -input 4
-    secrets:
-      - secret_node-4
-
-secrets:
-  secret_node-1:
-    file: ./session/node-1.secrets
-  secret_node-2:
-    file: ./session/node-2.secrets
-  secret_node-3:
-    file: ./session/node-3.secrets
-  secret_node-4:
-    file: ./session/node-4.secrets
-  
