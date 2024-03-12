@@ -126,7 +126,7 @@ func getAPIShare(s *protocols.Share) (*api.Share, error) {
 	apiShare := &api.Share{
 		Desc: &api.ShareDescriptor{
 			ProtocolID:   &api.ProtocolID{ProtocolID: string(s.ProtocolID)},
-			ProtocolType: api.ProtocolType(s.ShareDescriptor.Type),
+			ProtocolType: api.ProtocolType(s.ShareMetadata.Type),
 			AggregateFor: make([]*api.NodeID, 0, len(s.From)),
 		},
 		Share: outShareBytes,
@@ -147,7 +147,7 @@ func getShareFromAPI(s *api.Share) (protocols.Share, error) {
 		return protocols.Share{}, fmt.Errorf("unknown share type: %s", pType)
 	}
 	ps := protocols.Share{
-		ShareDescriptor: protocols.ShareDescriptor{
+		ShareMetadata: protocols.ShareMetadata{
 			ProtocolID: pID,
 			Type:       pType,
 			From:       make(utils.Set[pkg.NodeID]),

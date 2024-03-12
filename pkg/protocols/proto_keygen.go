@@ -15,45 +15,6 @@ import (
 	"golang.org/x/crypto/blake2b"
 )
 
-type ShareDescriptor struct {
-	pkg.ProtocolID
-	Type
-	From utils.Set[pkg.NodeID]
-}
-
-type Share struct {
-	ShareDescriptor
-	MHEShare LattigoShare
-}
-
-type Input interface{}
-
-type Output struct {
-	Result interface{}
-	Error  error
-}
-
-type OutputKey interface{}
-
-type CRP interface{}
-
-type AggregationOutput struct {
-	Share      Share
-	Descriptor Descriptor
-	Error      error
-}
-
-type Instance interface {
-	ID() pkg.ProtocolID
-	Desc() Descriptor
-
-	AllocateShare() Share
-	GenShare(*Share) error
-	Aggregate(ctx context.Context, incoming <-chan Share) (chan AggregationOutput, error)
-	HasShareFrom(pkg.NodeID) bool
-	Output(agg AggregationOutput) chan Output
-}
-
 type Type uint
 
 const (
@@ -115,33 +76,6 @@ func (t Type) IsCompute() bool {
 	default:
 		return false
 	}
-}
-
-type Signature struct {
-	Type Type
-	Args map[string]string
-}
-
-func (t Signature) String() string {
-	args := make(sort.StringSlice, 0, len(t.Args))
-	for argname, argval := range t.Args {
-		args = append(args, fmt.Sprintf("%s=%s", argname, argval))
-	}
-	sort.Sort(args)
-	return fmt.Sprintf("%s(%s)", t.Type, strings.Join(args, ","))
-}
-
-func (s Signature) Equals(other Signature) bool {
-	if s.Type != other.Type {
-		return false
-	}
-	for k, v := range s.Args {
-		vOther, has := other.Args[k]
-		if !has || v != vOther {
-			return false
-		}
-	}
-	return true
 }
 
 type protocol struct {
@@ -437,7 +371,7 @@ func (p *protocol) Logf(msg string, v ...any) {
 func (s Share) Copy() Share {
 	switch st := s.MHEShare.(type) {
 	case *drlwe.PublicKeyGenShare:
-		return Share{ShareDescriptor: s.ShareDescriptor, MHEShare: &drlwe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
+		return Share{ShareMetadata: s.ShareMetadata, MHEShare: &drlwe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
 	default:
 		panic("not implemented") // TODO: implement on Lattigo side ?
 	}

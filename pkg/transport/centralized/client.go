@@ -63,7 +63,8 @@ func (hc *HeliumClient) ConnectWithDialer(dialer transport.Dialer) error {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 
-	ctx, _ := context.WithTimeout(context.Background(), ClientConnectTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), ClientConnectTimeout)
+	defer cancel()
 	cc, err := grpc.DialContext(ctx, string(hc.helperAddress), opts...)
 	if err != nil {
 		return fmt.Errorf("fail establish connection to the helper at tcp://%s: %w", hc.helperAddress, err)
