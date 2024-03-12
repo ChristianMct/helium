@@ -277,7 +277,7 @@ func (s *Service) getAggregationOutputFromBackend(ctx context.Context, pd protoc
 		return nil, err
 	}
 	share.MHEShare = lattigoShare
-	share.Type = pd.Signature.Type
+	share.ProtocolType = pd.Signature.Type
 	share.ProtocolID = pd.ID()
 	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
 }

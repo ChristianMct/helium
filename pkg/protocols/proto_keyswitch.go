@@ -10,23 +10,25 @@ import (
 )
 
 type keySwitchProtocol struct {
-	protocol
+	patProtocol
 	target    pkg.NodeID
-	proto     LattigoKeySwitchProtocol
-	outputKey OutputKey
+	ks        MHEKeySwitchProtocol
+	outputKey ReceiverKey
 	input     *rlwe.Ciphertext
 }
 
 func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Instance, error) {
 
-	prot, err := newProtocol(pd, sess)
+	prot, err := newPATProtocol(pd, sess)
 	if err != nil {
 		return nil, err
 	}
 
 	ks := &keySwitchProtocol{
-		protocol: *prot,
+		patProtocol: *prot,
 	}
+
+	ks.ks = ks.proto.(MHEKeySwitchProtocol)
 
 	if _, hasArg := pd.Signature.Args["target"]; !hasArg {
 		return nil, fmt.Errorf("should provide argument: target")
@@ -50,10 +52,9 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 		if sess.Contains(ks.target) && !slices.Contains(pd.Participants, ks.target) {
 			return nil, fmt.Errorf("a session target must be a protocol participant in DEC")
 		}
-		if !sess.Contains(ks.target) && ks.Aggregator != ks.target {
+		if !sess.Contains(ks.target) && ks.pd.Aggregator != ks.target {
 			return nil, fmt.Errorf("target for protocol DEC should be a session node or the aggreator, was %s", ks.target)
 		}
-		ks.proto, err = NewCKSProtocol(sess.Params.Parameters, pd.Signature.Args)
 		ks.outputKey = rlwe.NewSecretKey(sess.Params) // target key is zero for decryption // TODO caching of this value
 	case PCKS:
 		return nil, fmt.Errorf("PCKS not supported yet") // TODO
@@ -63,18 +64,9 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 	}
 
 	// TODO: below is same as keygen protocols
-	ks.pubrand = GetProtocolPublicRandomness(pd, sess)
-
-	if ks.IsParticipant() {
-		ks.sk, err = sess.GetSecretKeyForGroup(pd.Participants) // TODO: could cache the group keys
-		if err != nil {
-			return nil, err
-		}
-		ks.privrand = GetProtocolPrivateRandomness(pd, sess)
-	}
 
 	if ks.IsAggregator() {
-		ks.agg = newShareAggregator(pd, ks.AllocateShare(), ks.proto.AggregatedShares) // TODO: could cache the shares
+		ks.agg = newShareAggregator(pd, ks.AllocateShare(), ks.ks.AggregatedShares) // TODO: could cache the shares
 	}
 	return ks, nil
 }
@@ -85,7 +77,7 @@ func (p *keySwitchProtocol) GenShare(share *Share) error {
 		return fmt.Errorf("node is not a participant")
 	}
 
-	if p.Signature.Type == DEC && p.target == p.self {
+	if p.pd.Type == DEC && p.target == p.self {
 		return fmt.Errorf("node is decryption receiver")
 	}
 
@@ -93,10 +85,10 @@ func (p *keySwitchProtocol) GenShare(share *Share) error {
 		return fmt.Errorf("no input provided to protocol")
 	}
 
-	share.ProtocolID = p.ProtocolID
+	share.ProtocolID = p.id
 	share.From = utils.NewSingletonSet(p.self)
-	share.Type = p.Signature.Type
-	return p.proto.GenShare(p.sk, p.outputKey, p.input, *share)
+	share.ProtocolType = p.pd.Type
+	return p.ks.GenShare(p.sk, p.outputKey, p.input, *share)
 }
 
 func (p *keySwitchProtocol) Output(agg AggregationOutput) chan Output {
@@ -106,7 +98,7 @@ func (p *keySwitchProtocol) Output(agg AggregationOutput) chan Output {
 		return out
 	}
 	res := p.input.CopyNew()
-	err := p.proto.Finalize(p.input, res, agg.Share)
+	err := p.ks.Finalize(p.input, res, agg.Share)
 	if err != nil {
 		out <- Output{Error: fmt.Errorf("error at finalization: %w", err)}
 		return out

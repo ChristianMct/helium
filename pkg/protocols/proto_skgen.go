@@ -8,7 +8,7 @@ import (
 )
 
 type skgProtocol struct {
-	*protocol
+	*patProtocol
 	T     int
 	spks  map[pkg.NodeID]drlwe.ShamirPublicPoint
 	proto SKGProtocol

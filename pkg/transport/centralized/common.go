@@ -126,7 +126,7 @@ func getAPIShare(s *protocols.Share) (*api.Share, error) {
 	apiShare := &api.Share{
 		Desc: &api.ShareDescriptor{
 			ProtocolID:   &api.ProtocolID{ProtocolID: string(s.ProtocolID)},
-			ProtocolType: api.ProtocolType(s.ShareMetadata.Type),
+			ProtocolType: api.ProtocolType(s.ShareMetadata.ProtocolType),
 			AggregateFor: make([]*api.NodeID, 0, len(s.From)),
 		},
 		Share: outShareBytes,
@@ -140,7 +140,7 @@ func getAPIShare(s *protocols.Share) (*api.Share, error) {
 // TODO: revamp proto type
 func getShareFromAPI(s *api.Share) (protocols.Share, error) {
 	desc := s.GetDesc()
-	pID := pkg.ProtocolID(desc.GetProtocolID().GetProtocolID())
+	pID := protocols.ID(desc.GetProtocolID().GetProtocolID())
 	pType := protocols.Type(desc.ProtocolType)
 	share := pType.Share()
 	if share == nil {
@@ -148,9 +148,9 @@ func getShareFromAPI(s *api.Share) (protocols.Share, error) {
 	}
 	ps := protocols.Share{
 		ShareMetadata: protocols.ShareMetadata{
-			ProtocolID: pID,
-			Type:       pType,
-			From:       make(utils.Set[pkg.NodeID]),
+			ProtocolID:   pID,
+			ProtocolType: pType,
+			From:         make(utils.Set[pkg.NodeID]),
 		},
 		MHEShare: share,
 	}

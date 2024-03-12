@@ -110,10 +110,7 @@ func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T
 	resc := make(chan AggregationOutput, 1)
 	errc := make(chan error, 1)
 	go func() {
-		aggOutC, err := helperP.Aggregate(ctx, incoming)
-		if err != nil {
-			errc <- err
-		}
+		aggOutC := helperP.Aggregate(ctx, incoming)
 		resc <- <-aggOutC
 	}()
 

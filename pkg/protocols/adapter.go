@@ -16,26 +16,52 @@ type LattigoShare interface {
 	encoding.BinaryUnmarshaler
 }
 
-type LattigoKeygenProtocol interface {
+type MHEProtocol interface {
 	AllocateShare() Share
 	AggregatedShares(dst Share, ss ...Share) error
+}
+
+type MHEKeygenProtocol interface {
+	MHEProtocol
 	ReadCRP(crs drlwe.CRS) (CRP, error)
 	GenShare(*rlwe.SecretKey, CRP, Share) error
 	Finalize(CRP, ...Share) (interface{}, error)
 }
 
-type LattigoKeySwitchProtocol interface {
-	AllocateShare() Share
-	AggregatedShares(dst Share, ss ...Share) error
-	GenShare(*rlwe.SecretKey, OutputKey, *rlwe.Ciphertext, Share) error
+type MHEKeySwitchProtocol interface {
+	MHEProtocol
+	GenShare(*rlwe.SecretKey, ReceiverKey, *rlwe.Ciphertext, Share) error
 	Finalize(*rlwe.Ciphertext, *rlwe.Ciphertext, Share) error
+}
+
+func NewMHEProtocol(sig Signature, params rlwe.Parameters) (MHEProtocol, error) {
+	switch sig.Type {
+	case SKG:
+		return NewSKGProtocol(params, sig.Args)
+	case CKG:
+		return NewCKGProtocol(params, sig.Args)
+	case RTG:
+		return NewRTGProtocol(params, sig.Args)
+	case RKG_1:
+		return NewRKGProtocol(params, nil, 1, sig.Args)
+	case RKG:
+		return NewRKGProtocol(params, nil, 2, sig.Args)
+	case CKS:
+		return NewCKSProtocol(params, sig.Args)
+	case DEC:
+		return NewCKSProtocol(params, sig.Args)
+	case PCKS:
+		return NewPCKSProtocol(params, sig.Args)
+	default:
+		return nil, fmt.Errorf("unsupported MHE protocol type: %s", sig.Type)
+	}
 }
 
 type SKGProtocol struct {
 	drlwe.Thresholdizer
 }
 
-func NewSKGProtocol(params rlwe.Parameters, arg map[string]interface{}) (*SKGProtocol, error) {
+func NewSKGProtocol(params rlwe.Parameters, arg map[string]string) (*SKGProtocol, error) {
 	return &SKGProtocol{Thresholdizer: drlwe.NewThresholdizer(params)}, nil
 }
 
@@ -363,7 +389,7 @@ func (cks *CKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
 	return nil
 }
 
-func (cks *CKSProtocol) GenShare(sk *rlwe.SecretKey, outKey OutputKey, in *rlwe.Ciphertext, share Share) error {
+func (cks *CKSProtocol) GenShare(sk *rlwe.SecretKey, outKey ReceiverKey, in *rlwe.Ciphertext, share Share) error {
 	skOut, ok := outKey.(*rlwe.SecretKey)
 	if !ok {
 		return fmt.Errorf("bad output key type: %T instead of %T", outKey, skOut)
@@ -434,7 +460,7 @@ func (cks *PCKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
 	return nil
 }
 
-func (cks *PCKSProtocol) GenShare(sk *rlwe.SecretKey, outKey OutputKey, in *rlwe.Ciphertext, share Share) error {
+func (cks *PCKSProtocol) GenShare(sk *rlwe.SecretKey, outKey ReceiverKey, in *rlwe.Ciphertext, share Share) error {
 	pkOut, ok := outKey.(*rlwe.PublicKey)
 	if !ok {
 		return fmt.Errorf("bad output key type: %T instead of %T", outKey, pkOut)

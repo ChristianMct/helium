@@ -337,9 +337,9 @@ func (node *Node) Close() error {
 // PutShare is called by the transport upon receiving a new share.
 func (n *Node) PutShare(ctx context.Context, s protocols.Share) error {
 	switch {
-	case s.Type.IsSetup():
+	case s.ProtocolType.IsSetup():
 		n.setupTransport.inshares <- s
-	case s.Type.IsCompute():
+	case s.ProtocolType.IsCompute():
 		n.computeTransport.inshares <- s
 	default:
 		return fmt.Errorf("unknown protocol type")
@@ -555,7 +555,7 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 	}
 
 	var current int
-	runProto := make(map[pkg.ProtocolID]protocols.Descriptor)
+	runProto := make(map[protocols.ID]protocols.Descriptor)
 	runCircuit := make(map[circuits.ID]circuits.Descriptor)
 	for ev := range events {
 

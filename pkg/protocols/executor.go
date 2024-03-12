@@ -90,7 +90,7 @@ type Executor struct {
 	inputProvider InputProvider
 
 	// node tracking
-	connectedNodes     map[pkg.NodeID]utils.Set[pkg.ProtocolID]
+	connectedNodes     map[pkg.NodeID]utils.Set[ID]
 	connectedNodesMu   sync.RWMutex
 	connectedNodesCond sync.Cond
 
@@ -107,19 +107,19 @@ type Executor struct {
 	}
 
 	runningProtoMu sync.RWMutex
-	runningProtos  map[pkg.ProtocolID]struct {
+	runningProtos  map[ID]struct {
 		pd           Descriptor
 		incoming     chan Share
 		disconnected chan pkg.NodeID
 	}
 	//runningProtoWg sync.WaitGroup
 
-	nodesToProtocols map[pkg.NodeID]utils.Set[pkg.ProtocolID]
+	nodesToProtocols map[pkg.NodeID]utils.Set[ID]
 
 	completedProtos []Descriptor
 
 	// ResultBackend
-	// rkgRound1Results map[pkg.ProtocolID]Share // TODO remove
+	// rkgRound1Results map[ID]Share // TODO remove
 }
 
 func NewExectutor(config ExecutorConfig, ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
@@ -156,21 +156,21 @@ func NewExectutor(config ExecutorConfig, ownId pkg.NodeID, sessions pkg.SessionP
 		ctx context.Context
 	})
 
-	s.runningProtos = make(map[pkg.ProtocolID]struct {
+	s.runningProtos = make(map[ID]struct {
 		pd           Descriptor
 		incoming     chan Share
 		disconnected chan pkg.NodeID
 	})
 
-	s.connectedNodes = make(map[pkg.NodeID]utils.Set[pkg.ProtocolID])
+	s.connectedNodes = make(map[pkg.NodeID]utils.Set[ID])
 	s.connectedNodesCond = *sync.NewCond(&s.connectedNodesMu)
 
 	s.completedProtos = make([]Descriptor, 0)
 
 	// s.ResultBackend = newObjStoreResultBackend(objStore)
-	// s.rkgRound1Results = make(map[pkg.ProtocolID]Share)
+	// s.rkgRound1Results = make(map[ID]Share)
 
-	s.nodesToProtocols = make(map[pkg.NodeID]utils.Set[pkg.ProtocolID])
+	s.nodesToProtocols = make(map[pkg.NodeID]utils.Set[ID])
 	return s, nil
 }
 
@@ -303,7 +303,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 	pid := pd.ID()
 
 	// registers the protocol
-	var aggregation chan AggregationOutput
+	var aggregation <-chan AggregationOutput
 	var disconnected chan pkg.NodeID
 	s.runningProtoMu.Lock()
 	incoming := make(chan Share)
@@ -321,10 +321,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 	//s.runningProtoWg.Add(1)
 
 	// runs the aggregation
-	aggregation, err = proto.Aggregate(ctx, incoming)
-	if err != nil {
-		panic(err)
-	}
+	aggregation = proto.Aggregate(ctx, incoming)
 
 	s.Logf("started protocol %s with input %T", pd, input)
 
@@ -500,7 +497,7 @@ func (s *Executor) Register(peer pkg.NodeID) error {
 		panic("attempting to register a registered node")
 	}
 
-	s.connectedNodes[peer] = make(utils.Set[pkg.ProtocolID])
+	s.connectedNodes[peer] = make(utils.Set[ID])
 
 	s.Logf("[Node] registered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
