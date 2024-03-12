@@ -8,6 +8,7 @@ import (
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
+	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
 type cpkProtocol struct {
@@ -56,7 +57,7 @@ func NewKeygenProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Insta
 	return p, nil
 }
 
-func (p *cpkProtocol) GenShare(share *Share) error {
+func (p *cpkProtocol) GenShare(sk *rlwe.SecretKey, share *Share) error {
 
 	if !p.IsParticipant() {
 		return fmt.Errorf("node is not a participant")
@@ -74,7 +75,7 @@ func (p *cpkProtocol) GenShare(share *Share) error {
 	share.ProtocolID = p.id
 	share.From = utils.NewSingletonSet(p.self)
 	share.ProtocolType = p.pd.Type
-	return p.kg.GenShare(p.sk, p.crp, *share)
+	return p.kg.GenShare(sk, p.crp, *share)
 }
 
 func (p *cpkProtocol) Output(agg AggregationOutput) chan Output {

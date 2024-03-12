@@ -71,7 +71,7 @@ func NewKeyswitchProtocol(pd Descriptor, sess *pkg.Session, input ...Input) (Ins
 	return ks, nil
 }
 
-func (p *keySwitchProtocol) GenShare(share *Share) error {
+func (p *keySwitchProtocol) GenShare(sk *rlwe.SecretKey, share *Share) error {
 
 	if !p.IsParticipant() {
 		return fmt.Errorf("node is not a participant")
@@ -88,7 +88,7 @@ func (p *keySwitchProtocol) GenShare(share *Share) error {
 	share.ProtocolID = p.id
 	share.From = utils.NewSingletonSet(p.self)
 	share.ProtocolType = p.pd.Type
-	return p.ks.GenShare(p.sk, p.outputKey, p.input, *share)
+	return p.ks.GenShare(sk, p.outputKey, p.input, *share)
 }
 
 func (p *keySwitchProtocol) Output(agg AggregationOutput) chan Output {

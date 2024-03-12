@@ -328,9 +328,15 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 	s.coordinator.Outgoing() <- Event{EventType: Started, Descriptor: pd}
 
 	if s.isParticipantFor(pd) {
+
+		sk, err := sess.GetSecretKeyForGroup(pd.Participants) // TODO: cache
+		if err != nil {
+			return err
+		}
+
 		// runs the share generation and sending to aggregator
 		share := proto.AllocateShare()
-		proto.GenShare(&share)
+		proto.GenShare(sk, &share)
 		s.transport.OutgoingShares() <- share
 		s.Logf("completed participation for %s", pd.HID())
 	}
@@ -454,7 +460,13 @@ func (s *Executor) runAsParticipant(ctx context.Context, pd Descriptor) error {
 	s.Logf("sending share for %s", pd.HID())
 	// runs the share generation and sending to aggregator
 	share := proto.AllocateShare()
-	err = proto.GenShare(&share)
+
+	sk, err := sess.GetSecretKeyForGroup(pd.Participants) // TODO cache ?
+	if err != nil {
+		return err
+	}
+
+	err = proto.GenShare(sk, &share)
 	if err != nil {
 		return err
 	}

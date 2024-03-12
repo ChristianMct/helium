@@ -121,8 +121,11 @@ func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T
 			t.Fatal(err)
 		}
 
+		ski, err := nodeSess.GetSecretKeyForGroup(pd.Participants)
+		require.Nil(t, err)
+
 		share := nodeP.AllocateShare()
-		err = nodeP.GenShare(&share)
+		err = nodeP.GenShare(ski, &share)
 
 		if !slices.Contains(pd.Participants, nid) {
 			require.NotNil(t, err, "non participants should not generate a share")

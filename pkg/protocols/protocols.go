@@ -131,8 +131,8 @@ type Instance interface {
 	// AllocateShare returns a newly allocated share for the protocol instance.
 	AllocateShare() Share
 	// GenShare is called by the session nodes to generate their share in the protocol instance,
-	// storing the result in the provided share.
-	GenShare(*Share) error
+	// storing the result in the provided share. // TODO update
+	GenShare(*rlwe.SecretKey, *Share) error
 	// Aggregate is called by the aggregator node to aggregate the shares of the protocol instance.
 	// The method aggregates the shares received in the provided incoming channel in the background,
 	// and sends the aggregated share to the returned channel when the aggregation has completed.
@@ -168,13 +168,11 @@ type patProtocol struct {
 	hid  string
 	self pkg.NodeID
 
-	sk *rlwe.SecretKey
-
 	pubrand, privrand blake2b.XOF
 
 	proto MHEProtocol
 
-	// aggregator
+	// aggregator only
 	agg *shareAggregator
 }
 
@@ -194,13 +192,8 @@ func newPATProtocol(pd Descriptor, sess *pkg.Session) (*patProtocol, error) {
 
 	// initilize the randomness sources from the session
 	p.pubrand = GetProtocolPublicRandomness(pd, sess)
-
 	var err error
 	if p.IsParticipant() {
-		p.sk, err = sess.GetSecretKeyForGroup(pd.Participants) // TODO: could cache the group keys
-		if err != nil {
-			return nil, err
-		}
 		p.privrand = GetProtocolPrivateRandomness(pd, sess)
 	}
 
