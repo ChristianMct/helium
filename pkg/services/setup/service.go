@@ -23,6 +23,8 @@ type ServiceConfig struct {
 type Service struct {
 	self pkg.NodeID
 
+	sessions pkg.SessionProvider
+
 	execuctor *protocols.Executor
 	transport Transport
 
@@ -48,6 +50,7 @@ func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf Servic
 	s = new(Service)
 
 	s.self = ownId
+	s.sessions = sessions
 	s.execuctor, err = protocols.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
@@ -173,9 +176,9 @@ func (s *Service) RunSignature(ctx context.Context, sig protocols.Signature) err
 // GetCollectivePublicKey returns the collective public key when available.
 // The method blocks until the corresponding protocol completes.
 func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.CKG})
-	if out.Error != nil {
-		return nil, out.Error
+	out, err := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.CKG})
+	if err != nil {
+		return nil, err
 	}
 	return out.Result.(*rlwe.PublicKey), nil
 }
@@ -183,9 +186,9 @@ func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, 
 // GetGaloisKey returns the Galois key for the given Galois element when available.
 // The method blocks until the corresponding protocol completes.
 func (s *Service) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
-	if out.Error != nil {
-		return nil, out.Error
+	out, err := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
+	if err != nil {
+		return nil, err
 	}
 	return out.Result.(*rlwe.GaloisKey), nil
 }
@@ -193,43 +196,64 @@ func (s *Service) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisK
 // GetRelinearizationKey returns the relinearization key when available.
 // The method blocks until the corresponding protocol completes.
 func (s *Service) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	out := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RKG})
-	if out.Error != nil {
-		return nil, out.Error
+	out, err := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RKG})
+	if err != nil {
+		return nil, err
 	}
 	return out.Result.(*rlwe.RelinearizationKey), nil
 }
 
-func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) protocols.Output {
+func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) (*protocols.Output, error) {
 
 	pd, err := s.completed.AwaitCompletedDescriptorFor(sig)
 	if err != nil {
-		return protocols.Output{Error: fmt.Errorf("error while waiting for signature: %w", err)}
+		return nil, fmt.Errorf("error while waiting for signature: %w", err)
 	}
 
 	aggOut, err := s.GetAggregationOutput(ctx, *pd)
 	if err != nil {
-		return protocols.Output{Error: fmt.Errorf("could not retrieve aggrgation output for %s: %w", pd.HID(), err)}
+		return nil, fmt.Errorf("could not retrieve aggrgation output for %s: %w", pd.HID(), err)
 	}
 
-	return s.execuctor.GetOutput(ctx, *aggOut)
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("session not found in context")
+	}
+
+	out := protocols.AllocateOutput(sig, sess.Params.Parameters) // TODO cache ?
+	err = s.execuctor.GetOutput(ctx, *aggOut, out)
+	if err != nil {
+		return nil, fmt.Errorf("error while getting output: %w", err)
+	}
+
+	return &protocols.Output{Descriptor: *pd, Result: out}, nil
 }
 
 // GetProtocolInput returns the protocol inputs for the given protocol descriptor.
 // It is meant to be passed to a protocols.Executor as a protocols.InputProvider method.
 func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
 
-	// In the setup service, only the RKG protocols requires an input: a completed RKG_1 protocol aggregation output.
-	if pd.Signature.Type != protocols.RKG {
-		return nil, nil
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("session not found in context")
 	}
 
-	aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
-	if err != nil {
-		return nil, err
+	switch pd.Signature.Type {
+	case protocols.CKG, protocols.RTG, protocols.RKG_1:
+		p, err := protocols.NewProtocol(pd, sess) // TODO: cache and reuse ?
+		if err != nil {
+			return nil, err
+		}
+		return p.ReadCRP()
+	case protocols.RKG:
+		aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
+		if err != nil {
+			return nil, err
+		}
+		return aggOutR1.Share.MHEShare, nil // TODO: regresion on MHEShare
+	default:
+		return nil, fmt.Errorf("no input for this protocol")
 	}
-
-	return aggOutR1.Share, nil
 }
 
 // GetAggregationOutput returns the aggregation output for the given protocol descriptor.

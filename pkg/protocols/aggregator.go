@@ -9,28 +9,28 @@ import (
 )
 
 type shareAggregator struct {
-	aggFunc  func(Share, ...Share) error
-	share    Share
-	expected utils.Set[pkg.NodeID]
-	l        sync.RWMutex
+	aggFunc func(Share, ...Share) error
+	share   Share
+	exp     utils.Set[pkg.NodeID]
+	l       sync.RWMutex
 }
 
 func newShareAggregator(pd Descriptor, share Share, aggFunc func(Share, ...Share) error) *shareAggregator {
 	agg := new(shareAggregator)
-	agg.expected = utils.NewSet(pd.Participants)
+	agg.exp = utils.NewSet(pd.Participants)
 	if pd.Signature.Type == DEC { // the receiver does not provide a share in the DEC protocol
-		agg.expected.Remove(pkg.NodeID(pd.Signature.Args["target"]))
+		agg.exp.Remove(pkg.NodeID(pd.Signature.Args["target"]))
 	}
 	agg.share = share
 	agg.aggFunc = aggFunc
 	return agg
 }
 
-func (a *shareAggregator) PutShare(share Share) (bool, error) {
+func (a *shareAggregator) put(share Share) (bool, error) {
 	if len(share.From) == 0 {
 		return false, fmt.Errorf("the From field should not be empty")
 	}
-	if !a.expected.Includes(share.From) {
+	if !a.exp.Includes(share.From) {
 		return false, fmt.Errorf("unexpected share in aggregate")
 	}
 	if !a.share.From.Disjoint(share.From) {
@@ -47,19 +47,19 @@ func (a *shareAggregator) PutShare(share Share) (bool, error) {
 	return a.complete(), nil
 }
 
-func (a *shareAggregator) Expected() utils.Set[pkg.NodeID] {
+func (a *shareAggregator) expected() utils.Set[pkg.NodeID] {
 	a.l.RLock()
 	defer a.l.RUnlock()
-	return a.expected.Copy()
+	return a.exp.Copy()
 }
 
-func (a *shareAggregator) Missing() utils.Set[pkg.NodeID] {
+func (a *shareAggregator) missing() utils.Set[pkg.NodeID] {
 	a.l.RLock()
 	defer a.l.RUnlock()
-	return a.expected.Diff(a.share.From)
+	return a.exp.Diff(a.share.From)
 }
 
-func (a *shareAggregator) GetAggregatedShare() Share {
+func (a *shareAggregator) getAggregatedShare() Share {
 	a.l.RLock()
 	defer a.l.RUnlock()
 	if !a.complete() {
@@ -69,5 +69,5 @@ func (a *shareAggregator) GetAggregatedShare() Share {
 }
 
 func (a *shareAggregator) complete() bool {
-	return a.expected.Equals(a.share.From)
+	return a.exp.Equals(a.share.From)
 }

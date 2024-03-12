@@ -12,74 +12,18 @@ import (
 )
 
 const (
-	defaultSigQueueSize = 256 // as coordinator, capacity of the pending signature channel
-
-	defaultMaxParticipation = 8 // as participant, max number of parallel proto participation
-	defaultMaxAggregation   = 8 // as aggregator, max number of parallel proto aggrations
-	defaultMaxProtoPerNode  = 8 // as coordinator, max number of parallel proto per participant
+	defaultSigQueueSize     = 256 // as coordinator, capacity of the pending signature channel
+	defaultMaxParticipation = 8   // as participant, max number of parallel proto participation
+	defaultMaxAggregation   = 8   // as aggregator, max number of parallel proto aggrations
+	defaultMaxProtoPerNode  = 8   // as coordinator, max number of parallel proto per participant
 )
 
-type ExecutorConfig struct {
-	// As coordinator
-	SigQueueSize    int // size of the signature queue. If the queue is full the RunSignature method blocks.
-	MaxProtoPerNode int // max number of parallel proto participation per registered node
-
-	// as aggregator
-	MaxAggregation int // max number of parallel proto aggrations for this executor
-
-	// as participant
-	MaxParticipation int // max number of parallel proto participation for this executor
-}
-
-type Transport interface {
-	OutgoingShares() chan<- Share
-	IncomingShares() <-chan Share
-}
-
-type Coordinator interface {
-	Incoming() <-chan Event
-	Outgoing() chan<- Event
-}
-
-type InputProvider func(ctx context.Context, pd Descriptor) (Input, error)
-
-type AggregationOutputReceiver func(context.Context, AggregationOutput) error
-
-type EventType int8
-
-const (
-	Completed EventType = iota
-	Started
-	Executing
-	Failed
-)
-
-var evtypeToString = []string{"COMPLETED", "STARTED", "EXECUTING", "FAILED"}
-
-func (t EventType) String() string {
-	if int(t) > len(evtypeToString) {
-		t = 0
-	}
-	return evtypeToString[t]
-}
-
-type Event struct {
-	EventType
-	Descriptor
-}
-
-func (ev Event) String() string {
-	return fmt.Sprintf("%s: %s", ev.EventType, ev.Signature)
-}
-
-func (ev Event) IsSetupEvent() bool {
-	return ev.Signature.Type.IsSetup()
-}
-
-func (ev Event) IsComputeEvent() bool {
-	return ev.Signature.Type.IsCompute()
-}
-
+// Executor is a type for executing protocols.
+// It enables concurrent execution of protocols and handles both running the
+// protocol as a participant and as an aggregator/coordinator.
+// As a participant, the executor will generate the share and send it to the
+// aggregator. As an aggregator/coordinator, the executor will decide on the
+// participant list based on the regsitered nodes, and perform the aggregation.
 type Executor struct {
 	config ExecutorConfig
 	self   pkg.NodeID
@@ -112,16 +56,97 @@ type Executor struct {
 		incoming     chan Share
 		disconnected chan pkg.NodeID
 	}
-	//runningProtoWg sync.WaitGroup
 
 	nodesToProtocols map[pkg.NodeID]utils.Set[ID]
 
 	completedProtos []Descriptor
-
-	// ResultBackend
-	// rkgRound1Results map[ID]Share // TODO remove
 }
 
+// ExecutorConfig is the configuration for the executor.
+type ExecutorConfig struct {
+	// As coordinator
+	// SigQueueSize is the size of the signature queue. If the queue is full the RunSignature method blocks.
+	SigQueueSize int
+	// MaxProtoPerNode is the maximum number of parallel proto participation per registered node.
+	MaxProtoPerNode int
+
+	// as aggregator
+	// MaxAggregation is the maximum number of parallel proto aggrations for this executor.
+	MaxAggregation int
+
+	// as participant
+	// MaxParticipation is the maximum number of parallel proto participation for this executor.
+	MaxParticipation int
+}
+
+// Transport defines the transport interface required for the executor.
+type Transport interface {
+	OutgoingShares() chan<- Share
+	IncomingShares() <-chan Share
+}
+
+// Coordinator is the interface for protocol coordination.
+type Coordinator interface {
+	Incoming() <-chan Event
+	Outgoing() chan<- Event
+}
+
+// Input is the interface the provision of protocol inputs. It is called
+// by the executor to get the CRP (CKG, RTG, RKG) and ciphertexts (DEC, CKS, PCKS)
+// for the  protocols.
+type InputProvider func(ctx context.Context, pd Descriptor) (Input, error)
+
+// AggregationOutputReceiver is the interface for receiving aggregation outputs
+// from the executor. These types are registered as callbacks when requesting
+// the execution of a protocol.
+type AggregationOutputReceiver func(context.Context, AggregationOutput) error
+
+// Event is a type for protocol-execution-related events.
+type Event struct {
+	EventType
+	Descriptor
+}
+
+// EventType defines the type of protocol-execution-related events.
+type EventType int8
+
+const (
+	// Completed is the event type for a completed protocol.
+	Completed EventType = iota
+	// Started is the event type for a started protocol.
+	Started
+	// Executing is the event type for a protocol that is currently executing. It is currently not used.
+	Executing
+	// Failed is the event type for a protocol that has failed.
+	Failed
+)
+
+var evtypeToString = []string{"COMPLETED", "STARTED", "EXECUTING", "FAILED"}
+
+// String returns the string representation of the event type.
+func (t EventType) String() string {
+	if int(t) > len(evtypeToString) {
+		t = 0
+	}
+	return evtypeToString[t]
+}
+
+// String returns the string representation of the event.
+func (ev Event) String() string {
+	return fmt.Sprintf("%s: %s", ev.EventType, ev.Signature)
+}
+
+// IsSetupEvent returns true if the event is a setup-related event.
+func (ev Event) IsSetupEvent() bool {
+	return ev.Signature.Type.IsSetup()
+}
+
+// IsComputeEvent returns true if the event is a compute-related event.
+func (ev Event) IsComputeEvent() bool {
+	return ev.Signature.Type.IsCompute()
+}
+
+// NewExectutor creates a new executor.
 func NewExectutor(config ExecutorConfig, ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
@@ -174,7 +199,7 @@ func NewExectutor(config ExecutorConfig, ownId pkg.NodeID, sessions pkg.SessionP
 	return s, nil
 }
 
-func (s *Executor) Run(ctx context.Context) error {
+func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is cancelled
 
 	doneWithShareTransport := make(chan struct{})
 
@@ -217,6 +242,7 @@ func (s *Executor) Run(ctx context.Context) error {
 						}
 						err := s.runSignature(qsig.ctx, qsig.sig, qsig.rec)
 						if err != nil {
+							s.Logf("error: %s", err)
 							return fmt.Errorf("error in signature queue processing: %w", err)
 						}
 					case <-prctx.Done():
@@ -237,6 +263,7 @@ func (s *Executor) Run(ctx context.Context) error {
 						return nil
 					}
 					if err := s.runAsParticipant(qpd.ctx, qpd.pd); err != nil {
+						s.Logf("error: %s", err)
 						return fmt.Errorf("error during protocol execution as participant: %w", err)
 					}
 				case <-prctx.Done():
@@ -291,12 +318,7 @@ func (s *Executor) Run(ctx context.Context) error {
 
 func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
 
-	input, err := s.inputProvider(ctx, pd)
-	if err != nil {
-		return err
-	}
-
-	proto, err := NewProtocol(pd, sess, input)
+	proto, err := NewProtocol(pd, sess)
 	if err != nil {
 		panic(err)
 	}
@@ -323,7 +345,12 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 	// runs the aggregation
 	aggregation = proto.Aggregate(ctx, incoming)
 
-	s.Logf("started protocol %s with input %T", pd, input)
+	s.Logf("started protocol %s", pd)
+
+	input, err := s.inputProvider(ctx, pd)
+	if err != nil {
+		return fmt.Errorf("cannot get input for protocol: %w", err)
+	}
 
 	s.coordinator.Outgoing() <- Event{EventType: Started, Descriptor: pd}
 
@@ -336,7 +363,10 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd De
 
 		// runs the share generation and sending to aggregator
 		share := proto.AllocateShare()
-		proto.GenShare(sk, &share)
+		err = proto.GenShare(sk, input, &share)
+		if err != nil {
+			return err
+		}
 		s.transport.OutgoingShares() <- share
 		s.Logf("completed participation for %s", pd.HID())
 	}
@@ -446,18 +476,11 @@ func (s *Executor) runAsParticipant(ctx context.Context, pd Descriptor) error {
 
 	s.Logf("started protocol %s as participant", pd.HID())
 
-	input, err := s.inputProvider(ctx, pd)
-	if err != nil {
-		s.Logf("ERROR:%s", err)
-		return fmt.Errorf("error while retreiving input: %w", err)
-	}
-
-	proto, err := NewProtocol(pd, sess, input)
+	proto, err := NewProtocol(pd, sess)
 	if err != nil {
 		return err
 	}
 
-	s.Logf("sending share for %s", pd.HID())
 	// runs the share generation and sending to aggregator
 	share := proto.AllocateShare()
 
@@ -466,33 +489,39 @@ func (s *Executor) runAsParticipant(ctx context.Context, pd Descriptor) error {
 		return err
 	}
 
-	err = proto.GenShare(sk, &share)
+	input, err := s.inputProvider(ctx, pd)
+	if err != nil {
+		return fmt.Errorf("cannot get input for protocol: %w", err)
+	}
+
+	err = proto.GenShare(sk, input, &share)
 	if err != nil {
 		return err
 	}
+
+	s.Logf("sending share for %s", pd.HID())
 	s.transport.OutgoingShares() <- share
 	s.Logf("completed participation for %s", pd.HID())
 	return nil
 }
 
-func (s *Executor) GetOutput(ctx context.Context, aggOut AggregationOutput) (out Output) {
+func (s *Executor) GetOutput(ctx context.Context, aggOut AggregationOutput, rec interface{}) error {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
-		out.Error = fmt.Errorf("no session found in context")
-		return
+		return fmt.Errorf("no session found in context")
 	}
 
 	input, err := s.inputProvider(ctx, aggOut.Descriptor)
 	if err != nil {
-		out.Error = err
+		return fmt.Errorf("cannot get input for protocol: %w", err)
 	}
 
-	p, err := NewProtocol(aggOut.Descriptor, sess, input)
+	p, err := NewProtocol(aggOut.Descriptor, sess)
 	if err != nil {
-		out.Error = fmt.Errorf("cannot create protocol: %s", err)
-		return
+		return fmt.Errorf("cannot create protocol for output: %w", err)
 	}
-	return <-p.Output(aggOut)
+
+	return p.Output(input, aggOut, rec)
 }
 
 // func (s *Executor) Close() {

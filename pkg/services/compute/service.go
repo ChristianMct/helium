@@ -696,6 +696,11 @@ func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocols
 		return err
 	}
 
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return fmt.Errorf("no session found for this context")
+	}
+
 	inOpl, has := aggOut.Descriptor.Signature.Args["op"]
 	if !has {
 		return fmt.Errorf("invalid aggregation output: descriptor does not provide input operand label")
@@ -708,12 +713,13 @@ func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocols
 		return fmt.Errorf("invalid aggregation output: unkown output operand: %s", outOpl)
 	}
 
-	out := s.Executor.GetOutput(ctx, aggOut)
-	if out.Error != nil {
+	out := protocols.AllocateOutput(aggOut.Descriptor.Signature, sess.Params.Parameters)
+	err = s.Executor.GetOutput(ctx, aggOut, out)
+	if err != nil {
 		return fmt.Errorf("protocol output resulted in an error: %w", err)
 	}
 
-	outCt := out.Result.(*rlwe.Ciphertext)
+	outCt := out.(*rlwe.Ciphertext)
 
 	fop.Set(circuits.Operand{OperandLabel: outOpl, Ciphertext: outCt})
 
@@ -741,6 +747,7 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor)
 		return nil, fmt.Errorf("invalid protocol descriptor: operand label %s not in circuit", opl)
 	}
 
+	// TODO NEXT: clean the KeySwitchInput type and its usage
 	return op.Ciphertext, nil
 
 }

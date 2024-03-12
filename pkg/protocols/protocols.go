@@ -6,7 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ldsec/helium/pkg/pkg"
@@ -17,8 +20,8 @@ import (
 )
 
 const (
-	protocolLogging     = false // whether to log events in protocol execution
-	hidHashHexCharCount = 4     // number of hex characters display in the human-readable id
+	protocolLogging     = true // whether to log events in protocol execution
+	hidHashHexCharCount = 4    // number of hex characters display in the human-readable id
 )
 
 // Type is an enumerated type for protocol types.
@@ -52,13 +55,12 @@ type Signature struct {
 	Args map[string]string
 }
 
-// Descriptor is a protocol instance. It is a complete description of
-// a protocol's execution, by complementing the Signature with a role
-// assignment.
+// Descriptor is a complete description of a protocol's execution (i.e., a protocol),
+// by complementing the Signature with a role assignment.
 //
-// Multiple protocol instances can share the same signature, but have
+// Multiple protocols can share the same signature, but have
 // different descriptors (e.g., in the case of a failure).
-// However, a protocol instance is uniquely identified by its descriptor.
+// However, a protocol is uniquely identified by its descriptor.
 type Descriptor struct {
 	Signature
 	Participants []pkg.NodeID
@@ -66,7 +68,7 @@ type Descriptor struct {
 }
 
 // ID is a type for protocol IDs. Protocol IDs are unique identifiers for
-// a protocol instance. Since a protocol instance is uniquely identified by
+// a protocol. Since a protocol is uniquely identified by
 // its descriptor, the ID is derived from the descriptor.
 type ID string
 
@@ -77,8 +79,8 @@ type Input interface{}
 // It contains the result of the protocol execution or an error if the
 // protocol execution has failed.
 type Output struct {
+	Descriptor
 	Result interface{}
-	Error  error
 }
 
 // Share is a type for the nodes' protocol shares.
@@ -116,53 +118,8 @@ type AggregationOutput struct {
 	Error      error
 }
 
-// Instance is an interface for running protocol instances.
-//
-// Note: protocol instances were executed by the services directly
-// in previous versions of the code, hence the existance of this
-// interface.
-type Instance interface {
-	// ID returns the ID of the protocol instance.
-	ID() ID
-	// HID returns the human-readable (truncated) ID of the protocol instance.
-	HID() string
-	// Descriptor returns the protocol descriptor of the protocol instance.
-	Descriptor() Descriptor
-	// AllocateShare returns a newly allocated share for the protocol instance.
-	AllocateShare() Share
-	// GenShare is called by the session nodes to generate their share in the protocol instance,
-	// storing the result in the provided share. // TODO update
-	GenShare(*rlwe.SecretKey, *Share) error
-	// Aggregate is called by the aggregator node to aggregate the shares of the protocol instance.
-	// The method aggregates the shares received in the provided incoming channel in the background,
-	// and sends the aggregated share to the returned channel when the aggregation has completed.
-	// Upon receiving the aggregated share, the caller must check the Error field of the aggregation
-	// output to determine whether the aggregation has failed.
-	// The aggregation can be cancelled by cancelling the context.
-	// If the context is cancelled or the incoming channel is closed before the aggregation has completed,
-	// the method sends the aggregation output with the corresponding error to the returned channel.
-	// The method panics if called by a non-aggregator node.
-	Aggregate(ctx context.Context, incoming <-chan Share) <-chan AggregationOutput
-	// HasShareFrom returns whether the protocol instance has already recieved a share from the specified node.
-	HasShareFrom(pkg.NodeID) bool
-	// Output computes the output of the protocol instance from the aggregation output.
-	Output(agg AggregationOutput) chan Output
-}
-
-// NewProtocol creates a new protocol instance from the provided protocol descriptor, session and inputs.
-func NewProtocol(pd Descriptor, sess *pkg.Session, inputs ...Input) (Instance, error) {
-	switch pd.Signature.Type {
-	case CKG, RTG, RKG_1, RKG:
-		return NewKeygenProtocol(pd, sess, inputs...)
-	case CKS, DEC, PCKS:
-		return NewKeyswitchProtocol(pd, sess, inputs...)
-	default:
-		return nil, fmt.Errorf("unknown protocol type: %s", pd.Signature.Type)
-	}
-}
-
-// patProtocol is a base struct for patProtocol instances.
-type patProtocol struct {
+// Protocol is a base struct for protocols.
+type Protocol struct {
 	pd   Descriptor
 	id   ID
 	hid  string
@@ -170,35 +127,30 @@ type patProtocol struct {
 
 	pubrand, privrand blake2b.XOF
 
-	proto MHEProtocol
+	proto mheProtocol
 
 	// aggregator only
 	agg *shareAggregator
 }
 
-func newPATProtocol(pd Descriptor, sess *pkg.Session) (*patProtocol, error) {
+// NewProtocol creates a new protocol from the provided protocol descriptor, session and inputs.
+func NewProtocol(pd Descriptor, sess *pkg.Session) (*Protocol, error) {
 
-	if len(pd.Participants) < sess.Threshold {
-		return nil, fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.Threshold)
+	err := checkProtocolDescriptor(pd, sess)
+	if err != nil {
+		return nil, fmt.Errorf("invalid protocol descriptor: %w", err)
 	}
 
-	for _, p := range pd.Participants {
-		if !sess.Contains(p) {
-			return nil, fmt.Errorf("participant %s not in session", p)
-		}
-	}
-
-	p := &patProtocol{id: pd.ID(), hid: pd.HID(), pd: pd, self: sess.NodeID}
+	p := &Protocol{id: pd.ID(), hid: pd.HID(), pd: pd, self: sess.NodeID}
 
 	// initilize the randomness sources from the session
 	p.pubrand = GetProtocolPublicRandomness(pd, sess)
-	var err error
 	if p.IsParticipant() {
 		p.privrand = GetProtocolPrivateRandomness(pd, sess)
 	}
 
-	// intialize the protocol instance
-	p.proto, err = NewMHEProtocol(pd.Signature, sess.Params.Parameters)
+	// intialize the protocol
+	p.proto, err = newMHEProtocol(pd.Signature, sess.Params.Parameters)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +159,9 @@ func newPATProtocol(pd Descriptor, sess *pkg.Session) (*patProtocol, error) {
 		p.agg = newShareAggregator(pd, p.proto.AllocateShare(), p.proto.AggregatedShares) // TODO: could cache the shares
 	}
 
-	if (p.pd.Type == RKG_1 || p.pd.Type == RKG) && p.IsParticipant() {
+	// protocol-type-specific initialization
+	switch {
+	case (p.pd.Type == RKG_1 || p.pd.Type == RKG) && p.IsParticipant():
 		p.proto.(*RKGProtocol).ephSk, err = sess.GetRLKEphemeralSecretKey()
 		if err != nil {
 			return nil, err
@@ -217,7 +171,51 @@ func newPATProtocol(pd Descriptor, sess *pkg.Session) (*patProtocol, error) {
 	return p, nil
 }
 
-func (p *patProtocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan AggregationOutput {
+// AllocateShare returns a newly allocated share for the protocol.
+func (p *Protocol) AllocateShare() Share {
+	return p.proto.AllocateShare()
+}
+
+// ReadCRP reads the common random polynomial for this protocol. Returns an error
+// if called for a protocol that does not use CRP.
+func (p *Protocol) ReadCRP() (CRP, error) {
+	switch p.pd.Type {
+	case CKG, RTG, RKG, RKG_1:
+		return p.proto.ReadCRP(p.pubrand)
+	}
+	return nil, fmt.Errorf("protocol does not use CRP")
+}
+
+// GenShare is called by the session nodes to generate their share in the protocol,
+// storing the result in the provided shareOut. The method returns an error if the node should
+// not generate a share in the protocol.
+func (p *Protocol) GenShare(sk *rlwe.SecretKey, in Input, shareOut *Share) error {
+
+	if !p.IsParticipant() {
+		return fmt.Errorf("node is not a participant")
+	}
+
+	if p.pd.Type == DEC && p.pd.Args["target"] == string(p.self) {
+		return fmt.Errorf("decryption target should not generate a share")
+	}
+
+	p.Logf("[%s] generating share", p.pd.HID())
+	shareOut.ProtocolID = p.id
+	shareOut.From = utils.NewSingletonSet(p.self)
+	shareOut.ProtocolType = p.pd.Type
+	return p.proto.GenShare(sk, in, *shareOut)
+}
+
+// Aggregate is called by the aggregator node to aggregate the shares of the protocol.
+// The method aggregates the shares received in the provided incoming channel in the background,
+// and sends the aggregated share to the returned channel when the aggregation has completed.
+// Upon receiving the aggregated share, the caller must check the Error field of the aggregation
+// output to determine whether the aggregation has failed.
+// The aggregation can be cancelled by cancelling the context.
+// If the context is cancelled or the incoming channel is closed before the aggregation has completed,
+// the method sends the aggregation output with the corresponding error to the returned channel.
+// The method panics if called by a non-aggregator node.
+func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan AggregationOutput {
 
 	if !p.IsAggregator() {
 		panic(fmt.Errorf("node is not the aggregator"))
@@ -238,7 +236,7 @@ func (p *patProtocol) Aggregate(ctx context.Context, incoming <-chan Share) <-ch
 					err = fmt.Errorf("incoming channel closed before completing aggregation")
 					continue
 				}
-				done, err = p.agg.PutShare(share)
+				done, err = p.agg.put(share)
 				p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 				if err != nil {
 					done = true // stops aggregating on error
@@ -268,12 +266,100 @@ func (p *patProtocol) Aggregate(ctx context.Context, incoming <-chan Share) <-ch
 	return aggOutChan
 }
 
-func (p *patProtocol) HID() string {
+// Output computes the output of the protocol from the input and aggregation output, storing the result in out.
+// Out must be a pointer to the type of the protocol's output, see AllocateOutput.
+func (p *Protocol) Output(in Input, agg AggregationOutput, out interface{}) error {
+	if agg.Error != nil {
+		return fmt.Errorf("error at aggregation: %w", agg.Error)
+	}
+
+	if err := p.proto.Finalize(in, agg.Share, out); err != nil {
+		return fmt.Errorf("error at output: %w", err)
+	}
+	p.Logf("finalized protocol")
+	return nil
+}
+
+// ID returns the ID of the protocol.
+func (p *Protocol) ID() ID {
+	return p.id
+}
+
+// HID returns the human-readable (truncated) ID of the protocol.
+func (p *Protocol) HID() string {
 	return p.hid
+}
+
+// Descriptor returns the protocol descriptor of the protocol.
+func (p *Protocol) Descriptor() Descriptor {
+	return p.pd
+}
+
+// HasShareFrom returns whether the protocol has already recieved a share from the specified node.
+func (p *Protocol) HasShareFrom(nid pkg.NodeID) bool {
+	return !p.agg.missing().Contains(nid)
+}
+
+// IsAggregator returns whether the node is the aggregator in the protocol.
+func (p *Protocol) IsAggregator() bool {
+	return p.pd.Aggregator == p.self || p.pd.Signature.Type == SKG
+}
+
+// IsParticipant returns whether the node is a participant in the protocol.
+func (p *Protocol) IsParticipant() bool {
+	return slices.Contains(p.pd.Participants, p.self)
+}
+
+// HasRole returns whether the node is an aggregator or a participant in the protocol.
+func (p *Protocol) HasRole() bool {
+	return p.IsAggregator() || p.IsParticipant()
+}
+
+// Logf logs a message
+func (p *Protocol) Logf(msg string, v ...any) {
+	if !protocolLogging {
+		return
+	}
+	log.Printf("%s | [%s] %s\n", p.self, p.HID(), fmt.Sprintf(msg, v...))
+}
+
+func checkProtocolDescriptor(pd Descriptor, sess *pkg.Session) error {
+
+	if len(pd.Participants) < sess.Threshold {
+		return fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.Threshold)
+	}
+
+	for _, p := range pd.Participants {
+		if !sess.Contains(p) {
+			return fmt.Errorf("participant %s not in session", p)
+		}
+	}
+
+	target := pkg.NodeID(pd.Signature.Args["target"])
+
+	switch pd.Signature.Type {
+	case CKS:
+		return fmt.Errorf("standalone CKS protocol not supported yet") // TODO
+	case DEC:
+		if len(target) == 0 {
+			return fmt.Errorf("should provide argument: target")
+		}
+		if sess.Contains(target) && !slices.Contains(pd.Participants, target) {
+			return fmt.Errorf("a session target must be a protocol participant in DEC")
+		}
+		if !sess.Contains(target) && pd.Aggregator != target {
+			return fmt.Errorf("target for protocol DEC should be a session node or the aggreator, was %s", target)
+		}
+	case PCKS:
+		return fmt.Errorf("PCKS not supported yet") // TODO
+	}
+
+	return nil
 }
 
 var typeToString = []string{"Unknown", "SKG", "CKG", "RKG", "RKG_1", "RTG", "CKS", "DEC", "PCKS"}
 
+// String returns the string representation of the protocol type.
 func (t Type) String() string {
 	if int(t) > len(typeToString) {
 		t = 0
@@ -281,6 +367,7 @@ func (t Type) String() string {
 	return typeToString[t]
 }
 
+// Share returns a lattigo share with the correct go type for the protocol type.
 func (t Type) Share() LattigoShare {
 	switch t {
 	case SKG:
@@ -300,6 +387,7 @@ func (t Type) Share() LattigoShare {
 	}
 }
 
+// IsSetup returns whether the protocol type is a key generation protocol.
 func (t Type) IsSetup() bool {
 	switch t {
 	case CKG, RTG, RKG, RKG_1:
@@ -309,6 +397,8 @@ func (t Type) IsSetup() bool {
 	}
 }
 
+// IsCompute returns whether the protocol type is
+// a secret-key operation ciphertext operation.
 func (t Type) IsCompute() bool {
 	switch t {
 	case DEC, PCKS:
@@ -318,6 +408,9 @@ func (t Type) IsCompute() bool {
 	}
 }
 
+// String returns the string representation of the protocol signature.
+// the arguments are alphabetically sorted by name so thtat the output
+// is deterministic.
 func (t Signature) String() string {
 	args := make(sort.StringSlice, 0, len(t.Args))
 	for argname, argval := range t.Args {
@@ -327,6 +420,8 @@ func (t Signature) String() string {
 	return fmt.Sprintf("%s(%s)", t.Type, strings.Join(args, ","))
 }
 
+// Equals returns whether the signature is equal to the other signature,
+// i.e., whether the protocol outputs are equivalent.
 func (s Signature) Equals(other Signature) bool {
 	if s.Type != other.Type {
 		return false
@@ -340,28 +435,56 @@ func (s Signature) Equals(other Signature) bool {
 	return true
 }
 
+// ID returns the ID of the protocol, derived from the descriptor.
 func (d Descriptor) ID() ID {
-	return ID(fmt.Sprintf("%s-%x", d.Signature, HashOfPartList(d.Participants)))
+	return ID(fmt.Sprintf("%s-%x", d.Signature, partyListToString(d.Participants)))
 }
 
+// HID returns the human-readable (truncated) ID of the protocol, derived from the descriptor.
 func (d Descriptor) HID() string {
-	h := HashOfPartList(d.Participants)
+	h := partyListToString(d.Participants)
 	return fmt.Sprintf("%s-%x", d.Signature, h[:hidHashHexCharCount>>1])
 }
 
+// String returns the string representation of the protocol descriptor.
 func (pd Descriptor) String() string {
 	return fmt.Sprintf("{ID: %v, Type: %v, Args: %v, Aggregator: %v, Participants: %v}",
 		pd.HID(), pd.Signature.Type, pd.Signature.Args, pd.Aggregator, pd.Participants)
 }
 
+// MarshalBinary returns the binary representation of the protocol descriptor.
 func (pd Descriptor) MarshalBinary() (b []byte, err error) {
 	return json.Marshal(pd)
 }
 
+// UnmarshalBinary unmarshals the binary representation of the protocol descriptor.
 func (pd *Descriptor) UnmarshalBinary(b []byte) (err error) {
 	return json.Unmarshal(b, &pd)
 }
 
+// Copy returns a copy of the Share.
+func (s Share) Copy() Share {
+	switch st := s.MHEShare.(type) {
+	case *drlwe.PublicKeyGenShare:
+		return Share{ShareMetadata: s.ShareMetadata, MHEShare: &drlwe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
+	default:
+		panic("not implemented") // TODO: implement on Lattigo side ?
+	}
+}
+
+// MarshalBinary returns the binary representation of the share.
+func (s Share) MarshalBinary() ([]byte, error) {
+	return s.MHEShare.MarshalBinary()
+}
+
+// UnmarshalBinary unmarshals the binary representation of the share.
+func (s Share) UnmarshalBinary(data []byte) error {
+	return s.MHEShare.UnmarshalBinary(data)
+}
+
+// GetParticipants returns a set of protocol participants, given the online nodes and the threshold.
+// This function handle the case of the DEC protocol, where the target must be considered a participant.
+// It returns an error if there are not enough online nodes.
 func GetParticipants(sig Signature, onlineNodes utils.Set[pkg.NodeID], threshold int) ([]pkg.NodeID, error) {
 	if len(onlineNodes) < threshold {
 		return nil, fmt.Errorf("not enough online node")
@@ -381,6 +504,9 @@ func GetParticipants(sig Signature, onlineNodes utils.Set[pkg.NodeID], threshold
 
 }
 
+// GetProtocolPublicRandomness intitializes a keyed PRF from the session's public seed and
+// the protocol's information.
+// This function ensures that the PRF is unique for each protocol execution.
 func GetProtocolPublicRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF {
 	xof, _ := blake2b.NewXOF(blake2b.OutputLengthUnknown, nil)
 	_, err := xof.Write(sess.PublicSeed)
@@ -391,7 +517,7 @@ func GetProtocolPublicRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF {
 	if err != nil {
 		panic(err)
 	}
-	hashPart := HashOfPartList(pd.Participants)
+	hashPart := partyListToString(pd.Participants)
 	_, err = xof.Write(hashPart[:])
 	if err != nil {
 		panic(err)
@@ -399,6 +525,9 @@ func GetProtocolPublicRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF {
 	return xof
 }
 
+// GetProtocolPrivateRandomness intitializes a keyed PRF from the session's private seed and
+// the protocol's information.
+// This function ensures that the PRF is unique for each protocol execution.
 func GetProtocolPrivateRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF {
 	xof := GetProtocolPublicRandomness(pd, sess)
 	_, err := xof.Write(sess.PrivateSeed)
@@ -408,7 +537,7 @@ func GetProtocolPrivateRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF 
 	return xof
 }
 
-func HashOfPartList(partList []pkg.NodeID) [32]byte {
+func partyListToString(partList []pkg.NodeID) []byte {
 	partListSorted := make(sort.StringSlice, len(partList))
 	for i, nid := range partList {
 		partListSorted[i] = string(nid)
@@ -417,5 +546,30 @@ func HashOfPartList(partList []pkg.NodeID) [32]byte {
 		sort.Sort(partListSorted)
 	}
 	s := strings.Join(partListSorted, "")
-	return blake2b.Sum256([]byte(s))
+	return []byte(s)
+}
+
+// AllocateOutput returns a newly allocated output for the protocol signature.
+func AllocateOutput(sig Signature, params rlwe.Parameters) interface{} {
+	switch sig.Type {
+	case CKG:
+		return rlwe.NewPublicKey(params)
+	case RTG:
+		return rlwe.NewGaloisKey(params)
+	case RKG:
+		return rlwe.NewRelinearizationKey(params)
+	case DEC:
+		lvl := params.MaxLevel()
+		lvlStr, has := sig.Args["level"]
+		if has {
+			var err error
+			lvl, err = strconv.Atoi(lvlStr)
+			if err != nil {
+				return fmt.Errorf("invalid level: %s", lvlStr)
+			}
+		}
+		return rlwe.NewCiphertext(params, 1, lvl)
+	default:
+		panic("unknown protocol type")
+	}
 }

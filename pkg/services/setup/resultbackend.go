@@ -44,7 +44,7 @@ func (osrb objStoreResultBackend) Put(ctx context.Context, pd protocols.Descript
 		return fmt.Errorf("session id not found in context")
 	}
 
-	// TOOD: as transaction
+	// TODO: as transaction
 	err := osrb.store.Store(fmt.Sprintf("%s/%s-aggshare", sessid, pd.Signature), aggShare.MHEShare)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func (osrb objStoreResultBackend) Put(ctx context.Context, pd protocols.Descript
 	return err
 }
 
-func (osrb objStoreResultBackend) GetShare(ctx context.Context, sig protocols.Signature, share protocols.LattigoShare) (err error) {
+func (osrb objStoreResultBackend) GetShare(ctx context.Context, sig protocols.Signature, share protocols.LattigoShare) (err error) { // TODO: replace by binary unmasharller and remove interface
 	sessid, has := pkg.SessionIDFromContext(ctx)
 	if !has {
 		return fmt.Errorf("session id not found in context")

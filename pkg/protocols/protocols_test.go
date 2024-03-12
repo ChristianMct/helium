@@ -64,6 +64,8 @@ func TestProtocols(t *testing.T) {
 			{Type: DEC, Args: map[string]string{"target": "node-0", "smudging": "40"}},
 		}
 
+		zeroKey := rlwe.NewSecretKey(testSess.RlweParams.Parameters)
+
 		for _, sig := range sigs {
 			parts, err := GetParticipants(sig, nids, ts.T)
 			if err != nil {
@@ -72,26 +74,34 @@ func TestProtocols(t *testing.T) {
 			pd := Descriptor{Signature: sig, Participants: parts, Aggregator: hid}
 			t.Run(fmt.Sprintf("N=%d/T=%d/Type=%s", ts.N, ts.T, pd.Signature.Type), func(t *testing.T) {
 				var input Input
+
+				p, err := NewProtocol(pd, testSess.HelperSession)
+				if err != nil {
+					t.Fatal(err)
+				}
+
 				switch pd.Signature.Type {
 				case CKG, RTG:
+					input, err = p.ReadCRP()
+					require.Nil(t, err)
 				case RKG:
-					aggOutR1 := runProto(Descriptor{Signature: Signature{Type: RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator}, *testSess, nil, t)
+					input, err = p.ReadCRP()
+					require.Nil(t, err)
+					aggOutR1 := runProto(Descriptor{Signature: Signature{Type: RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator}, *testSess, input, t)
 					if aggOutR1.Error != nil {
 						t.Fatal(aggOutR1.Error)
 					}
-					input = aggOutR1.Share
+					input = aggOutR1.Share.MHEShare
 				case DEC:
-					input = ct
+					input = &keySwitchInput{outKey: zeroKey, in: ct}
 				default:
 					t.Fatal("unknown protocol type")
 				}
 				aggOut := runProto(pd, *testSess, input, t)
 
-				p, err := NewProtocol(pd, testSess.HelperSession, input)
-				if err != nil {
-					t.Fatal(err)
-				}
-				out := <-p.Output(aggOut)
+				out := AllocateOutput(pd.Signature, testSess.RlweParams.Parameters)
+				err = p.Output(input, aggOut, out)
+				require.Nil(t, err)
 				checkOutput(out, pd, *testSess, t)
 			})
 		}
@@ -100,7 +110,7 @@ func TestProtocols(t *testing.T) {
 
 func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T) AggregationOutput {
 
-	helperP, err := NewProtocol(pd, testSess.HelperSession, input)
+	helperP, err := NewProtocol(pd, testSess.HelperSession)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +125,7 @@ func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T
 	}()
 
 	for nid, nodeSess := range testSess.NodeSessions {
-		nodeP, err := NewProtocol(pd, nodeSess, input)
+		nodeP, err := NewProtocol(pd, nodeSess)
 
 		if err != nil {
 			t.Fatal(err)
@@ -125,7 +135,7 @@ func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T
 		require.Nil(t, err)
 
 		share := nodeP.AllocateShare()
-		err = nodeP.GenShare(ski, &share)
+		err = nodeP.GenShare(ski, input, &share)
 
 		if !slices.Contains(pd.Participants, nid) {
 			require.NotNil(t, err, "non participants should not generate a share")
@@ -161,9 +171,7 @@ func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T
 	return aggOut
 }
 
-func checkOutput(out Output, pd Descriptor, testSess pkg.TestSession, t *testing.T) {
-
-	require.NoError(t, out.Error)
+func checkOutput(out interface{}, pd Descriptor, testSess pkg.TestSession, t *testing.T) {
 
 	nParties := len(testSess.NodeSessions)
 	sk := testSess.SkIdeal
@@ -172,18 +180,18 @@ func checkOutput(out Output, pd Descriptor, testSess pkg.TestSession, t *testing
 
 	switch pd.Signature.Type {
 	case CKG:
-		pk, isPk := out.Result.(*rlwe.PublicKey)
+		pk, isPk := out.(*rlwe.PublicKey)
 		require.True(t, isPk)
 		require.Less(t, rlwe.NoisePublicKey(pk, sk, params.Parameters), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
 	case RTG:
-		swk, isSwk := out.Result.(*rlwe.GaloisKey)
+		swk, isSwk := out.(*rlwe.GaloisKey)
 		require.True(t, isSwk)
 
 		noise := rlwe.NoiseGaloisKey(swk, sk, params.Parameters)
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
 		require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
 	case RKG:
-		rlk, isRlk := out.Result.(*rlwe.RelinearizationKey)
+		rlk, isRlk := out.(*rlwe.RelinearizationKey)
 		require.True(t, isRlk)
 
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
@@ -198,7 +206,7 @@ func checkOutput(out Output, pd Descriptor, testSess pkg.TestSession, t *testing
 			t.Fatal(err)
 		}
 
-		ct, isCt := out.Result.(*rlwe.Ciphertext)
+		ct, isCt := out.(*rlwe.Ciphertext)
 		require.True(t, isCt)
 		std, _, _ := rlwe.Norm(ct, dec)
 		require.Less(t, std, testSess.RlweParams.NoiseFreshPK()) // TODO better bound
