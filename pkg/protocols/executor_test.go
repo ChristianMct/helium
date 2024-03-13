@@ -75,7 +75,7 @@ func TestExecutor(t *testing.T) {
 					close(rkg1Done)
 					return rkg1AggOut.Share.MHEShare, nil
 				case DEC:
-					return &keySwitchInput{outKey: zeroKey, in: ct}, nil
+					return &KeySwitchInput{OutputKey: zeroKey, InpuCt: ct}, nil
 				}
 				return nil, fmt.Errorf("no input for this protocol")
 			}
@@ -89,7 +89,7 @@ func TestExecutor(t *testing.T) {
 					<-rkg1Done
 					return rkg1AggOut.Share.MHEShare, nil
 				case DEC:
-					return &keySwitchInput{outKey: zeroKey, in: ct}, nil
+					return &KeySwitchInput{OutputKey: zeroKey, InpuCt: ct}, nil
 				}
 				return nil, fmt.Errorf("no input for this protocol")
 			}

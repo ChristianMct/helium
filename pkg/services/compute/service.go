@@ -747,8 +747,21 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor)
 		return nil, fmt.Errorf("invalid protocol descriptor: operand label %s not in circuit", opl)
 	}
 
-	// TODO NEXT: clean the KeySwitchInput type and its usage
-	return op.Ciphertext, nil
+	sess, has := s.sessions.GetSessionFromContext(ctx)
+	if !has {
+		return nil, fmt.Errorf("no session found for this context")
+	}
+
+	ksin := &protocols.KeySwitchInput{InpuCt: op.Ciphertext}
+	switch pd.Signature.Type {
+	case protocols.DEC:
+		ksin.OutputKey = rlwe.NewSecretKey(sess.Params) // TODO put in session
+	case protocols.CKS, protocols.PCKS:
+		return nil, fmt.Errorf("key switch protocol not supported yet") // TODO
+	default:
+		return nil, fmt.Errorf("invalid protocol type: %s", pd.Signature.Type)
+	}
+	return ksin, nil
 
 }
 

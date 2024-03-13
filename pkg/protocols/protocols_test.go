@@ -93,7 +93,7 @@ func TestProtocols(t *testing.T) {
 					}
 					input = aggOutR1.Share.MHEShare
 				case DEC:
-					input = &keySwitchInput{outKey: zeroKey, in: ct}
+					input = &KeySwitchInput{OutputKey: zeroKey, InpuCt: ct}
 				default:
 					t.Fatal("unknown protocol type")
 				}

@@ -72,8 +72,28 @@ type Descriptor struct {
 // its descriptor, the ID is derived from the descriptor.
 type ID string
 
-// Input is a type for protocol inputs.
+// Input is a type for protocol inputs. Inputs are either:
+//   - a CRP in the case of a key generation protocol  (CKG, RTG, RKG_1)
+//   - an aggregated share from a previous round (RKG)
+//   - a KeySwitchInput for the key-switching protocols (DEC, CKS, PCKS)
 type Input interface{}
+
+// CRP is a type for the common reference polynomials used in the
+// key generation protocol. A CRP is a polynomial that is sampled
+// uniformly at random, yet is the same for all nodes. CRPs are
+// expanded from the session's public seed.
+type CRP interface{}
+
+// KeySwitchInput is a type for the inputs to the key-switching protocols.
+type KeySwitchInput struct {
+	// OutputKey is the target output key of the key-switching protocol,
+	// it is a secret key (*rlwe.SecretKey) for the collective key-switching protocol (CKS)
+	// and a public key (*rlwe.PublicKey) for the collective public-key switching protocol (PCKS).
+	OutputKey ReceiverKey
+
+	// InpuCt is the ciphertext to be re-encrpted under the output key.
+	InpuCt *rlwe.Ciphertext
+}
 
 // Output is a type for protocol outputs.
 // It contains the result of the protocol execution or an error if the
@@ -96,12 +116,6 @@ type ShareMetadata struct {
 	ProtocolType Type
 	From         utils.Set[pkg.NodeID]
 }
-
-// CRP is a type for the common reference polynomials used in the
-// key generation protocol. A CRP is a polynomial that is sampled
-// uniformly at random, yet is the same for all nodes. CRPs are
-// expanded from the session's public seed.
-type CRP interface{}
 
 // ReceiverKey is a type for the output keys in the key switching
 // protocols. Depending on the type of protocol, the receiver key

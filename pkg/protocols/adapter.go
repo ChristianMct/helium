@@ -29,11 +29,6 @@ type LattigoShare interface {
 	encoding.BinaryUnmarshaler
 }
 
-type keySwitchInput struct {
-	outKey ReceiverKey
-	in     *rlwe.Ciphertext
-}
-
 func newMHEProtocol(sig Signature, params rlwe.Parameters) (mheProtocol, error) {
 	switch sig.Type {
 	case CKG:
@@ -352,17 +347,17 @@ func (cks *CKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
 
 func (cks *CKSProtocol) GenShare(sk *rlwe.SecretKey, in Input, share Share) error {
 
-	ksin, ok := in.(*keySwitchInput)
+	ksin, ok := in.(*KeySwitchInput)
 	if !ok {
 		return fmt.Errorf("bad input type: %T instead of %T", in, ksin)
 	}
 
-	skOut, ok := ksin.outKey.(*rlwe.SecretKey)
+	skOut, ok := ksin.OutputKey.(*rlwe.SecretKey)
 	if !ok {
-		return fmt.Errorf("bad output key type: %T instead of %T", ksin.outKey, skOut)
+		return fmt.Errorf("bad output key type: %T instead of %T", ksin.OutputKey, skOut)
 	}
 
-	if ksin.in == nil {
+	if ksin.InpuCt == nil {
 		return fmt.Errorf("input ciphertext is nil")
 	}
 
@@ -371,19 +366,19 @@ func (cks *CKSProtocol) GenShare(sk *rlwe.SecretKey, in Input, share Share) erro
 		return fmt.Errorf("bad share type: %T instead of %T", share.MHEShare, cksShare)
 	}
 
-	cks.KeySwitchProtocol.GenShare(sk, skOut, ksin.in, cksShare)
+	cks.KeySwitchProtocol.GenShare(sk, skOut, ksin.InpuCt, cksShare)
 
 	return nil
 }
 
 func (cks *CKSProtocol) Finalize(in Input, aggShare Share, rec interface{}) error {
 
-	ksin, ok := in.(*keySwitchInput)
+	ksin, ok := in.(*KeySwitchInput)
 	if !ok {
 		return fmt.Errorf("bad input type: %T instead of %T", in, ksin)
 	}
 
-	if ksin.in == nil {
+	if ksin.InpuCt == nil {
 		return fmt.Errorf("input ciphertext is nil")
 	}
 
@@ -397,7 +392,7 @@ func (cks *CKSProtocol) Finalize(in Input, aggShare Share, rec interface{}) erro
 		return fmt.Errorf("bad receiver type: %T instead of %T", rec, outCt)
 	}
 
-	cks.KeySwitchProtocol.KeySwitch(ksin.in, *cksAggShare, outCt)
+	cks.KeySwitchProtocol.KeySwitch(ksin.InpuCt, *cksAggShare, outCt)
 	return nil
 }
 
@@ -453,17 +448,17 @@ func (cks *PCKSProtocol) AggregatedShares(dst Share, ss ...Share) error {
 
 func (cks *PCKSProtocol) GenShare(sk *rlwe.SecretKey, in Input, share Share) error {
 
-	ksin, ok := in.(*keySwitchInput)
+	ksin, ok := in.(*KeySwitchInput)
 	if !ok {
 		return fmt.Errorf("bad input type: %T instead of %T", in, ksin)
 	}
 
-	pkOut, ok := ksin.outKey.(*rlwe.PublicKey)
+	pkOut, ok := ksin.OutputKey.(*rlwe.PublicKey)
 	if !ok {
-		return fmt.Errorf("bad output key type: %T instead of %T", ksin.outKey, pkOut)
+		return fmt.Errorf("bad output key type: %T instead of %T", ksin.OutputKey, pkOut)
 	}
 
-	if ksin.in == nil {
+	if ksin.InpuCt == nil {
 		return fmt.Errorf("input ciphertext is nil")
 	}
 
@@ -472,19 +467,19 @@ func (cks *PCKSProtocol) GenShare(sk *rlwe.SecretKey, in Input, share Share) err
 		return fmt.Errorf("bad share type: %T instead of %T", share.MHEShare, pcksShare)
 	}
 
-	cks.PublicKeySwitchProtocol.GenShare(sk, pkOut, ksin.in, pcksShare)
+	cks.PublicKeySwitchProtocol.GenShare(sk, pkOut, ksin.InpuCt, pcksShare)
 
 	return nil
 }
 
 func (cks *PCKSProtocol) Finalize(in Input, aggShare Share, rec interface{}) error {
 
-	ksin, ok := in.(*keySwitchInput)
+	ksin, ok := in.(*KeySwitchInput)
 	if !ok {
 		return fmt.Errorf("bad input type: %T instead of %T", in, ksin)
 	}
 
-	if ksin.in == nil {
+	if ksin.InpuCt == nil {
 		return fmt.Errorf("input ciphertext is nil")
 	}
 
@@ -498,6 +493,6 @@ func (cks *PCKSProtocol) Finalize(in Input, aggShare Share, rec interface{}) err
 		return fmt.Errorf("bad receiver type: %T instead of %T", rec, outCt)
 	}
 
-	cks.PublicKeySwitchProtocol.KeySwitch(ksin.in, *pcksAggShare, outCt)
+	cks.PublicKeySwitchProtocol.KeySwitch(ksin.InpuCt, *pcksAggShare, outCt)
 	return nil
 }
