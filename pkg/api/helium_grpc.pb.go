@@ -18,33 +18,37 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// HeliumHelperClient is the client API for HeliumHelper service.
+// HeliumClient is the client API for Helium service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type HeliumHelperClient interface {
-	Register(ctx context.Context, in *Void, opts ...grpc.CallOption) (HeliumHelper_RegisterClient, error)
-	// PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
+type HeliumClient interface {
+	// Register registers the caller as a peer node to the helium server
+	Register(ctx context.Context, in *Void, opts ...grpc.CallOption) (Helium_RegisterClient, error)
+	// PutShare pushes the caller's share in the protocol described by the Share.ShareDescriptor
 	// field to the callee.
 	PutShare(ctx context.Context, in *Share, opts ...grpc.CallOption) (*Void, error)
+	// GetShare queries the aggregation output of the protocol described by PrototocolDescriptor
 	GetAggregationOutput(ctx context.Context, in *ProtocolDescriptor, opts ...grpc.CallOption) (*AggregationOutput, error)
-	GetCiphertext(ctx context.Context, in *CiphertextRequest, opts ...grpc.CallOption) (*Ciphertext, error)
+	// GetCiphertext queries the ciphertext with the given ID from the callee
+	GetCiphertext(ctx context.Context, in *CiphertextID, opts ...grpc.CallOption) (*Ciphertext, error)
+	// PutCiphertext pushes the ciphertext to the callee
 	PutCiphertext(ctx context.Context, in *Ciphertext, opts ...grpc.CallOption) (*CiphertextID, error)
 }
 
-type heliumHelperClient struct {
+type heliumClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewHeliumHelperClient(cc grpc.ClientConnInterface) HeliumHelperClient {
-	return &heliumHelperClient{cc}
+func NewHeliumClient(cc grpc.ClientConnInterface) HeliumClient {
+	return &heliumClient{cc}
 }
 
-func (c *heliumHelperClient) Register(ctx context.Context, in *Void, opts ...grpc.CallOption) (HeliumHelper_RegisterClient, error) {
-	stream, err := c.cc.NewStream(ctx, &HeliumHelper_ServiceDesc.Streams[0], "/helium_proto.HeliumHelper/Register", opts...)
+func (c *heliumClient) Register(ctx context.Context, in *Void, opts ...grpc.CallOption) (Helium_RegisterClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Helium_ServiceDesc.Streams[0], "/helium_proto.Helium/Register", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &heliumHelperRegisterClient{stream}
+	x := &heliumRegisterClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -54,16 +58,16 @@ func (c *heliumHelperClient) Register(ctx context.Context, in *Void, opts ...grp
 	return x, nil
 }
 
-type HeliumHelper_RegisterClient interface {
+type Helium_RegisterClient interface {
 	Recv() (*Event, error)
 	grpc.ClientStream
 }
 
-type heliumHelperRegisterClient struct {
+type heliumRegisterClient struct {
 	grpc.ClientStream
 }
 
-func (x *heliumHelperRegisterClient) Recv() (*Event, error) {
+func (x *heliumRegisterClient) Recv() (*Event, error) {
 	m := new(Event)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
@@ -71,209 +75,213 @@ func (x *heliumHelperRegisterClient) Recv() (*Event, error) {
 	return m, nil
 }
 
-func (c *heliumHelperClient) PutShare(ctx context.Context, in *Share, opts ...grpc.CallOption) (*Void, error) {
+func (c *heliumClient) PutShare(ctx context.Context, in *Share, opts ...grpc.CallOption) (*Void, error) {
 	out := new(Void)
-	err := c.cc.Invoke(ctx, "/helium_proto.HeliumHelper/PutShare", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/helium_proto.Helium/PutShare", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *heliumHelperClient) GetAggregationOutput(ctx context.Context, in *ProtocolDescriptor, opts ...grpc.CallOption) (*AggregationOutput, error) {
+func (c *heliumClient) GetAggregationOutput(ctx context.Context, in *ProtocolDescriptor, opts ...grpc.CallOption) (*AggregationOutput, error) {
 	out := new(AggregationOutput)
-	err := c.cc.Invoke(ctx, "/helium_proto.HeliumHelper/GetAggregationOutput", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/helium_proto.Helium/GetAggregationOutput", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *heliumHelperClient) GetCiphertext(ctx context.Context, in *CiphertextRequest, opts ...grpc.CallOption) (*Ciphertext, error) {
+func (c *heliumClient) GetCiphertext(ctx context.Context, in *CiphertextID, opts ...grpc.CallOption) (*Ciphertext, error) {
 	out := new(Ciphertext)
-	err := c.cc.Invoke(ctx, "/helium_proto.HeliumHelper/GetCiphertext", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/helium_proto.Helium/GetCiphertext", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *heliumHelperClient) PutCiphertext(ctx context.Context, in *Ciphertext, opts ...grpc.CallOption) (*CiphertextID, error) {
+func (c *heliumClient) PutCiphertext(ctx context.Context, in *Ciphertext, opts ...grpc.CallOption) (*CiphertextID, error) {
 	out := new(CiphertextID)
-	err := c.cc.Invoke(ctx, "/helium_proto.HeliumHelper/PutCiphertext", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/helium_proto.Helium/PutCiphertext", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// HeliumHelperServer is the server API for HeliumHelper service.
-// All implementations must embed UnimplementedHeliumHelperServer
+// HeliumServer is the server API for Helium service.
+// All implementations must embed UnimplementedHeliumServer
 // for forward compatibility
-type HeliumHelperServer interface {
-	Register(*Void, HeliumHelper_RegisterServer) error
-	// PutShare is used to push the caller's share in the protocol described by the Share.ShareDescriptor
+type HeliumServer interface {
+	// Register registers the caller as a peer node to the helium server
+	Register(*Void, Helium_RegisterServer) error
+	// PutShare pushes the caller's share in the protocol described by the Share.ShareDescriptor
 	// field to the callee.
 	PutShare(context.Context, *Share) (*Void, error)
+	// GetShare queries the aggregation output of the protocol described by PrototocolDescriptor
 	GetAggregationOutput(context.Context, *ProtocolDescriptor) (*AggregationOutput, error)
-	GetCiphertext(context.Context, *CiphertextRequest) (*Ciphertext, error)
+	// GetCiphertext queries the ciphertext with the given ID from the callee
+	GetCiphertext(context.Context, *CiphertextID) (*Ciphertext, error)
+	// PutCiphertext pushes the ciphertext to the callee
 	PutCiphertext(context.Context, *Ciphertext) (*CiphertextID, error)
-	mustEmbedUnimplementedHeliumHelperServer()
+	mustEmbedUnimplementedHeliumServer()
 }
 
-// UnimplementedHeliumHelperServer must be embedded to have forward compatible implementations.
-type UnimplementedHeliumHelperServer struct {
+// UnimplementedHeliumServer must be embedded to have forward compatible implementations.
+type UnimplementedHeliumServer struct {
 }
 
-func (UnimplementedHeliumHelperServer) Register(*Void, HeliumHelper_RegisterServer) error {
+func (UnimplementedHeliumServer) Register(*Void, Helium_RegisterServer) error {
 	return status.Errorf(codes.Unimplemented, "method Register not implemented")
 }
-func (UnimplementedHeliumHelperServer) PutShare(context.Context, *Share) (*Void, error) {
+func (UnimplementedHeliumServer) PutShare(context.Context, *Share) (*Void, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PutShare not implemented")
 }
-func (UnimplementedHeliumHelperServer) GetAggregationOutput(context.Context, *ProtocolDescriptor) (*AggregationOutput, error) {
+func (UnimplementedHeliumServer) GetAggregationOutput(context.Context, *ProtocolDescriptor) (*AggregationOutput, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAggregationOutput not implemented")
 }
-func (UnimplementedHeliumHelperServer) GetCiphertext(context.Context, *CiphertextRequest) (*Ciphertext, error) {
+func (UnimplementedHeliumServer) GetCiphertext(context.Context, *CiphertextID) (*Ciphertext, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetCiphertext not implemented")
 }
-func (UnimplementedHeliumHelperServer) PutCiphertext(context.Context, *Ciphertext) (*CiphertextID, error) {
+func (UnimplementedHeliumServer) PutCiphertext(context.Context, *Ciphertext) (*CiphertextID, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PutCiphertext not implemented")
 }
-func (UnimplementedHeliumHelperServer) mustEmbedUnimplementedHeliumHelperServer() {}
+func (UnimplementedHeliumServer) mustEmbedUnimplementedHeliumServer() {}
 
-// UnsafeHeliumHelperServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to HeliumHelperServer will
+// UnsafeHeliumServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to HeliumServer will
 // result in compilation errors.
-type UnsafeHeliumHelperServer interface {
-	mustEmbedUnimplementedHeliumHelperServer()
+type UnsafeHeliumServer interface {
+	mustEmbedUnimplementedHeliumServer()
 }
 
-func RegisterHeliumHelperServer(s grpc.ServiceRegistrar, srv HeliumHelperServer) {
-	s.RegisterService(&HeliumHelper_ServiceDesc, srv)
+func RegisterHeliumServer(s grpc.ServiceRegistrar, srv HeliumServer) {
+	s.RegisterService(&Helium_ServiceDesc, srv)
 }
 
-func _HeliumHelper_Register_Handler(srv interface{}, stream grpc.ServerStream) error {
+func _Helium_Register_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(Void)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(HeliumHelperServer).Register(m, &heliumHelperRegisterServer{stream})
+	return srv.(HeliumServer).Register(m, &heliumRegisterServer{stream})
 }
 
-type HeliumHelper_RegisterServer interface {
+type Helium_RegisterServer interface {
 	Send(*Event) error
 	grpc.ServerStream
 }
 
-type heliumHelperRegisterServer struct {
+type heliumRegisterServer struct {
 	grpc.ServerStream
 }
 
-func (x *heliumHelperRegisterServer) Send(m *Event) error {
+func (x *heliumRegisterServer) Send(m *Event) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func _HeliumHelper_PutShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Helium_PutShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Share)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(HeliumHelperServer).PutShare(ctx, in)
+		return srv.(HeliumServer).PutShare(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/helium_proto.HeliumHelper/PutShare",
+		FullMethod: "/helium_proto.Helium/PutShare",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeliumHelperServer).PutShare(ctx, req.(*Share))
+		return srv.(HeliumServer).PutShare(ctx, req.(*Share))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _HeliumHelper_GetAggregationOutput_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Helium_GetAggregationOutput_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ProtocolDescriptor)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(HeliumHelperServer).GetAggregationOutput(ctx, in)
+		return srv.(HeliumServer).GetAggregationOutput(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/helium_proto.HeliumHelper/GetAggregationOutput",
+		FullMethod: "/helium_proto.Helium/GetAggregationOutput",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeliumHelperServer).GetAggregationOutput(ctx, req.(*ProtocolDescriptor))
+		return srv.(HeliumServer).GetAggregationOutput(ctx, req.(*ProtocolDescriptor))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _HeliumHelper_GetCiphertext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CiphertextRequest)
+func _Helium_GetCiphertext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CiphertextID)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(HeliumHelperServer).GetCiphertext(ctx, in)
+		return srv.(HeliumServer).GetCiphertext(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/helium_proto.HeliumHelper/GetCiphertext",
+		FullMethod: "/helium_proto.Helium/GetCiphertext",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeliumHelperServer).GetCiphertext(ctx, req.(*CiphertextRequest))
+		return srv.(HeliumServer).GetCiphertext(ctx, req.(*CiphertextID))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _HeliumHelper_PutCiphertext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Helium_PutCiphertext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Ciphertext)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(HeliumHelperServer).PutCiphertext(ctx, in)
+		return srv.(HeliumServer).PutCiphertext(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/helium_proto.HeliumHelper/PutCiphertext",
+		FullMethod: "/helium_proto.Helium/PutCiphertext",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeliumHelperServer).PutCiphertext(ctx, req.(*Ciphertext))
+		return srv.(HeliumServer).PutCiphertext(ctx, req.(*Ciphertext))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// HeliumHelper_ServiceDesc is the grpc.ServiceDesc for HeliumHelper service.
+// Helium_ServiceDesc is the grpc.ServiceDesc for Helium service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var HeliumHelper_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "helium_proto.HeliumHelper",
-	HandlerType: (*HeliumHelperServer)(nil),
+var Helium_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "helium_proto.Helium",
+	HandlerType: (*HeliumServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "PutShare",
-			Handler:    _HeliumHelper_PutShare_Handler,
+			Handler:    _Helium_PutShare_Handler,
 		},
 		{
 			MethodName: "GetAggregationOutput",
-			Handler:    _HeliumHelper_GetAggregationOutput_Handler,
+			Handler:    _Helium_GetAggregationOutput_Handler,
 		},
 		{
 			MethodName: "GetCiphertext",
-			Handler:    _HeliumHelper_GetCiphertext_Handler,
+			Handler:    _Helium_GetCiphertext_Handler,
 		},
 		{
 			MethodName: "PutCiphertext",
-			Handler:    _HeliumHelper_PutCiphertext_Handler,
+			Handler:    _Helium_PutCiphertext_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Register",
-			Handler:       _HeliumHelper_Register_Handler,
+			Handler:       _Helium_Register_Handler,
 			ServerStreams: true,
 		},
 	},

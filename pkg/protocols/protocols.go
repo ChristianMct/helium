@@ -28,16 +28,16 @@ const (
 type Type uint
 
 const (
-	// Unknown is the default value for the protocol type.
-	Unknown Type = iota
+	// Unspecified is the default value for the protocol type.
+	Unspecified Type = iota
 	// SKG is the secret-key generation protocol. // TODO: unsupported
 	SKG
 	// CKG is the collective public-key generation protocol.
 	CKG
-	// RKG is the relinearization key generation protocol.
-	RKG
 	// RKG_1 is the first round of the relinearization key generation protocol.
 	RKG_1
+	// RKG is the relinearization key generation protocol.
+	RKG
 	// RTG is the galois key generation protocol.
 	RTG
 	// CKS is the collective key-switching protocol. // TODO: unsupported
@@ -47,6 +47,8 @@ const (
 	// PCKS is the collective public-key switching protocol. // TODO: unsupported
 	PCKS
 )
+
+var typeToString = []string{"Unknown", "SKG", "CKG", "RKG_1", "RKG", "RTG", "CKS", "DEC", "PCKS"}
 
 // Signature is a protocol prototype. In analogy to a function signature, it
 // describes the type of the protocol and the arguments it expects.
@@ -370,8 +372,6 @@ func checkProtocolDescriptor(pd Descriptor, sess *pkg.Session) error {
 
 	return nil
 }
-
-var typeToString = []string{"Unknown", "SKG", "CKG", "RKG", "RKG_1", "RTG", "CKS", "DEC", "PCKS"}
 
 // String returns the string representation of the protocol type.
 func (t Type) String() string {

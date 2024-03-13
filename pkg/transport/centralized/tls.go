@@ -7,6 +7,7 @@ import (
 )
 
 // TLSConfig is a struct for specifying TLS-related configuration.
+// TLS is not supported yet.
 type TLSConfig struct {
 	InsecureChannels bool                  // if set, disables TLS authentication
 	FromDirectory    string                // path to a directory containing the TLS material as files

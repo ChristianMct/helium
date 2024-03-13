@@ -237,6 +237,12 @@ func TestNodeCompute(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			for _, node := range all {
+				netStats := node.GetNetworkStats()
+				require.NotZero(t, netStats.DataRecv, "node %s should have received data", node.id)
+				require.NotZero(t, netStats.DataSent, "node %s should have sent data", node.id)
+			}
+
 			rec := all[ts.Reciever]
 			for cid, expRes := range expResult {
 				out, has := rec.Outputs[cid]

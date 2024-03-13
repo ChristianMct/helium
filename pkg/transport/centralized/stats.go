@@ -3,14 +3,13 @@ package centralized
 import (
 	"sync"
 
-	"github.com/ldsec/helium/pkg/transport"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/stats"
 )
 
 type statsHandler struct {
 	mu    sync.Mutex
-	stats transport.NetStats
+	stats NetStats
 }
 
 // TagRPC can attach some information to the given context.
@@ -47,3 +46,9 @@ func (s *statsHandler) TagConn(ctx context.Context, _ *stats.ConnTagInfo) contex
 
 // HandleConn processes the Conn stats.
 func (s *statsHandler) HandleConn(_ context.Context, _ stats.ConnStats) {}
+
+func (s *statsHandler) GetStats() NetStats {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stats
+}

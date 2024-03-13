@@ -14,7 +14,6 @@ import (
 	"net"
 	"slices"
 
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/coordinator"
 	"github.com/ldsec/helium/pkg/objectstore"
@@ -198,7 +197,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		go func() {
 			for ev := range setupCoord.outgoing {
 				pev := ev
-				node.srv.SendEvent(coordinator.Event{ProtocolEvent: &pev})
+				node.srv.AppendEventToLog(coordinator.Event{ProtocolEvent: &pev})
 			}
 			close(downstreamDone)
 		}()
@@ -239,7 +238,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		go func() {
 			for ev := range computeCoord.outgoing {
 				cev := ev
-				node.srv.SendEvent(cev)
+				node.srv.AppendEventToLog(cev)
 			}
 			close(downstreamDone)
 		}()
@@ -256,7 +255,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 			<-downstreamDone
 			node.Logf("compute service done, closing event channel")
 			//close(or) already closed by service
-			node.srv.CloseEvents()
+			node.srv.CloseEventLog()
 		}()
 
 	} else {
@@ -409,11 +408,6 @@ func (node *Node) IsHelperNode() bool {
 	return node.id == node.helperId
 }
 
-// SignatureParameters used to bootstrap the signature scheme.
-type SignatureParameters struct {
-	Type api.SignatureType
-}
-
 // SessionProvider interface implementation
 
 // GetSessionFromID returns the session with the given ID.
@@ -436,8 +430,24 @@ func (node *Node) Logf(msg string, v ...any) {
 	log.Printf("%s | [node] %s\n", node.id, fmt.Sprintf(msg, v...))
 }
 
+func (node *Node) GetNetworkStats() centralized.NetStats {
+	var stats, srvStats, cliStats centralized.NetStats
+	if node.srv != nil {
+		srvStats = node.srv.GetStats()
+		stats.DataRecv += srvStats.DataRecv
+		stats.DataSent += srvStats.DataSent
+	}
+	if node.cli != nil {
+		cliStats = node.cli.GetStats()
+		stats.DataRecv += cliStats.DataRecv
+		stats.DataSent += cliStats.DataSent
+	}
+	return stats
+}
+
 // // outputStats outputs the total network usage and time take to execute a protocol phase.
 // func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
+
 // 	dataSent := node.GetTransport().GetNetworkStats().DataSent
 // 	dataRecv := node.GetTransport().GetNetworkStats().DataRecv
 // 	fmt.Printf("STATS: phase: %s time: %f sent: %f MB recv: %f MB\n", phase, elapsed.Seconds(), float64(dataSent)/float64(1e6), float64(dataRecv)/float64(1e6))
