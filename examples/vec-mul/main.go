@@ -7,13 +7,14 @@ import (
 	"log"
 	"strconv"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/node"
 	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport/centralized"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
@@ -23,7 +24,7 @@ import (
 var (
 
 	// sessionParams defines the session parameters for the example application
-	sessionParams = pkg.SessionParameters{
+	sessionParams = session.Parameters{
 		ID:    "example-session",                                    // the id of the session must be unique
 		Nodes: []pkg.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
 		RLWEParams: bgv.ParametersLiteral{
@@ -32,17 +33,17 @@ var (
 			LogQ: []int{56, 55, 55, 54, 54, 54},
 			LogP: []int{55, 55},
 		},
-		Threshold:      3,
-		ShamirPks:      map[pkg.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4},
-		PublicSeed:     []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},
-		SessionSecrets: nil, // read from /var/run/secrets
+		Threshold:  3,
+		ShamirPks:  map[pkg.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4},
+		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},
+		Secrets:    nil, // read from /var/run/secrets
 	}
 
 	peerNodeConfig = node.Config{
 		ID:                "", // read from command line args
 		Address:           "", // read from command line args
 		HelperID:          "helper",
-		SessionParameters: []pkg.SessionParameters{sessionParams},
+		SessionParameters: []session.Parameters{sessionParams},
 		SetupConfig:       setup.ServiceConfig{Protocols: protocols.ExecutorConfig{MaxParticipation: 1}},
 		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 1, Protocols: protocols.ExecutorConfig{MaxParticipation: 1}},
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
@@ -53,7 +54,7 @@ var (
 		ID:                "", // read from command line args
 		Address:           "", // read from command line args
 		HelperID:          "helper",
-		SessionParameters: []pkg.SessionParameters{sessionParams},
+		SessionParameters: []session.Parameters{sessionParams},
 		SetupConfig:       setup.ServiceConfig{Protocols: protocols.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
 		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16, Protocols: protocols.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
@@ -129,7 +130,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("could not load node's secrets: %s", err)
 		}
-		config.SessionParameters[0].SessionSecrets = secrets
+		config.SessionParameters[0].Secrets = secrets
 	}
 	config.ID = nodeID
 
@@ -187,9 +188,9 @@ func main() {
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
-func loadSecrets(sp pkg.SessionParameters, nid pkg.NodeID) (secrets *pkg.SessionSecrets, err error) {
+func loadSecrets(sp session.Parameters, nid pkg.NodeID) (secrets *session.Secrets, err error) {
 
-	ss, err := pkg.GenTestSecretKeys(sp)
+	ss, err := session.GenTestSecretKeys(sp)
 	if err != nil {
 		return nil, err
 	}

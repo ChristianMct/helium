@@ -7,9 +7,10 @@ import (
 
 	"golang.org/x/exp/maps"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/circuits"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
@@ -36,7 +37,7 @@ type evaluatorRuntime struct {
 	cDesc circuits.Descriptor
 	//c      circuits.Circuit
 	//params bgv.Parameters
-	sess        *pkg.Session
+	sess        *session.Session
 	fheProvider FHEProvider
 
 	// protocols

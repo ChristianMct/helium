@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/coordinator"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -185,7 +185,7 @@ func (hsv *HeliumServer) NotifyUnregister(node pkg.NodeID) (err error) {
 
 // Register is a gRPC handler for the Register method of the Helium service.
 func (hsv *HeliumServer) Register(_ *api.Void, stream api.Helium_RegisterServer) error {
-	nodeId := pkg.SenderIDFromIncomingContext(stream.Context())
+	nodeId := senderIDFromIncomingContext(stream.Context())
 	if len(nodeId) == 0 {
 		return status.Error(codes.FailedPrecondition, "caller must specify node id for stream")
 	}
@@ -272,7 +272,7 @@ func (hsv *HeliumServer) Register(_ *api.Void, stream api.Helium_RegisterServer)
 // PutShare is a gRPC handler for the PutShare method of the Helium service.
 func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *api.Share) (*api.Void, error) {
 
-	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +289,7 @@ func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *api.Share) (*
 // GetAggregationOutput is a gRPC handler for the GetAggregationOutput method of the Helium service.
 func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.ProtocolDescriptor) (*api.AggregationOutput, error) {
 
-	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
 		return nil, err
 	}
@@ -297,16 +297,16 @@ func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.
 	pd := getProtocolDescFromAPI(apipd)
 	out, err := hsv.protocolHandler.GetAggregationOutput(ctx, *pd)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s", pd.HID())
+		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s: %s", pd.HID(), err)
 	}
 
 	s, err := getAPIShare(&out.Share)
 	if err != nil {
-		return nil, err
+		return nil, status.Errorf(codes.Internal, "error converting share to API: %s", err)
 	}
 	apiOut := &api.AggregationOutput{AggregatedShare: s}
 
-	peerID := pkg.SenderIDFromIncomingContext(ctx)
+	peerID := senderIDFromIncomingContext(ctx)
 	hsv.Logf("aggregation output %s query from %s", pd.HID(), peerID)
 
 	return apiOut, nil
@@ -315,7 +315,7 @@ func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.
 // GetCiphertext is a gRPC handler for the GetCiphertext method of the Helium service.
 func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *api.CiphertextID) (*api.Ciphertext, error) {
 
-	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +334,7 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *api.Ciphert
 		return nil, fmt.Errorf("invalid ciphertext: %w", err)
 	}
 
-	ctx, err := pkg.GetContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
 		return nil, err
 	}

@@ -3,10 +3,10 @@ package centralized
 import (
 	"fmt"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/coordinator"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 )

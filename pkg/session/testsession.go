@@ -1,9 +1,9 @@
-package pkg
+package session
 
 import (
 	"fmt"
 
-	"github.com/ldsec/helium/pkg/objectstore"
+	"github.com/ldsec/helium/pkg"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -12,14 +12,14 @@ import (
 )
 
 type TestSession struct {
-	SessParams    SessionParameters
+	SessParams    Parameters
 	RlweParams    bgv.Parameters
 	SkIdeal       *rlwe.SecretKey
-	NodeSessions  map[NodeID]*Session
+	NodeSessions  map[pkg.NodeID]*Session
 	HelperSession *Session
 
 	// key backend
-	*CachedKeyBackend
+	*pkg.CachedKeyBackend
 
 	// lattigo helpers
 	Encoder   *bgv.Encoder
@@ -27,15 +27,15 @@ type TestSession struct {
 	Decrpytor *rlwe.Decryptor
 }
 
-func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperId NodeID) (*TestSession, error) {
-	nids := make([]NodeID, N)
-	nspk := make(map[NodeID]drlwe.ShamirPublicPoint)
+func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperId pkg.NodeID) (*TestSession, error) {
+	nids := make([]pkg.NodeID, N)
+	nspk := make(map[pkg.NodeID]drlwe.ShamirPublicPoint)
 	for i := range nids {
-		nids[i] = NodeID(fmt.Sprintf("node-%d", i))
+		nids[i] = pkg.NodeID(fmt.Sprintf("node-%d", i))
 		nspk[nids[i]] = drlwe.ShamirPublicPoint(i + 1)
 	}
 
-	var sessParams = SessionParameters{
+	var sessParams = Parameters{
 		ID:         "testsess",
 		RLWEParams: rlweparams,
 		Threshold:  T,
@@ -48,7 +48,7 @@ func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperId NodeID)
 
 }
 
-func NewTestSessionFromParams(sp SessionParameters, helperId NodeID) (*TestSession, error) {
+func NewTestSessionFromParams(sp Parameters, helperId pkg.NodeID) (*TestSession, error) {
 	ts := new(TestSession)
 
 	ts.SessParams = sp
@@ -66,19 +66,14 @@ func NewTestSessionFromParams(sp SessionParameters, helperId NodeID) (*TestSessi
 	}
 
 	ts.SkIdeal = rlwe.NewSecretKey(ts.RlweParams)
-	ts.NodeSessions = make(map[NodeID]*Session, len(sp.Nodes))
+	ts.NodeSessions = make(map[pkg.NodeID]*Session, len(sp.Nodes))
 	for _, nid := range sp.Nodes {
 
-		os, err := objectstore.NewObjectStoreFromConfig(objectstore.Config{BackendName: "mem"})
-		if err != nil {
-			return nil, err
-		}
-
 		spi := sp
-		spi.SessionSecrets = nodeSecrets[nid]
+		spi.Secrets = nodeSecrets[nid]
 
 		// computes the ideal secret-key for the test
-		ts.NodeSessions[nid], err = NewSession(spi, nid, os)
+		ts.NodeSessions[nid], err = NewSession(spi, nid)
 		if err != nil {
 			return nil, err
 		}
@@ -89,14 +84,9 @@ func NewTestSessionFromParams(sp SessionParameters, helperId NodeID) (*TestSessi
 		ts.RlweParams.RingQP().AtLevel(ts.SkIdeal.Value.Q.Level(), ts.SkIdeal.Value.P.Level()).Add(sk.Value, ts.SkIdeal.Value, ts.SkIdeal.Value)
 	}
 
-	os, err := objectstore.NewObjectStoreFromConfig(objectstore.Config{BackendName: "mem"})
-	if err != nil {
-		return nil, err
-	}
+	ts.HelperSession, err = NewSession(sp, helperId)
 
-	ts.HelperSession, err = NewSession(sp, helperId, os)
-
-	ts.CachedKeyBackend = NewCachedPublicKeyBackend(NewTestKeyBackend(ts.RlweParams.Parameters, ts.SkIdeal))
+	ts.CachedKeyBackend = pkg.NewCachedPublicKeyBackend(pkg.NewTestKeyBackend(ts.RlweParams.Parameters, ts.SkIdeal))
 
 	ts.Encoder = bgv.NewEncoder(ts.RlweParams)
 	ts.Encryptor, err = bgv.NewEncryptor(ts.RlweParams, ts.SkIdeal)
@@ -108,15 +98,15 @@ func NewTestSessionFromParams(sp SessionParameters, helperId NodeID) (*TestSessi
 	return ts, err
 }
 
-func GenTestSecretKeys(sessParams SessionParameters) (secs map[NodeID]*SessionSecrets, err error) {
+func GenTestSecretKeys(sessParams Parameters) (secs map[pkg.NodeID]*Secrets, err error) {
 	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams.RLWEParametersLiteral())
 	if err != nil {
 		return nil, err
 	}
 
-	secs = make(map[NodeID]*SessionSecrets, len(sessParams.Nodes))
+	secs = make(map[pkg.NodeID]*Secrets, len(sessParams.Nodes))
 	for _, nid := range sessParams.Nodes {
-		ss := new(SessionSecrets)
+		ss := new(Secrets)
 		secs[nid] = ss
 		ss.PrivateSeed = []byte(nid) // uses the node id as the private seed for testing
 	}
@@ -126,7 +116,7 @@ func GenTestSecretKeys(sessParams SessionParameters) (secs map[NodeID]*SessionSe
 	}
 
 	// simulates the generation of the shamir threshold keys
-	shares := make(map[NodeID]map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
+	shares := make(map[pkg.NodeID]map[pkg.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 	thresholdizer := drlwe.NewThresholdizer(params)
 
 	for nidi, ssi := range secs {
@@ -141,7 +131,7 @@ func GenTestSecretKeys(sessParams SessionParameters) (secs map[NodeID]*SessionSe
 			return nil, err
 		}
 
-		shares[nidi] = make(map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
+		shares[nidi] = make(map[pkg.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 
 		// TODO: add seeding to Thresholdizer and replace the following code with the Thresholdizer.GenShamirPolynomial method
 		usampleri := ringqp.NewUniformSampler(prngi, *params.RingQP())

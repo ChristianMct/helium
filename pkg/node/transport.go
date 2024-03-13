@@ -1,8 +1,8 @@
 package node
 
 import (
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/coordinator"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"golang.org/x/net/context"
 )

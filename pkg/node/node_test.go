@@ -6,10 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/circuits"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -100,7 +101,7 @@ func TestNodeSetup(t *testing.T) {
 			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
 			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
 			require.Nil(t, err)
-			sessParams := pkg.SessionParameters{
+			sessParams := session.Parameters{
 				ID:         "test-session",
 				RLWEParams: params.ParametersLiteral(),
 				Threshold:  ts.T,
@@ -167,7 +168,7 @@ func TestNodeCompute(t *testing.T) {
 			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
 			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
 			require.Nil(t, err)
-			sessParams := pkg.SessionParameters{
+			sessParams := session.Parameters{
 				ID:         "test-session",
 				RLWEParams: params.ParametersLiteral(),
 				Threshold:  ts.T,

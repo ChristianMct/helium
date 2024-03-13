@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
@@ -23,7 +24,7 @@ type ServiceConfig struct {
 type Service struct {
 	self pkg.NodeID
 
-	sessions pkg.SessionProvider
+	sessions session.SessionProvider
 
 	execuctor *protocols.Executor
 	transport Transport
@@ -46,7 +47,7 @@ type Transport interface {
 }
 
 // NewSetupService creates a new setup service.
-func NewSetupService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf ServiceConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownId pkg.NodeID, sessions session.SessionProvider, conf ServiceConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownId

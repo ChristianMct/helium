@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/utils"
 )
 

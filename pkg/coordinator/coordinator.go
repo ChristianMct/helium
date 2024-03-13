@@ -1,7 +1,7 @@
 package coordinator
 
 import (
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
 )
 
 type Coordinator interface {

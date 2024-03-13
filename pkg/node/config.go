@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport/centralized"
 )
 
@@ -21,7 +22,7 @@ type Config struct {
 	ID                pkg.NodeID
 	Address           pkg.NodeAddress
 	HelperID          pkg.NodeID
-	SessionParameters []pkg.SessionParameters
+	SessionParameters []session.Parameters
 	SetupConfig       setup.ServiceConfig
 	ComputeConfig     compute.ServiceConfig
 	ObjectStoreConfig objectstore.Config

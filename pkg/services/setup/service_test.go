@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/ldsec/helium/pkg/objectstore"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/session"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
@@ -38,7 +40,7 @@ var testSettings = []testSetting{
 
 type testnode struct {
 	*Service
-	*pkg.Session
+	*session.Session
 	protocols.Coordinator
 }
 
@@ -63,7 +65,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				hid := pkg.NodeID("helper")
 
-				testSess, err := pkg.NewTestSession(ts.N, ts.T, literalParams, hid)
+				testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -90,7 +92,8 @@ func TestCloudAssistedSetup(t *testing.T) {
 				}
 
 				srvTrans := &testNodeTrans{Transport: protoTrans}
-				clou.Service, err = NewSetupService(hid, testSess.HelperSession, conf, srvTrans, testSess.HelperSession.ObjectStore)
+				os := objectstore.NewMemObjectStore()
+				clou.Service, err = NewSetupService(hid, testSess.HelperSession, conf, srvTrans, os)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -101,7 +104,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 					cli := &testnode{}
 					cli.Session = testSess.NodeSessions[nid]
 					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], conf, srvTrans, testSess.NodeSessions[nid].ObjectStore)
+					cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], conf, srvTrans, objectstore.NewNullObjectStore())
 					if err != nil {
 						t.Fatal(err)
 					}

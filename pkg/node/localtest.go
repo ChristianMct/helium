@@ -17,7 +17,8 @@ import (
 	"github.com/ldsec/helium/pkg/objectstore"
 	cryptoUtil "github.com/ldsec/helium/pkg/utils/certs"
 
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport/centralized"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
@@ -28,7 +29,7 @@ import (
 // LocalTestConfig is a configuration structure for LocalTest types.
 type LocalTestConfig struct {
 	PeerNodes         int // Number of peer nodes in the session
-	SessionParams     *pkg.SessionParameters
+	SessionParams     *session.Parameters
 	InsecureChannels  bool                // use TLS for this test. TODO: fix TLS
 	ObjectStoreConfig *objectstore.Config // nodes's object store configuration for this test
 }
@@ -41,7 +42,7 @@ type LocalTest struct {
 	HelperNode *Node
 	Params     bgv.Parameters
 
-	*pkg.TestSession
+	*session.TestSession
 	HelperConfig    Config
 	SessNodeConfigs []Config
 	pkg.NodesList
@@ -68,7 +69,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	config.SessionParams.ID = "test-session"
 	config.SessionParams.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
 
-	nodeSecrets, err := pkg.GenTestSecretKeys(*config.SessionParams)
+	nodeSecrets, err := session.GenTestSecretKeys(*config.SessionParams)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +77,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test.SessNodeConfigs, test.HelperConfig = genNodeConfigs(config, test.NodesList, nodeSecrets)
 
 	if config.SessionParams != nil {
-		test.TestSession, err = pkg.NewTestSessionFromParams(*config.SessionParams, test.HelperConfig.ID)
+		test.TestSession, err = session.NewTestSessionFromParams(*config.SessionParams, test.HelperConfig.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -102,7 +103,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
-func genNodeConfigs(config LocalTestConfig, nl pkg.NodesList, secrets map[pkg.NodeID]*pkg.SessionSecrets) (sessNodesConfig []Config, helperNodeConfig Config) {
+func genNodeConfigs(config LocalTestConfig, nl pkg.NodesList, secrets map[pkg.NodeID]*session.Secrets) (sessNodesConfig []Config, helperNodeConfig Config) {
 
 	tlsConfigs, err := createTLSConfigs(config, nl)
 	if err != nil {
@@ -125,18 +126,18 @@ func genNodeConfigs(config LocalTestConfig, nl pkg.NodesList, secrets map[pkg.No
 		sessNodesConfig[i] = Config{
 			ID:                nid,
 			HelperID:          hid,
-			SessionParameters: []pkg.SessionParameters{*sp},
+			SessionParameters: []session.Parameters{*sp},
 			TLSConfig:         tlsConfigs[nid],
 			ObjectStoreConfig: objstoreconf,
 		}
-		sessNodesConfig[i].SessionParameters[0].SessionSecrets = secrets[nid]
+		sessNodesConfig[i].SessionParameters[0].Secrets = secrets[nid]
 	}
 
 	helperNodeConfig = Config{
 		ID:                hid,
 		Address:           "local",
 		HelperID:          hid,
-		SessionParameters: []pkg.SessionParameters{*sp},
+		SessionParameters: []session.Parameters{*sp},
 		TLSConfig:         tlsConfigs[hid],
 		ObjectStoreConfig: objstoreconf,
 	}

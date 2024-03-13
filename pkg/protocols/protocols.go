@@ -12,7 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -150,7 +151,7 @@ type Protocol struct {
 }
 
 // NewProtocol creates a new protocol from the provided protocol descriptor, session and inputs.
-func NewProtocol(pd Descriptor, sess *pkg.Session) (*Protocol, error) {
+func NewProtocol(pd Descriptor, sess *session.Session) (*Protocol, error) {
 
 	err := checkProtocolDescriptor(pd, sess)
 	if err != nil {
@@ -339,7 +340,7 @@ func (p *Protocol) Logf(msg string, v ...any) {
 	log.Printf("%s | [%s] %s\n", p.self, p.HID(), fmt.Sprintf(msg, v...))
 }
 
-func checkProtocolDescriptor(pd Descriptor, sess *pkg.Session) error {
+func checkProtocolDescriptor(pd Descriptor, sess *session.Session) error {
 
 	if len(pd.Participants) < sess.Threshold {
 		return fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.Threshold)
@@ -521,7 +522,7 @@ func GetParticipants(sig Signature, onlineNodes utils.Set[pkg.NodeID], threshold
 // GetProtocolPublicRandomness intitializes a keyed PRF from the session's public seed and
 // the protocol's information.
 // This function ensures that the PRF is unique for each protocol execution.
-func GetProtocolPublicRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF {
+func GetProtocolPublicRandomness(pd Descriptor, sess *session.Session) blake2b.XOF {
 	xof, _ := blake2b.NewXOF(blake2b.OutputLengthUnknown, nil)
 	_, err := xof.Write(sess.PublicSeed)
 	if err != nil {
@@ -542,7 +543,7 @@ func GetProtocolPublicRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF {
 // GetProtocolPrivateRandomness intitializes a keyed PRF from the session's private seed and
 // the protocol's information.
 // This function ensures that the PRF is unique for each protocol execution.
-func GetProtocolPrivateRandomness(pd Descriptor, sess *pkg.Session) blake2b.XOF {
+func GetProtocolPrivateRandomness(pd Descriptor, sess *session.Session) blake2b.XOF {
 	xof := GetProtocolPublicRandomness(pd, sess)
 	_, err := xof.Write(sess.PrivateSeed)
 	if err != nil {

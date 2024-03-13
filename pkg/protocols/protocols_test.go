@@ -6,7 +6,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
@@ -43,7 +44,7 @@ func TestProtocols(t *testing.T) {
 		params := TestPN12QP109
 
 		hid := pkg.NodeID("helper")
-		testSess, err := pkg.NewTestSession(ts.N, ts.T, params, hid)
+		testSess, err := session.NewTestSession(ts.N, ts.T, params, hid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +109,7 @@ func TestProtocols(t *testing.T) {
 	}
 }
 
-func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T) AggregationOutput {
+func runProto(pd Descriptor, testSess session.TestSession, input Input, t *testing.T) AggregationOutput {
 
 	helperP, err := NewProtocol(pd, testSess.HelperSession)
 	if err != nil {
@@ -171,7 +172,7 @@ func runProto(pd Descriptor, testSess pkg.TestSession, input Input, t *testing.T
 	return aggOut
 }
 
-func checkOutput(out interface{}, pd Descriptor, testSess pkg.TestSession, t *testing.T) {
+func checkOutput(out interface{}, pd Descriptor, testSess session.TestSession, t *testing.T) {
 
 	nParties := len(testSess.NodeSessions)
 	sk := testSess.SkIdeal

@@ -7,10 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/coordinator"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,7 @@ type testnode struct {
 	*Service
 	coordinator.Coordinator
 	InputProvider
-	*pkg.Session
+	*session.Session
 
 	OutputReceiver chan circuits.Output
 	Outputs        map[circuits.ID]circuits.Output
@@ -103,7 +104,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 				hid := pkg.NodeID("helper")
 
-				testSess, err := pkg.NewTestSession(ts.N, ts.T, literalParams, hid)
+				testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
 				if err != nil {
 					t.Fatal(err)
 				}

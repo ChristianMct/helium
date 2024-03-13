@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 )
 

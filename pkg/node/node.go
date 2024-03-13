@@ -14,13 +14,14 @@ import (
 	"net"
 	"slices"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/coordinator"
 	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"github.com/ldsec/helium/pkg/services/compute"
 	"github.com/ldsec/helium/pkg/services/setup"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/transport/centralized"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -42,7 +43,7 @@ type Node struct {
 	nodeList     pkg.NodesList
 
 	// sessions and state
-	sessions *pkg.SessionStore
+	sessions *session.SessionStore
 	objectstore.ObjectStore
 
 	// transport
@@ -83,9 +84,9 @@ func NewNode(config Config, nodeList pkg.NodesList) (node *Node, err error) {
 	}
 
 	// session
-	node.sessions = pkg.NewSessionStore()
+	node.sessions = session.NewSessionStore()
 	for _, sp := range config.SessionParameters {
-		_, err = node.createNewSession(sp, node.ObjectStore)
+		_, err = node.createNewSession(sp)
 		if err != nil {
 			return nil, err
 		}
@@ -328,7 +329,7 @@ func (node *Node) Close() error {
 	if node.IsHelperNode() {
 		node.srv.Server.GracefulStop()
 	}
-	return node.sessions.Close()
+	return nil
 }
 
 // Transport interface implementation
@@ -411,13 +412,13 @@ func (node *Node) IsHelperNode() bool {
 // SessionProvider interface implementation
 
 // GetSessionFromID returns the session with the given ID.
-func (node *Node) GetSessionFromID(sessionID pkg.SessionID) (*pkg.Session, bool) {
+func (node *Node) GetSessionFromID(sessionID pkg.SessionID) (*session.Session, bool) {
 	return node.sessions.GetSessionFromID(sessionID)
 }
 
 // GetSessionFromContext returns the session by extracting the session id from the
 // provided context.
-func (node *Node) GetSessionFromContext(ctx context.Context) (*pkg.Session, bool) {
+func (node *Node) GetSessionFromContext(ctx context.Context) (*session.Session, bool) {
 	sessID, has := pkg.SessionIDFromContext(ctx)
 	if !has {
 		return nil, false
@@ -541,8 +542,8 @@ func (n *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 	return n.compute.GetDecryptor(ctx)
 }
 
-func (node *Node) createNewSession(sessParams pkg.SessionParameters, objstore objectstore.ObjectStore) (sess *pkg.Session, err error) {
-	sess, err = node.sessions.NewRLWESession(sessParams, node.id, objstore)
+func (node *Node) createNewSession(sessParams session.Parameters) (sess *session.Session, err error) {
+	sess, err = node.sessions.NewRLWESession(sessParams, node.id)
 	if err != nil {
 		return sess, err
 	}

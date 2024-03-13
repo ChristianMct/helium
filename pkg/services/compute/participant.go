@@ -6,9 +6,10 @@ import (
 
 	"golang.org/x/exp/maps"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/circuits"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -30,7 +31,7 @@ type participantRuntime struct {
 	// inst
 	ctx           context.Context // TODO: check if storing this context this way is a problem
 	cd            circuits.Descriptor
-	sess          *pkg.Session
+	sess          *session.Session
 	inputProvider InputProvider
 	trans         Transport
 	or            OutputReceiver

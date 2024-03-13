@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/coordinator"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -151,7 +151,7 @@ func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) er
 }
 
 func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
-	return pkg.GetOutgoingContext(ctx, hc.ownId)
+	return getOutgoingContext(ctx, hc.ownId)
 }
 
 func readPresentFromStream(stream grpc.ClientStream) (int, error) {

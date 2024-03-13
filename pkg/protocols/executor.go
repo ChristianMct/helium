@@ -6,7 +6,8 @@ import (
 	"log"
 	"sync"
 
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/ldsec/helium/pkg/utils"
 	"golang.org/x/sync/errgroup"
 )
@@ -28,7 +29,7 @@ type Executor struct {
 	config ExecutorConfig
 	self   pkg.NodeID
 
-	sessions      pkg.SessionProvider
+	sessions      session.SessionProvider
 	transport     Transport
 	coordinator   Coordinator
 	inputProvider InputProvider
@@ -147,7 +148,7 @@ func (ev Event) IsComputeEvent() bool {
 }
 
 // NewExectutor creates a new executor.
-func NewExectutor(config ExecutorConfig, ownId pkg.NodeID, sessions pkg.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
+func NewExectutor(config ExecutorConfig, ownId pkg.NodeID, sessions session.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
 	if s.config.SigQueueSize == 0 {
@@ -316,7 +317,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 	return nil
 }
 
-func (s *Executor) runAsAggregator(ctx context.Context, sess *pkg.Session, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
+func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
 
 	proto, err := NewProtocol(pd, sess)
 	if err != nil {
@@ -572,7 +573,7 @@ func (s *Executor) getAvailable() utils.Set[pkg.NodeID] {
 	return available
 }
 
-func (s *Executor) getProtocolDescriptor(sig Signature, sess *pkg.Session) Descriptor {
+func (s *Executor) getProtocolDescriptor(sig Signature, sess *session.Session) Descriptor {
 	pd := Descriptor{Signature: sig, Aggregator: s.self}
 
 	var available, selected utils.Set[pkg.NodeID]

@@ -7,8 +7,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ldsec/helium/pkg/pkg"
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -66,7 +67,7 @@ func (sd Description) String() string {
 }
 
 // CheckTestSetup checks if a public key provider is able to produce valid keys for a given test session and setup description.
-func CheckTestSetup(ctx context.Context, t *testing.T, nid pkg.NodeID, lt *pkg.TestSession, setup Description, n pkg.PublicKeyProvider) {
+func CheckTestSetup(ctx context.Context, t *testing.T, nid pkg.NodeID, lt *session.TestSession, setup Description, n pkg.PublicKeyProvider) {
 
 	params := lt.RlweParams
 	sk := lt.SkIdeal

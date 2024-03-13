@@ -10,10 +10,11 @@ import (
 	"log"
 	"sync"
 
+	"github.com/ldsec/helium/pkg"
 	"github.com/ldsec/helium/pkg/circuits"
 	"github.com/ldsec/helium/pkg/coordinator"
-	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/session"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/sync/errgroup"
@@ -114,7 +115,7 @@ type Service struct {
 	config ServiceConfig
 	self   pkg.NodeID
 
-	sessions pkg.SessionProvider
+	sessions session.SessionProvider
 	*protocols.Executor
 	transport Transport
 
@@ -151,7 +152,7 @@ const (
 )
 
 // NewComputeService creates a new compute service instance.
-func NewComputeService(ownId pkg.NodeID, sessions pkg.SessionProvider, conf ServiceConfig, pkbk PublicKeyProvider, trans Transport) (s *Service, err error) {
+func NewComputeService(ownId pkg.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk PublicKeyProvider, trans Transport) (s *Service, err error) {
 	s = new(Service)
 
 	s.config = conf
