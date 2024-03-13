@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg/objectstore"
-	cryptoUtil "github.com/ldsec/helium/pkg/utils/crypto"
+	cryptoUtil "github.com/ldsec/helium/pkg/utils/certs"
 
 	"github.com/ldsec/helium/pkg/pkg"
 	"github.com/ldsec/helium/pkg/transport/centralized"

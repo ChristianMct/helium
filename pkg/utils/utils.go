@@ -1,3 +1,4 @@
+// package utils defines a set of utility functions and types used across the helium project.
 package utils
 
 import (
@@ -11,59 +12,70 @@ import (
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 
-var Exists = struct{}{}
-
+// Set is a mutable set of elements of type T.
+// Set is not safe for concurrent use.
 type Set[T comparable] map[T]struct{}
 
+var exists = struct{}{}
+
+// NewEmptySet creates a new empty set.
 func NewEmptySet[T comparable]() Set[T] {
 	return make(map[T]struct{})
 }
 
+// NewSingletonSet creates a new set with a single element el.
 func NewSingletonSet[T comparable](el T) Set[T] {
-	return map[T]struct{}{el: Exists}
+	return map[T]struct{}{el: exists}
 }
 
+// NewSet creates a new set with the elements els.
 func NewSet[T comparable](els []T) Set[T] {
 	s := make(map[T]struct{})
 	for _, el := range els {
-		s[el] = Exists
+		s[el] = exists
 	}
 	return s
 }
 
+// Add adds an element el to the receiver set.
 func (s *Set[T]) Add(el T) {
 	if *s == nil {
 		*s = NewEmptySet[T]()
 	}
-	(*s)[el] = Exists
+	(*s)[el] = exists
 }
 
-func (s *Set[T]) AddAll(el Set[T]) {
+// AddAll adds all elements of set els into the receiver set.
+func (s *Set[T]) AddAll(els Set[T]) {
 	if *s == nil {
 		*s = NewEmptySet[T]()
 	}
-	for el := range el {
-		(*s)[el] = Exists
+	for el := range els {
+		(*s)[el] = exists
 	}
 }
 
-func (s Set[T]) Remove(el ...T) {
-	for _, e := range el {
+// Remove removes all elements els from the receiver set.
+func (s Set[T]) Remove(els ...T) {
+	for _, e := range els {
 		delete(s, e)
 	}
 }
 
+// Diff returns the set difference between the receiver and other.
 func (s Set[T]) Diff(other Set[T]) Set[T] {
 	sc := s.Copy()
 	sc.Remove(other.Elements()...)
 	return sc
 }
 
+// Contains returns whether an element el is in the receiver set.
 func (s Set[T]) Contains(el T) bool {
 	_, inSet := s[el]
 	return inSet
 }
 
+// Includes returns whether the other set is a subset of the receiver set.
 func (s Set[T]) Includes(other Set[T]) bool {
 	if len(other) > len(s) {
 		return false
@@ -76,6 +88,8 @@ func (s Set[T]) Includes(other Set[T]) bool {
 	return true
 }
 
+// Disjoint returns whether the receiver and the other sets have an empty
+// intersection.
 func (s Set[T]) Disjoint(other Set[T]) bool {
 	smallest, largest := s, other
 	if len(other) < len(s) {
@@ -89,6 +103,7 @@ func (s Set[T]) Disjoint(other Set[T]) bool {
 	return true
 }
 
+// Elements returns the set elements as a slice.
 func (s Set[T]) Elements() []T {
 	els := make([]T, 0, len(s))
 	for el := range s {
@@ -97,6 +112,7 @@ func (s Set[T]) Elements() []T {
 	return els
 }
 
+// Equals returns whether the receiver and other sets are equal.
 func (s Set[T]) Equals(other Set[T]) bool {
 	if len(s) != len(other) {
 		return false
@@ -109,70 +125,48 @@ func (s Set[T]) Equals(other Set[T]) bool {
 	return true
 }
 
+// Copy returns a new set containing the elements of the receiver
+// set. It performs a shallow copy of the set elements.
 func (s Set[T]) Copy() Set[T] {
 	sc := NewEmptySet[T]()
 	sc.AddAll(s)
 	return sc
 }
 
-func GetRandomSliceOfSize[T any](t int, nodes []T) []T {
-	cid := make([]T, len(nodes))
-	copy(cid, nodes)
+// GetRandomSliceOfSize returns a slice containing t random elements
+// from s. The function panics if t > len(s).
+func GetRandomSliceOfSize[T any](t int, s []T) []T {
+	cid := make([]T, len(s))
+	copy(cid, s)
 	rand.Shuffle(len(cid), func(i, j int) {
 		cid[i], cid[j] = cid[j], cid[i]
 	})
 	return cid[:t]
 }
 
-func GetRandomSetOfSize[T comparable](t int, nodes Set[T]) Set[T] {
-	return NewSet(GetRandomSliceOfSize(t, nodes.Elements()))
+// GetRandomSetOfSize returns a set containing t random elements
+// from s. The function panics if t > len(s).
+func GetRandomSetOfSize[T comparable](t int, s Set[T]) Set[T] {
+	return NewSet(GetRandomSliceOfSize(t, s.Elements()))
 }
 
-func Must(bs []byte, err error) []byte {
-	if err != nil {
-		panic(err)
-	}
-	return bs
-}
-
-func GetSha256Hex(b []byte, err error) string {
-	return fmt.Sprintf("%x", sha256.Sum256(b))
-}
-
-func PrintDebugCiphertext(ct rlwe.Ciphertext) string {
+// SPrintDebugCiphertext is a debug function for obtaining a
+// short string representation of a ciphertext by hashing its
+// binary representation.
+func SPrintDebugCiphertext(ct rlwe.Ciphertext) string {
 	if ct.Value == nil {
 		return "nil"
 	}
-	return GetSha256Hex(ct.MarshalBinary())
+	return getSha256Hex(ct.MarshalBinary())
 }
 
-type Triple[A, B, C any] struct {
-	Fst A
-	Snd B
-	Trd C
+func getSha256Hex(b []byte, _ error) string {
+	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 
-func Zip[A, B, C any](as []A, bs []B, cs []C) []Triple[A, B, C] {
-	length := len(as) * len(bs) * len(cs)
-	triples := make([]Triple[A, B, C], length)
-
-	idx := 0
-	for _, a := range as {
-		for _, b := range bs {
-			for _, c := range cs {
-				triples[idx] = Triple[A, B, C]{
-					Fst: a,
-					Snd: b,
-					Trd: c,
-				}
-				idx++
-			}
-		}
-	}
-	return triples
-}
-
-func MarshalToFile(s interface{}, filename string) error {
+// MarshalJSONToFile attempts to write s to a file with file name filename,
+// by calling the json.Marshal function.
+func MarshalJSONToFile(s interface{}, filename string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("could not open file: %w", err)
@@ -191,7 +185,9 @@ func MarshalToFile(s interface{}, filename string) error {
 	return file.Close()
 }
 
-func UnmarshalFromFile(filename string, s interface{}) error {
+// UnmarshalJSONFromFile attempts to load a json file with name filename,
+// and to decode its content into s by calling the json.Unmarshal function.
+func UnmarshalJSONFromFile(filename string, s interface{}) error {
 	confFile, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("could not open file: %w", err)
@@ -210,6 +206,8 @@ func UnmarshalFromFile(filename string, s interface{}) error {
 	return nil
 }
 
+// ByteCountSI returns a string representation of a byte count b,
+// by formatting it as a SI value.
 func ByteCountSI(b uint64) string {
 	const unit = 1000
 	if b < unit {
@@ -224,6 +222,8 @@ func ByteCountSI(b uint64) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
+// ByteCountIEC returns a string representation of a byte count b,
+// by formatting it as a IEC value.
 func ByteCountIEC(b uint64) string {
 	const unit = 1024
 	if b < unit {
