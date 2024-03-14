@@ -13,7 +13,7 @@ type hybridObjectStore struct {
 	memObjectStore    *memObjectStore
 }
 
-// NewObjectStore creates a new ObjectStore instance.
+// NewHybridObjectStore creates a new ObjectStore instance.
 func NewHybridObjectStore(conf Config) (*hybridObjectStore, error) {
 	badgerObjectStore, err := NewBadgerObjectStore(conf)
 	if err != nil {

@@ -1,4 +1,4 @@
-// package setup implements the MHE setup phase as a service.
+// Package setup implements the MHE setup phase as a service.
 // This serices executes the key generation protocols and makes their
 // outputs available.
 package setup
@@ -47,10 +47,10 @@ type Transport interface {
 }
 
 // NewSetupService creates a new setup service.
-func NewSetupService(ownId helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
-	s.self = ownId
+	s.self = ownID
 	s.sessions = sessions
 	s.execuctor, err = protocols.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {
@@ -240,14 +240,14 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor)
 	}
 
 	switch pd.Signature.Type {
-	case protocols.CKG, protocols.RTG, protocols.RKG_1:
+	case protocols.CKG, protocols.RTG, protocols.RKG1:
 		p, err := protocols.NewProtocol(pd, sess) // TODO: cache and reuse ?
 		if err != nil {
 			return nil, err
 		}
 		return p.ReadCRP()
 	case protocols.RKG:
-		aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
+		aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
 		if err != nil {
 			return nil, err
 		}

@@ -1,4 +1,4 @@
-// package session implements helium sessions.
+// Package session implements helium sessions.
 package session
 
 import (
@@ -173,64 +173,64 @@ func (sess *Session) GetSecretKeyForGroup(parties []helium.NodeID) (sk *rlwe.Sec
 }
 
 // GetSecretKey loads the secret key from the ObjectStore.
-func (s *Session) GetSecretKey() (*rlwe.SecretKey, error) {
-	if s.secretKey == nil {
+func (sess *Session) GetSecretKey() (*rlwe.SecretKey, error) {
+	if sess.secretKey == nil {
 		return nil, fmt.Errorf("node has no secret-key in the session")
 	}
-	return s.secretKey, nil
+	return sess.secretKey, nil
 }
 
-func (s *Session) GetRLKEphemeralSecretKey() (*rlwe.SecretKey, error) {
-	if s.rlkEphSk == nil {
+func (sess *Session) GetRLKEphemeralSecretKey() (*rlwe.SecretKey, error) {
+	if sess.rlkEphSk == nil {
 		return nil, fmt.Errorf("node has no rlk ephemeral secret-key in the session")
 	}
-	return s.rlkEphSk, nil
+	return sess.rlkEphSk, nil
 }
 
 // GetThresholdSecretKey loads the secret key from the ObjectStore.
-func (s *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
-	if s.ThresholdSecretKey == nil {
+func (sess *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
+	if sess.ThresholdSecretKey == nil {
 		return nil, fmt.Errorf("node has no threshold secret-key in the session")
 	}
-	return s.ThresholdSecretKey, nil
+	return sess.ThresholdSecretKey, nil
 }
 
-func (s *Session) GetShamirPublicPoints() map[helium.NodeID]drlwe.ShamirPublicPoint {
-	spts := make(map[helium.NodeID]drlwe.ShamirPublicPoint, len(s.ShamirPks))
-	for p, spt := range s.ShamirPks {
+func (sess *Session) GetShamirPublicPoints() map[helium.NodeID]drlwe.ShamirPublicPoint {
+	spts := make(map[helium.NodeID]drlwe.ShamirPublicPoint, len(sess.ShamirPks))
+	for p, spt := range sess.ShamirPks {
 		spts[p] = spt
 	}
 	return spts
 }
 
-func (s *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
-	spts := make([]drlwe.ShamirPublicPoint, 0, len(s.ShamirPks))
-	for _, spt := range s.ShamirPks {
+func (sess *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
+	spts := make([]drlwe.ShamirPublicPoint, 0, len(sess.ShamirPks))
+	for _, spt := range sess.ShamirPks {
 		spts = append(spts, spt)
 	}
 	return spts
 }
 
-func (s *Session) Contains(nodeID helium.NodeID) bool {
-	return utils.NewSet(s.Nodes).Contains(nodeID)
+func (sess *Session) Contains(nodeID helium.NodeID) bool {
+	return utils.NewSet(sess.Nodes).Contains(nodeID)
 }
 
-func (s *Session) GetSessionFromID(sessionID helium.SessionID) (*Session, bool) {
-	if s.ID == sessionID {
-		return s, true
+func (sess *Session) GetSessionFromID(sessionID helium.SessionID) (*Session, bool) {
+	if sess.ID == sessionID {
+		return sess, true
 	}
 	return nil, false
 }
 
-func (s *Session) GetSessionFromContext(ctx context.Context) (*Session, bool) {
+func (sess *Session) GetSessionFromContext(ctx context.Context) (*Session, bool) {
 	sessID, has := helium.SessionIDFromContext(ctx)
 	if !has {
 		return nil, false
 	}
-	return s.GetSessionFromID(sessID)
+	return sess.GetSessionFromID(sessID)
 }
 
-func (s *Session) String() string {
+func (sess *Session) String() string {
 	return fmt.Sprintf(`
 	{
 		ID: %s,
@@ -238,5 +238,5 @@ func (s *Session) String() string {
 		Nodes: %v,
 		T: %d,
 		CRSKey: %v,
-	}`, s.ID, s.NodeID, s.Nodes, s.Threshold, s.PublicSeed)
+	}`, sess.ID, sess.NodeID, sess.Nodes, sess.Threshold, sess.PublicSeed)
 }

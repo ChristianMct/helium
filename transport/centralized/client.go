@@ -12,7 +12,7 @@ import (
 	"github.com/ldsec/helium"
 	"github.com/ldsec/helium/coordinator"
 	"github.com/ldsec/helium/protocols"
-	"github.com/ldsec/helium/transport/api"
+	"github.com/ldsec/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
@@ -25,18 +25,18 @@ const (
 // HeliumClient is a client for the helium service. It is used by
 // peer nodes to communicate with the helium server.
 type HeliumClient struct {
-	ownId, helperId helium.NodeID
+	ownID, helperID helium.NodeID
 	helperAddress   helium.NodeAddress
 
-	api.HeliumClient
+	pb.HeliumClient
 	statsHandler
 }
 
 // NewHeliumClient creates a new helium client.
-func NewHeliumClient(ownId, helperId helium.NodeID, helperAddress helium.NodeAddress) *HeliumClient {
+func NewHeliumClient(ownID, helperID helium.NodeID, helperAddress helium.NodeAddress) *HeliumClient {
 	hc := new(HeliumClient)
-	hc.ownId = ownId
-	hc.helperId = helperId
+	hc.ownID = ownID
+	hc.helperID = helperID
 	hc.helperAddress = helperAddress
 	return hc
 }
@@ -74,7 +74,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer Dialer) error {
 		return fmt.Errorf("fail establish connection to the helper at tcp://%s: %w", hc.helperAddress, err)
 	}
 
-	hc.HeliumClient = api.NewHeliumClient(cc)
+	hc.HeliumClient = pb.NewHeliumClient(cc)
 
 	return nil
 }
@@ -83,7 +83,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer Dialer) error {
 // It returns the current sequence number for the event log as present. Reading present+1 events
 // from the returned channel will not block for longer than network-introduced delays.
 func (hc *HeliumClient) Register(ctx context.Context) (events <-chan coordinator.Event, present int, err error) {
-	stream, err := hc.HeliumClient.Register(hc.outgoingContext(ctx), &api.Void{})
+	stream, err := hc.HeliumClient.Register(hc.outgoingContext(ctx), &pb.Void{})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -137,7 +137,7 @@ func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.D
 
 // GetCiphertext queries and returns a ciphertext.
 func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
-	apiCt, err := hc.HeliumClient.GetCiphertext(hc.outgoingContext(ctx), &api.CiphertextID{CiphertextId: string(ctID)})
+	apiCt, err := hc.HeliumClient.GetCiphertext(hc.outgoingContext(ctx), &pb.CiphertextID{CiphertextId: string(ctID)})
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct helium.Ciphertext)
 }
 
 func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
-	return getOutgoingContext(ctx, hc.ownId)
+	return getOutgoingContext(ctx, hc.ownID)
 }
 
 func readPresentFromStream(stream grpc.ClientStream) (int, error) {

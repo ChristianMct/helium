@@ -35,7 +35,7 @@ func newMHEProtocol(sig Signature, params rlwe.Parameters) (mheProtocol, error) 
 		return NewCKGProtocol(params, sig.Args)
 	case RTG:
 		return NewRTGProtocol(params, sig.Args)
-	case RKG_1:
+	case RKG1:
 		return NewRKGProtocol(params, nil, 1, sig.Args)
 	case RKG:
 		return NewRKGProtocol(params, nil, 2, sig.Args)

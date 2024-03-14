@@ -39,7 +39,7 @@ import (
 //     encrypted inputs to the compuation. Peer nodes do not need to have an address.
 type Node struct {
 	addr         helium.NodeAddress
-	id, helperId helium.NodeID
+	id, helperID helium.NodeID
 	nodeList     helium.NodesList
 
 	// sessions and state
@@ -74,7 +74,7 @@ func NewNode(config Config, nodeList helium.NodesList) (node *Node, err error) {
 
 	node.id = config.ID
 	node.addr = config.Address
-	node.helperId = config.HelperID
+	node.helperID = config.HelperID
 	node.nodeList = nodeList
 
 	// object store
@@ -97,7 +97,7 @@ func NewNode(config Config, nodeList helium.NodesList) (node *Node, err error) {
 		node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node, node)
 		node.srv.RegisterWatcher(node)
 	} else {
-		node.cli = centralized.NewHeliumClient(node.id, node.helperId, node.nodeList.AddressOf(node.helperId))
+		node.cli = centralized.NewHeliumClient(node.id, node.helperID, node.nodeList.AddressOf(node.helperID))
 	}
 
 	node.outgoingShares = make(chan protocols.Share)
@@ -135,21 +135,21 @@ func NewNode(config Config, nodeList helium.NodesList) (node *Node, err error) {
 // Connect connects the node's transport layer to the network.
 // If the node has an address, it starts a server at the address.
 // If the node does not have an address, it connects to the helper node.
-func (n *Node) Connect(ctx context.Context) error {
-	if n.HasAddress() {
-		listener, err := net.Listen("tcp", string(n.addr))
+func (node *Node) Connect(ctx context.Context) error {
+	if node.HasAddress() {
+		listener, err := net.Listen("tcp", string(node.addr))
 		if err != nil {
 			return err
 		}
-		n.Logf("starting server at %s", n.addr)
+		node.Logf("starting server at %s", node.addr)
 		go func() {
-			if err := n.srv.Server.Serve(listener); err != nil {
+			if err := node.srv.Server.Serve(listener); err != nil {
 				log.Fatalf("error in grpc serve: %v", err)
 			}
 		}()
 	} else {
-		n.Logf("connecting to %s at %s", n.helperId, n.nodeList.AddressOf(n.helperId))
-		err := n.cli.Connect()
+		node.Logf("connecting to %s at %s", node.helperID, node.nodeList.AddressOf(node.helperID))
+		err := node.cli.Connect()
 		if err != nil {
 			return err
 		}
@@ -335,12 +335,12 @@ func (node *Node) Close() error {
 // Transport interface implementation
 
 // PutShare is called by the transport upon receiving a new share.
-func (n *Node) PutShare(ctx context.Context, s protocols.Share) error {
+func (node *Node) PutShare(ctx context.Context, s protocols.Share) error {
 	switch {
 	case s.ProtocolType.IsSetup():
-		n.setupTransport.inshares <- s
+		node.setupTransport.inshares <- s
 	case s.ProtocolType.IsCompute():
-		n.computeTransport.inshares <- s
+		node.computeTransport.inshares <- s
 	default:
 		return fmt.Errorf("unknown protocol type")
 	}
@@ -350,38 +350,38 @@ func (n *Node) PutShare(ctx context.Context, s protocols.Share) error {
 // GetAggregationOutput returns the aggregation output for a given protocol descriptor.
 // If this node is the helper node, the method retrieves the output from the services.
 // If this node is a peer node, the method retrieves the output from the helper node.
-func (n *Node) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
-	if n.id == n.helperId {
+func (node *Node) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	if node.id == node.helperID {
 		switch {
 		case pd.Signature.Type.IsSetup():
-			return n.setup.GetAggregationOutput(ctx, pd)
+			return node.setup.GetAggregationOutput(ctx, pd)
 		// case pd.Signature.Type.IsCompute():
 		// 	return n.compute.GetProtocolOutput(ctx, pd)
 		default:
 			return nil, fmt.Errorf("unknown protocol type")
 		}
 	}
-	return n.cli.GetAggregationOutput(ctx, pd)
+	return node.cli.GetAggregationOutput(ctx, pd)
 }
 
 // PutCiphertext registers a new ciphertext for the compute service.
 // If this node is the helper node, the method registers the ciphertext with the service.
 // If this node is a peer node, the method sends the ciphertext to the helper node.
-func (n *Node) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
-	if n.id == n.helperId {
-		return n.compute.PutCiphertext(ctx, ct)
+func (node *Node) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+	if node.id == node.helperID {
+		return node.compute.PutCiphertext(ctx, ct)
 	}
-	return n.cli.PutCiphertext(ctx, ct)
+	return node.cli.PutCiphertext(ctx, ct)
 }
 
 // GetCiphertext returns a ciphertext from the compute service.
 // If this node is the helper node, the method retrieves the ciphertext from the service.
 // If this node is a peer node, the method retrieves the ciphertext from the helper node.
-func (n *Node) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
-	if n.id == n.helperId {
-		return n.compute.GetCiphertext(ctx, ctID)
+func (node *Node) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+	if node.id == node.helperID {
+		return node.compute.GetCiphertext(ctx, ctID)
 	}
-	return n.cli.GetCiphertext(ctx, ctID)
+	return node.cli.GetCiphertext(ctx, ctID)
 }
 
 // WaitForSetupDone blocks until the setup phase is done.
@@ -399,14 +399,14 @@ func (node *Node) ID() helium.NodeID {
 	return node.id
 }
 
-// Address returns true if the node has an address.
+// HasAddress returns true if the node has an address.
 func (node *Node) HasAddress() bool {
 	return node.addr != ""
 }
 
 // IsHelperNode returns true if the node is the helper node.
 func (node *Node) IsHelperNode() bool {
-	return node.id == node.helperId
+	return node.id == node.helperID
 }
 
 // SessionProvider interface implementation
@@ -493,53 +493,53 @@ func (node *Node) GetNetworkStats() centralized.NetStats {
 
 // pkg.PublicKeyBackend interface implementation
 
-// GetPublicKey returns the collective public key.
-func (n *Node) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	n.WaitForSetupDone()
-	return n.setup.GetCollectivePublicKey(ctx)
+// GetCollectivePublicKey returns the collective public key.
+func (node *Node) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
+	node.WaitForSetupDone()
+	return node.setup.GetCollectivePublicKey(ctx)
 }
 
-// GetGaliosKeys returns the Galois keys for galois element galEl.
-func (n *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	n.WaitForSetupDone()
-	return n.setup.GetGaloisKey(ctx, galEl)
+// GetGaloisKey returns the Galois keys for galois element galEl.
+func (node *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
+	node.WaitForSetupDone()
+	return node.setup.GetGaloisKey(ctx, galEl)
 }
 
 // GetRelinearizationKey returns the relinearization key.
-func (n *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	n.WaitForSetupDone()
-	return n.setup.GetRelinearizationKey(ctx)
+func (node *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
+	node.WaitForSetupDone()
+	return node.setup.GetRelinearizationKey(ctx)
 }
 
 // Coordinator interface implementation
 
 // Register is called by the transport upon connection of a new peer node.
-func (s *Node) Register(peer helium.NodeID) error {
-	return errors.Join(s.setup.Register(peer), s.compute.Register(peer))
+func (node *Node) Register(peer helium.NodeID) error {
+	return errors.Join(node.setup.Register(peer), node.compute.Register(peer))
 }
 
 // Unregister is called by the transport upon disconnection of a peer node.
-func (s *Node) Unregister(peer helium.NodeID) error {
-	return errors.Join(s.setup.Unregister(peer), s.compute.Unregister(peer))
+func (node *Node) Unregister(peer helium.NodeID) error {
+	return errors.Join(node.setup.Unregister(peer), node.compute.Unregister(peer))
 }
 
 // FHEProvider interface implementation
 
 // GetEncoder returns a lattigo encoder from the context's session.
-func (n *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
-	return n.compute.GetEncoder(ctx)
+func (node *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
+	return node.compute.GetEncoder(ctx)
 }
 
 // GetEncryptor returns a lattigo encryptor from the context's session.
 // The encryptor is initialized with the collective public key.
-func (n *Node) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
-	return n.compute.GetEncryptor(ctx)
+func (node *Node) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
+	return node.compute.GetEncryptor(ctx)
 }
 
 // GetDecryptor returns a lattigo decryptor from the context's session.
 // The decryptor is initialized with the node's secret key.
-func (n *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
-	return n.compute.GetDecryptor(ctx)
+func (node *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
+	return node.compute.GetDecryptor(ctx)
 }
 
 func (node *Node) createNewSession(sessParams session.Parameters) (sess *session.Session, err error) {

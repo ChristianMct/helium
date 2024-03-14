@@ -8,7 +8,7 @@ import (
 // nullObjectStore is a type implementing the objectstore.ObjectStore interface with a NULL backend.
 type nullObjectStore struct{}
 
-// NewObjectStore creates a new ObjectStore instance.
+// NewNullObjectStore creates a new ObjectStore instance.
 func NewNullObjectStore() *nullObjectStore {
 	return &nullObjectStore{}
 }

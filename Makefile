@@ -46,7 +46,7 @@ vet: # Run go vet
     fi
 
 staticcheck: # Run staticcheck
-	@STATICCHECKOUT=$$(staticcheck -go 1.20 -checks all ./...); \
+	@STATICCHECKOUT=$$(staticcheck ./...); \
 	if [ -z "$$STATICCHECKOUT" ]; then\
         echo "staticcheck: OK";\
 	else \
@@ -55,15 +55,16 @@ staticcheck: # Run staticcheck
 		false;\
     fi
 	
+tidy:
 	@echo Checking all local changes are committed
 	go mod tidy
 	out=`git status --porcelain`; echo "$$out"; [ -z "$$out" ]
 
-lint: check_reqs fmt vet staticcheck ## Run all the linters
+lint: check_reqs fmt vet staticcheck tidy ## Run all the linters
 
 ## Protocol Buffers
 gen-proto: ## Compile protobuf files
-	protoc --go_out=./transport/api --go_opt=paths=source_relative --go-grpc_out=./transport/api \
+	protoc --go_out=./transport/pb --go_opt=paths=source_relative --go-grpc_out=./transport/pb \
 		--go-grpc_opt=paths=source_relative --proto_path=./transport ./transport/*.proto
 
 ## Help:

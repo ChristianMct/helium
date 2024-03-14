@@ -1,4 +1,4 @@
-// package compute implements the MHE compute phase as a service.
+// Package compute implements the MHE compute phase as a service.
 // This service is responsible for evaluating circuits and running
 // associated the protocols.
 // It stats a protocol.Executor and acts as a coordinator for it.
@@ -152,7 +152,7 @@ const (
 )
 
 // NewComputeService creates a new compute service instance.
-func NewComputeService(ownId helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk PublicKeyProvider, trans Transport) (s *Service, err error) {
+func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk PublicKeyProvider, trans Transport) (s *Service, err error) {
 	s = new(Service)
 
 	s.config = conf
@@ -163,7 +163,7 @@ func NewComputeService(ownId helium.NodeID, sessions session.SessionProvider, co
 		s.config.MaxCircuitEvaluation = DefaultMaxCircuitEvaluation
 	}
 
-	s.self = ownId
+	s.self = ownID
 	s.sessions = sessions
 	s.Executor, err = protocols.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {

@@ -1,4 +1,4 @@
-// package protocols implements the MHE protocol execution.
+// Package protocols implements the MHE protocol execution.
 // It uses Lattigo as the underlying MHE library.
 package protocols
 
@@ -35,8 +35,8 @@ const (
 	SKG
 	// CKG is the collective public-key generation protocol.
 	CKG
-	// RKG_1 is the first round of the relinearization key generation protocol.
-	RKG_1
+	// RKG1 is the first round of the relinearization key generation protocol.
+	RKG1
 	// RKG is the relinearization key generation protocol.
 	RKG
 	// RTG is the galois key generation protocol.
@@ -178,7 +178,7 @@ func NewProtocol(pd Descriptor, sess *session.Session) (*Protocol, error) {
 
 	// protocol-type-specific initialization
 	switch {
-	case (p.pd.Type == RKG_1 || p.pd.Type == RKG) && p.IsParticipant():
+	case (p.pd.Type == RKG1 || p.pd.Type == RKG) && p.IsParticipant():
 		p.proto.(*RKGProtocol).ephSk, err = sess.GetRLKEphemeralSecretKey()
 		if err != nil {
 			return nil, err
@@ -197,7 +197,7 @@ func (p *Protocol) AllocateShare() Share {
 // if called for a protocol that does not use CRP.
 func (p *Protocol) ReadCRP() (CRP, error) {
 	switch p.pd.Type {
-	case CKG, RTG, RKG, RKG_1:
+	case CKG, RTG, RKG, RKG1:
 		return p.proto.ReadCRP(p.pubrand)
 	}
 	return nil, fmt.Errorf("protocol does not use CRP")
@@ -250,7 +250,7 @@ func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan 
 			case share, more := <-incoming:
 				if !more {
 					done = true
-					err = fmt.Errorf("incoming channel closed before completing aggregation")
+					err = fmt.Errorf("incoming channel closed before completing aggregation, still expecting: %s", p.agg.missing())
 					continue
 				}
 				done, err = p.agg.put(share)
@@ -268,7 +268,7 @@ func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan 
 		aggOut.Share.ProtocolID = p.id
 		aggOut.Share.ProtocolType = p.pd.Type
 		if err == nil {
-			aggOut.Share = p.agg.share
+			aggOut.Share = p.agg.getAggregatedShare()
 			p.Logf("[%s] aggregation done", p.HID())
 		} else {
 			aggOut.Error = err
@@ -389,7 +389,7 @@ func (t Type) Share() LattigoShare {
 		return &drlwe.ShamirSecretShare{}
 	case CKG:
 		return &drlwe.PublicKeyGenShare{}
-	case RKG_1, RKG:
+	case RKG1, RKG:
 		return &drlwe.RelinearizationKeyGenShare{}
 	case RTG:
 		return &drlwe.GaloisKeyGenShare{}
@@ -405,7 +405,7 @@ func (t Type) Share() LattigoShare {
 // IsSetup returns whether the protocol type is a key generation protocol.
 func (t Type) IsSetup() bool {
 	switch t {
-	case CKG, RTG, RKG, RKG_1:
+	case CKG, RTG, RKG, RKG1:
 		return true
 	default:
 		return false
@@ -426,13 +426,13 @@ func (t Type) IsCompute() bool {
 // String returns the string representation of the protocol signature.
 // the arguments are alphabetically sorted by name so thtat the output
 // is deterministic.
-func (t Signature) String() string {
-	args := make(sort.StringSlice, 0, len(t.Args))
-	for argname, argval := range t.Args {
+func (s Signature) String() string {
+	args := make(sort.StringSlice, 0, len(s.Args))
+	for argname, argval := range s.Args {
 		args = append(args, fmt.Sprintf("%s=%s", argname, argval))
 	}
 	sort.Sort(args)
-	return fmt.Sprintf("%s(%s)", t.Type, strings.Join(args, ","))
+	return fmt.Sprintf("%s(%s)", s.Type, strings.Join(args, ","))
 }
 
 // Equals returns whether the signature is equal to the other signature,
@@ -451,14 +451,14 @@ func (s Signature) Equals(other Signature) bool {
 }
 
 // ID returns the ID of the protocol, derived from the descriptor.
-func (d Descriptor) ID() ID {
-	return ID(fmt.Sprintf("%s-%x", d.Signature, partyListToString(d.Participants)))
+func (pd Descriptor) ID() ID {
+	return ID(fmt.Sprintf("%s-%x", pd.Signature, partyListToString(pd.Participants)))
 }
 
 // HID returns the human-readable (truncated) ID of the protocol, derived from the descriptor.
-func (d Descriptor) HID() string {
-	h := partyListToString(d.Participants)
-	return fmt.Sprintf("%s-%x", d.Signature, h[:hidHashHexCharCount>>1])
+func (pd Descriptor) HID() string {
+	h := partyListToString(pd.Participants)
+	return fmt.Sprintf("%s-%x", pd.Signature, h[:hidHashHexCharCount>>1])
 }
 
 // String returns the string representation of the protocol descriptor.

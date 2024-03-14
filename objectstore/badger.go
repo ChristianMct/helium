@@ -15,7 +15,7 @@ type badgerObjectStore struct {
 	bytesStored int
 }
 
-// NewObjectStore creates a new ObjectStore instance.
+// NewBadgerObjectStore creates a new ObjectStore instance.
 func NewBadgerObjectStore(conf Config) (ks *badgerObjectStore, err error) {
 	// SynchWrites writes any change to disk immediately.
 	// Maximum size of a single log file = 10MB

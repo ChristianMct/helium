@@ -92,7 +92,7 @@ type Coordinator interface {
 	Outgoing() chan<- Event
 }
 
-// Input is the interface the provision of protocol inputs. It is called
+// InputProvider is the interface the provision of protocol inputs. It is called
 // by the executor to get the CRP (CKG, RTG, RKG) and ciphertexts (DEC, CKS, PCKS)
 // for the  protocols.
 type InputProvider func(ctx context.Context, pd Descriptor) (Input, error)
@@ -148,7 +148,7 @@ func (ev Event) IsComputeEvent() bool {
 }
 
 // NewExectutor creates a new executor.
-func NewExectutor(config ExecutorConfig, ownId helium.NodeID, sessions session.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
+func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
 	if s.config.SigQueueSize == 0 {
@@ -164,7 +164,7 @@ func NewExectutor(config ExecutorConfig, ownId helium.NodeID, sessions session.S
 		s.config.MaxParticipation = defaultMaxParticipation
 	}
 
-	s.self = ownId
+	s.self = ownID
 	s.sessions = sessions
 
 	s.coordinator = coord
@@ -319,6 +319,10 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 
 func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
 
+	if !s.isAggregatorFor(pd) {
+		return fmt.Errorf("not the aggregator for protocol")
+	}
+
 	proto, err := NewProtocol(pd, sess)
 	if err != nil {
 		panic(err)
@@ -380,14 +384,14 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 		select {
 		case agg = <-aggregation:
 			done = true
-		case participantId := <-disconnected:
+		case participantID := <-disconnected:
 
-			if proto.HasShareFrom(participantId) {
-				s.Logf("node %s disconnected after providing its share, protocol %s", participantId, pd.HID())
+			if proto.HasShareFrom(participantID) {
+				s.Logf("node %s disconnected after providing its share, protocol %s", participantID, pd.HID())
 				continue
 			}
 
-			s.Logf("node %s disconnected before providing its share, protocol %s", participantId, pd.HID())
+			s.Logf("node %s disconnected before providing its share, protocol %s", participantID, pd.HID())
 
 			// time.AfterFunc(time.Second, func() { // leaves some time to process some more messages
 			// 	participantId := participantId
@@ -469,6 +473,10 @@ func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor,
 }
 
 func (s *Executor) runAsParticipant(ctx context.Context, pd Descriptor) error {
+
+	if !s.isParticipantFor(pd) {
+		return fmt.Errorf("not a participant for protocol")
+	}
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
@@ -637,10 +645,6 @@ func (s *Executor) isParticipantFor(pd Descriptor) bool {
 		}
 	}
 	return false
-}
-
-func (s *Executor) hasRoleIn(pd Descriptor) bool {
-	return s.isAggregatorFor(pd) || s.isParticipantFor(pd)
 }
 
 func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {

@@ -4,7 +4,7 @@
 // - protoc             v4.25.3
 // source: helium.proto
 
-package api
+package pb
 
 import (
 	context "context"

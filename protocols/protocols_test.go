@@ -88,7 +88,7 @@ func TestProtocols(t *testing.T) {
 				case RKG:
 					input, err = p.ReadCRP()
 					require.Nil(t, err)
-					aggOutR1 := runProto(Descriptor{Signature: Signature{Type: RKG_1}, Participants: pd.Participants, Aggregator: pd.Aggregator}, *testSess, input, t)
+					aggOutR1 := runProto(Descriptor{Signature: Signature{Type: RKG1}, Participants: pd.Participants, Aggregator: pd.Aggregator}, *testSess, input, t)
 					if aggOutR1.Error != nil {
 						t.Fatal(aggOutR1.Error)
 					}

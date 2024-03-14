@@ -27,7 +27,7 @@ type TestSession struct {
 	Decrpytor *rlwe.Decryptor
 }
 
-func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperId helium.NodeID) (*TestSession, error) {
+func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperID helium.NodeID) (*TestSession, error) {
 	nids := make([]helium.NodeID, N)
 	nspk := make(map[helium.NodeID]drlwe.ShamirPublicPoint)
 	for i := range nids {
@@ -44,11 +44,11 @@ func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperId helium.
 		PublicSeed: []byte{'c', 'r', 's'},
 	}
 
-	return NewTestSessionFromParams(sessParams, helperId)
+	return NewTestSessionFromParams(sessParams, helperID)
 
 }
 
-func NewTestSessionFromParams(sp Parameters, helperId helium.NodeID) (*TestSession, error) {
+func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSession, error) {
 	ts := new(TestSession)
 
 	ts.SessParams = sp
@@ -84,7 +84,10 @@ func NewTestSessionFromParams(sp Parameters, helperId helium.NodeID) (*TestSessi
 		ts.RlweParams.RingQP().AtLevel(ts.SkIdeal.Value.Q.Level(), ts.SkIdeal.Value.P.Level()).Add(sk.Value, ts.SkIdeal.Value, ts.SkIdeal.Value)
 	}
 
-	ts.HelperSession, err = NewSession(sp, helperId)
+	ts.HelperSession, err = NewSession(sp, helperID)
+	if err != nil {
+		return nil, err
+	}
 
 	ts.CachedKeyBackend = helium.NewCachedPublicKeyBackend(helium.NewTestKeyBackend(ts.RlweParams.Parameters, ts.SkIdeal))
 

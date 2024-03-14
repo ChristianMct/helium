@@ -1,4 +1,4 @@
-// Package pkg provides the main types and interfaces for the Helium framework.
+// Package helium provides the main types and interfaces for the Helium framework.
 package helium
 
 import (
@@ -84,7 +84,7 @@ func NewBackgroundContext(sessID SessionID, circID ...CircuitID) context.Context
 	return NewContext(context.Background(), sessID, circID...)
 }
 
-// ContextWithSessionID returns a new context derived from ctx with the given session ID.
+// ContextWithCircuitID returns a new context derived from ctx with the given session ID.
 func ContextWithCircuitID(ctx context.Context, circID CircuitID) context.Context {
 	return context.WithValue(ctx, CtxCircuitID, circID)
 }

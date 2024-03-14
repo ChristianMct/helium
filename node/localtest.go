@@ -52,19 +52,19 @@ type LocalTest struct {
 func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test = new(LocalTest)
 
-	helperId := helium.NodeID("helper")
-	sessNodesId := make([]helium.NodeID, config.PeerNodes)
+	helperID := helium.NodeID("helper")
+	sessNodesID := make([]helium.NodeID, config.PeerNodes)
 	shamirPks := make(map[helium.NodeID]drlwe.ShamirPublicPoint, config.PeerNodes)
 	test.NodesList = make(helium.NodesList, 1+config.PeerNodes)
-	for i := range sessNodesId {
+	for i := range sessNodesID {
 		nid := helium.NodeID("peer-" + strconv.Itoa(i))
-		sessNodesId[i] = nid
+		sessNodesID[i] = nid
 		shamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
 		test.NodesList[i] = helium.NodeInfo{NodeID: nid}
 	}
-	test.NodesList[len(sessNodesId)] = helium.NodeInfo{NodeID: helperId, NodeAddress: "local"}
+	test.NodesList[len(sessNodesID)] = helium.NodeInfo{NodeID: helperID, NodeAddress: "local"}
 
-	config.SessionParams.Nodes = sessNodesId
+	config.SessionParams.Nodes = sessNodesID
 	config.SessionParams.ShamirPks = shamirPks
 	config.SessionParams.ID = "test-session"
 	config.SessionParams.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}

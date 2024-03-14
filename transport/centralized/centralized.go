@@ -1,4 +1,4 @@
-// package centralized defines a client-server-based transport for the helium services.
+// Package centralized defines a client-server-based transport for the helium services.
 // This transport is based on gRPC services.
 package centralized
 

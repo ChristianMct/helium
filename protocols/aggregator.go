@@ -47,12 +47,6 @@ func (a *shareAggregator) put(share Share) (bool, error) {
 	return a.complete(), nil
 }
 
-func (a *shareAggregator) expected() utils.Set[helium.NodeID] {
-	a.l.RLock()
-	defer a.l.RUnlock()
-	return a.exp.Copy()
-}
-
 func (a *shareAggregator) missing() utils.Set[helium.NodeID] {
 	a.l.RLock()
 	defer a.l.RUnlock()

@@ -49,12 +49,12 @@ func TestExecutor(t *testing.T) {
 			var helper *Executor
 			var hip InputProvider = func(ctx context.Context, pd Descriptor) (Input, error) {
 				switch pd.Signature.Type {
-				case CKG, RTG, RKG_1:
+				case CKG, RTG, RKG1:
 					p, _ := NewProtocol(pd, testSess.HelperSession)
 					return p.ReadCRP()
 				case RKG:
 					r1Pd := pd
-					r1Pd.Signature.Type = RKG_1
+					r1Pd.Signature.Type = RKG1
 
 					if rkg1AggOut != nil {
 						return rkg1AggOut.Share.MHEShare, nil
@@ -83,7 +83,7 @@ func TestExecutor(t *testing.T) {
 
 			var pip InputProvider = func(ctx context.Context, pd Descriptor) (Input, error) {
 				switch pd.Signature.Type {
-				case CKG, RTG, RKG_1:
+				case CKG, RTG, RKG1:
 					p, _ := NewProtocol(pd, testSess.HelperSession)
 					return p.ReadCRP()
 				case RKG:

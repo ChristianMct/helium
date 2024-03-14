@@ -12,7 +12,7 @@ import (
 	"github.com/ldsec/helium"
 	"github.com/ldsec/helium/coordinator"
 	"github.com/ldsec/helium/protocols"
-	"github.com/ldsec/helium/transport/api"
+	"github.com/ldsec/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -74,7 +74,7 @@ type HeliumServer struct {
 
 	// grpc API
 	*grpc.Server
-	*api.UnimplementedHeliumServer
+	*pb.UnimplementedHeliumServer
 	statsHandler
 }
 
@@ -99,7 +99,7 @@ func NewHeliumServer(id helium.NodeID, na helium.NodeAddress, nl helium.NodesLis
 	}
 
 	hsv.Server = grpc.NewServer(serverOpts...)
-	hsv.Server.RegisterService(&api.Helium_ServiceDesc, hsv)
+	hsv.Server.RegisterService(&pb.Helium_ServiceDesc, hsv)
 
 	hsv.protocolHandler = protoHandler
 	hsv.ciphertextHandler = ctxtHandler
@@ -125,12 +125,12 @@ func (hsv *HeliumServer) AppendEventToLog(event coordinator.Event) error {
 	hsv.events = append(hsv.events, event)
 
 	hsv.nodesMu.RLock()
-	for nodeId, node := range hsv.nodes {
+	for nodeID, node := range hsv.nodes {
 		if node.sendQueue != nil {
 			select {
 			case node.sendQueue <- event:
 			default:
-				panic(fmt.Errorf("node %s has full send queue", nodeId)) // TODO: handle this by closing stream instead
+				panic(fmt.Errorf("node %s has full send queue", nodeID)) // TODO: handle this by closing stream instead
 			}
 		}
 	}
@@ -184,33 +184,33 @@ func (hsv *HeliumServer) NotifyUnregister(node helium.NodeID) (err error) {
 }
 
 // Register is a gRPC handler for the Register method of the Helium service.
-func (hsv *HeliumServer) Register(_ *api.Void, stream api.Helium_RegisterServer) error {
-	nodeId := senderIDFromIncomingContext(stream.Context())
-	if len(nodeId) == 0 {
+func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) error {
+	nodeID := senderIDFromIncomingContext(stream.Context())
+	if len(nodeID) == 0 {
 		return status.Error(codes.FailedPrecondition, "caller must specify node id for stream")
 	}
 
-	hsv.Logf("connected %s", nodeId)
+	hsv.Logf("connected %s", nodeID)
 
 	hsv.eventsMu.RLock()
 	present := len(hsv.events)
 	pastEvents := hsv.events
 
 	hsv.nodesMu.Lock()
-	node, has := hsv.nodes[nodeId]
+	node, has := hsv.nodes[nodeID]
 	if !has {
-		panic(fmt.Errorf("invalid node id: %s", nodeId))
+		panic(fmt.Errorf("invalid node id: %s", nodeID))
 	}
 	sendQueue := make(chan coordinator.Event, 100)
 	node.sendQueue = sendQueue
 	hsv.nodesMu.Unlock()
 	hsv.eventsMu.RUnlock() // all events after pastEvents will go on the sendQueue
 
-	err := hsv.NotifyRegister(nodeId)
+	err := hsv.NotifyRegister(nodeID)
 	if err != nil {
 		panic(err)
 	}
-	hsv.Logf("registered %s", nodeId)
+	hsv.Logf("registered %s", nodeID)
 
 	err = stream.SendHeader(metadata.MD{"present": []string{strconv.Itoa(present)}})
 	if err != nil {
@@ -219,14 +219,14 @@ func (hsv *HeliumServer) Register(_ *api.Void, stream api.Helium_RegisterServer)
 
 	var done bool
 	for _, ev := range pastEvents {
-		err := stream.Send(getApiEvent(ev))
+		err := stream.Send(getAPIEvent(ev))
 		if err != nil {
 			done = true
-			hsv.Logf("error while sending past events to %s: %s", nodeId, err)
+			hsv.Logf("error while sending past events to %s: %s", nodeID, err)
 			break
 		}
 	}
-	hsv.Logf("done sending past events to %s, stream is live", nodeId)
+	hsv.Logf("done sending past events to %s, stream is live", nodeID)
 
 	// Processes the node's sendQueue. The sendQueue channel is closed when exiting the loop
 	cancelled := stream.Context().Done()
@@ -235,25 +235,25 @@ func (hsv *HeliumServer) Register(_ *api.Void, stream api.Helium_RegisterServer)
 		// received an event to send or closed the queue
 		case evt, more := <-sendQueue:
 			if more {
-				if err := stream.Send(getApiEvent(evt)); err != nil {
+				if err := stream.Send(getAPIEvent(evt)); err != nil {
 					done = true
-					hsv.Logf("error on stream send for %s: %s", nodeId, err)
+					hsv.Logf("error on stream send for %s: %s", nodeID, err)
 				}
 			} else {
 				done = true
-				hsv.Logf("update queue for %s closed", nodeId)
+				hsv.Logf("update queue for %s closed", nodeID)
 			}
 
 		// stream was terminated by the node or the server
 		case <-cancelled:
 			done = true
 			close(sendQueue)
-			hsv.Logf("stream context done for %s, err = %s", nodeId, stream.Context().Err())
+			hsv.Logf("stream context done for %s, err = %s", nodeID, stream.Context().Err())
 
 		// the transport is closing
 		case <-hsv.closing:
 			close(sendQueue)
-			hsv.Logf("transport closing, closing queue for %s", nodeId)
+			hsv.Logf("transport closing, closing queue for %s", nodeID)
 		}
 	}
 
@@ -261,7 +261,7 @@ func (hsv *HeliumServer) Register(_ *api.Void, stream api.Helium_RegisterServer)
 	node.sendQueue = nil
 	hsv.nodesMu.Unlock()
 
-	err = hsv.NotifyUnregister(nodeId)
+	err = hsv.NotifyUnregister(nodeID)
 	if err != nil {
 		panic(err)
 	}
@@ -270,7 +270,7 @@ func (hsv *HeliumServer) Register(_ *api.Void, stream api.Helium_RegisterServer)
 }
 
 // PutShare is a gRPC handler for the PutShare method of the Helium service.
-func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *api.Share) (*api.Void, error) {
+func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *pb.Share) (*pb.Void, error) {
 
 	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
@@ -283,11 +283,11 @@ func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *api.Share) (*
 		return nil, err
 	}
 
-	return &api.Void{}, hsv.protocolHandler.PutShare(ctx, s)
+	return &pb.Void{}, hsv.protocolHandler.PutShare(ctx, s)
 }
 
 // GetAggregationOutput is a gRPC handler for the GetAggregationOutput method of the Helium service.
-func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.ProtocolDescriptor) (*api.AggregationOutput, error) {
+func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *pb.ProtocolDescriptor) (*pb.AggregationOutput, error) {
 
 	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
@@ -304,7 +304,7 @@ func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "error converting share to API: %s", err)
 	}
-	apiOut := &api.AggregationOutput{AggregatedShare: s}
+	apiOut := &pb.AggregationOutput{AggregatedShare: s}
 
 	peerID := senderIDFromIncomingContext(ctx)
 	hsv.Logf("aggregation output %s query from %s", pd.HID(), peerID)
@@ -313,7 +313,7 @@ func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *api.
 }
 
 // GetCiphertext is a gRPC handler for the GetCiphertext method of the Helium service.
-func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *api.CiphertextID) (*api.Ciphertext, error) {
+func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.CiphertextID) (*pb.Ciphertext, error) {
 
 	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
@@ -334,7 +334,7 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *api.Cipherte
 }
 
 // PutCiphertext is a gRPC handler for the PutCiphertext method of the Helium service.
-func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *api.Ciphertext) (*api.CiphertextID, error) {
+func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Ciphertext) (*pb.CiphertextID, error) {
 	ct, err := getCiphertextFromAPI(apict)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ciphertext: %w", err)
@@ -349,7 +349,7 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *api.Ciphert
 	if err != nil {
 		return nil, err
 	}
-	return &api.CiphertextID{CiphertextId: string(ct.ID)}, nil
+	return &pb.CiphertextID{CiphertextId: string(ct.ID)}, nil
 }
 
 func (hsv *HeliumServer) Logf(msg string, v ...any) {

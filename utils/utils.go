@@ -1,4 +1,4 @@
-// package utils defines a set of utility functions and types used across the helium project.
+// Package utils defines a set of utility functions and types used across the helium project.
 package utils
 
 import (

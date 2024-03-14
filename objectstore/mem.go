@@ -13,7 +13,7 @@ type memObjectStore struct {
 	mtx      sync.RWMutex
 }
 
-// NewObjectStore creates a new ObjectStore instance.
+// NewMemObjectStore creates a new ObjectStore instance.
 func NewMemObjectStore() *memObjectStore {
 	return &memObjectStore{objstore: make(map[string]any)}
 }

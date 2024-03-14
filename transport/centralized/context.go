@@ -15,20 +15,6 @@ var (
 	ctxCircuitID ctxKey = "circuit_id"
 )
 
-func newOutgoingContext(senderID *helium.NodeID, sessID *helium.SessionID, circID *helium.CircuitID) context.Context {
-	md := metadata.New(nil)
-	if senderID != nil {
-		md.Append("sender_id", string(*senderID))
-	}
-	if sessID != nil {
-		md.Append(string(ctxSessionID), string(*sessID))
-	}
-	if circID != nil {
-		md.Append(string(ctxCircuitID), string(*circID))
-	}
-	return metadata.NewOutgoingContext(context.Background(), md)
-}
-
 func getOutgoingContext(ctx context.Context, senderID helium.NodeID) context.Context {
 	md := metadata.New(nil)
 	md.Append("sender_id", string(senderID))

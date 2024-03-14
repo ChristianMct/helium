@@ -78,7 +78,7 @@ func NewTestNodes(lt *LocalTest) (all, clients map[helium.NodeID]*testNode, clou
 }
 
 func NodeIDtoTestInput(nid string) []uint64 {
-	num := strings.Trim(string(nid), "peer-")
+	num := strings.Trim(string(nid), "per-")
 	i, err := strconv.ParseUint(num, 10, 64)
 	if err != nil {
 		panic(err)
@@ -203,7 +203,7 @@ func TestNodeCompute(t *testing.T) {
 			lt.Start()
 			g, runctx := errgroup.WithContext(ctx)
 
-			var cdescs chan chan<- circuits.Descriptor = make(chan chan<- circuits.Descriptor)
+			var cdescs = make(chan chan<- circuits.Descriptor)
 			for _, node := range all {
 				node := node
 				g.Go(func() error {

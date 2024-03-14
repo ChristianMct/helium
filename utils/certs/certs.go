@@ -1,4 +1,4 @@
-// package crypto provides utility functions for managing certificates.
+// Package certs provides utility functions for managing certificates.
 package certs
 
 import (
