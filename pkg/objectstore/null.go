@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// ObjectStore is a type implementing the objectstore.ObjectStore interface with a NULL backend.
+// nullObjectStore is a type implementing the objectstore.ObjectStore interface with a NULL backend.
 type nullObjectStore struct{}
 
 // NewObjectStore creates a new ObjectStore instance.

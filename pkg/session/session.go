@@ -24,8 +24,6 @@ type Session struct {
 
 	secretKey *rlwe.SecretKey
 	rlkEphSk  *rlwe.SecretKey
-
-	*pkg.CiphertextStore
 }
 
 type Secrets struct {
@@ -119,9 +117,6 @@ func NewSession(sessParams Parameters, nodeID pkg.NodeID) (sess *Session, err er
 			sess.ThresholdSecretKey = &drlwe.ShamirSecretShare{Poly: *sessParams.ThresholdSecretKey.CopyNew()} // TODO: add copy method to Lattigo
 		}
 	}
-
-	//sess.Combiner = drlwe.NewCombiner(*params, shamirPts[nodeID], spts, t)
-	sess.CiphertextStore = pkg.NewCiphertextStore()
 
 	return sess, nil
 }

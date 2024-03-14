@@ -130,7 +130,7 @@ type Service struct {
 	queuedCircuits chan circuits.Descriptor
 
 	runningCircuitsMu sync.RWMutex
-	runningCircuits   map[circuits.ID]CircuitRuntime
+	runningCircuits   map[pkg.CircuitID]CircuitRuntime
 
 	completedCircuits chan circuits.Descriptor
 
@@ -174,7 +174,7 @@ func NewComputeService(ownId pkg.NodeID, sessions session.SessionProvider, conf 
 
 	s.queuedCircuits = make(chan circuits.Descriptor, conf.CircQueueSize)
 
-	s.runningCircuits = make(map[circuits.ID]CircuitRuntime)
+	s.runningCircuits = make(map[pkg.CircuitID]CircuitRuntime)
 
 	// coordinator
 	s.incoming = make(chan protocols.Event)
@@ -299,7 +299,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 				s.queuedCircuits <- cev.Descriptor
 			case circuits.Completed, circuits.Failed:
 				s.runningCircuitsMu.Lock()
-				delete(s.runningCircuits, ev.CircuitEvent.ID)
+				delete(s.runningCircuits, ev.CircuitEvent.CircuitID)
 				s.runningCircuitsMu.Unlock()
 			}
 		}
@@ -377,7 +377,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 						panic(err)
 					}
 
-					or <- circuits.Output{ID: cd.ID, Operand: circuits.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}}
+					or <- circuits.Output{CircuitID: cd.CircuitID, Operand: circuits.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}}
 				}
 			}
 		} else {
@@ -436,7 +436,7 @@ func (s *Service) sendCompletedPdToCircuit(pd protocols.Descriptor) error {
 // validateCircuitDescriptor checks that a circuit descriptor is valid and can be executed by
 // the service.
 func (s *Service) validateCircuitDescriptor(cd circuits.Descriptor) error {
-	if len(cd.ID) == 0 {
+	if len(cd.CircuitID) == 0 {
 		return fmt.Errorf("circuit descriptor has no id")
 	}
 	if len(cd.Name) == 0 {
@@ -485,25 +485,25 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 
 	}
 	s.runningCircuitsMu.Lock()
-	_, has = s.runningCircuits[cd.ID]
+	_, has = s.runningCircuits[cd.CircuitID]
 	if has {
 		s.runningCircuitsMu.Unlock()
-		return fmt.Errorf("circuit with id %s is already runnning", cd.ID)
+		return fmt.Errorf("circuit with id %s is already runnning", cd.CircuitID)
 	}
-	s.runningCircuits[cd.ID] = cr
+	s.runningCircuits[cd.CircuitID] = cr
 	s.runningCircuitsMu.Unlock()
 
-	s.Logf("created circuit %s", cd.ID)
+	s.Logf("created circuit %s", cd.CircuitID)
 	return
 }
 
 func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
 
 	s.runningCircuitsMu.RLock()
-	cinst, has := s.runningCircuits[cd.ID]
+	cinst, has := s.runningCircuits[cd.CircuitID]
 	s.runningCircuitsMu.RUnlock()
 	if !has {
-		return fmt.Errorf("circuit %s was not created", cd.ID)
+		return fmt.Errorf("circuit %s was not created", cd.CircuitID)
 	}
 
 	c, has := s.library[cd.Name]
@@ -540,7 +540,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor) (err e
 
 func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, ev CircuitRuntime, md circuits.Metadata) (err error) {
 	cd := md.Descriptor
-	s.Logf("started circuit %s as evaluator", cd.ID)
+	s.Logf("started circuit %s as evaluator", cd.CircuitID)
 
 	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}}
 
@@ -564,24 +564,24 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit,
 		if !has {
 			panic(fmt.Errorf("circuit instance has no output label %s", outLabel))
 		}
-		s.localOutputs <- circuits.Output{ID: cd.ID, Operand: *fop}
+		s.localOutputs <- circuits.Output{CircuitID: cd.CircuitID, Operand: *fop}
 	}
 
 	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Completed, Descriptor: cd}}
 
 	s.runningCircuitsMu.Lock()
-	delete(s.runningCircuits, cd.ID)
+	delete(s.runningCircuits, cd.CircuitID)
 	nRunning := len(s.runningCircuits)
 	s.runningCircuitsMu.Unlock()
 
-	s.Logf("completed circuit %s as evaluator, %d running", cd.ID, nRunning)
+	s.Logf("completed circuit %s as evaluator, %d running", cd.CircuitID, nRunning)
 
 	return nil
 }
 
 func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, part CircuitRuntime, md circuits.Metadata) error {
 
-	s.Logf("started circuit %s as participant, has input: %v, has output: %v", md.Descriptor.ID, s.isInputProvider(md), s.isOutputReceiver(md))
+	s.Logf("started circuit %s as participant, has input: %v, has output: %v", md.Descriptor.CircuitID, s.isInputProvider(md), s.isOutputReceiver(md))
 
 	err := part.Eval(ctx, c)
 	if err != nil {
@@ -589,7 +589,7 @@ func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circui
 	}
 
 	//s.runningCircuitWg.Done() // TODO: get the circuit complete message in this function to so that all runningcircuit management takes place here
-	s.Logf("completed circuit %s as participant", md.Descriptor.ID)
+	s.Logf("completed circuit %s as participant", md.Descriptor.CircuitID)
 
 	return nil
 }
@@ -622,7 +622,7 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pk
 		return nil, fmt.Errorf("non-local ciphertext id")
 	}
 
-	cid := circuits.ID(ctURL.CircuitID())
+	cid := pkg.CircuitID(ctURL.CircuitID())
 	if len(cid) == 0 {
 		return nil, fmt.Errorf("ciphertext label does not include a circuit ID")
 	}
@@ -666,7 +666,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
 		return fmt.Errorf("invalid ciphertext id \"%s\": %w", ct.ID, err)
 	}
 
-	cid := circuits.ID(ctURL.CircuitID())
+	cid := pkg.CircuitID(ctURL.CircuitID())
 
 	if len(cid) == 0 {
 		return fmt.Errorf("ciphertext label does not include a circuit ID")
@@ -835,7 +835,7 @@ func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitRuntime, er
 	}
 
 	s.runningCircuitsMu.RLock()
-	c, envExists := s.runningCircuits[circuits.ID(cid)]
+	c, envExists := s.runningCircuits[pkg.CircuitID(cid)]
 	s.runningCircuitsMu.RUnlock()
 	if !envExists {
 		return nil, fmt.Errorf("unknown circuit %s", cid)
@@ -849,7 +849,7 @@ func (s *Service) getCircuitFromOperandLabel(opl circuits.OperandLabel) (Circuit
 	cid := opl.CircuitID()
 
 	s.runningCircuitsMu.RLock()
-	c, envExists := s.runningCircuits[circuits.ID(cid)]
+	c, envExists := s.runningCircuits[pkg.CircuitID(cid)]
 	s.runningCircuitsMu.RUnlock()
 	if !envExists {
 		return nil, fmt.Errorf("unknown circuit %s", cid)

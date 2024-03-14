@@ -116,7 +116,7 @@ func runProto(pd Descriptor, testSess session.TestSession, input Input, t *testi
 		t.Fatal(err)
 	}
 
-	ctx := pkg.NewContext(&testSess.SessParams.ID, nil)
+	ctx := pkg.NewBackgroundContext(testSess.SessParams.ID)
 	incoming := make(chan Share)
 	resc := make(chan AggregationOutput, 1)
 	errc := make(chan error, 1)

@@ -28,6 +28,12 @@ type ObjectStore interface {
 	Close() error
 }
 
+// NewObjectStoreFromConfig creates a new ObjectStore instance from the given Config.
+// It accepts the following store backends:
+// - "null": a no-op store that does nothing.
+// - "mem": an in-memory store.
+// - "badgerdb": a persistent store using BadgerDB.
+// - "hybrid": a store that combines an in-memory and a persistent store.
 func NewObjectStoreFromConfig(config Config) (objs ObjectStore, err error) {
 	switch config.BackendName {
 	case "null":

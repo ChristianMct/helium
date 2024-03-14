@@ -33,7 +33,7 @@ func TestExecutor(t *testing.T) {
 			sessParams := testSess.SessParams
 			nids := utils.NewSet(sessParams.Nodes)
 
-			ctx := pkg.NewContext(&sessParams.ID, nil)
+			ctx := pkg.NewBackgroundContext(sessParams.ID)
 
 			executors := make(map[pkg.NodeID]*Executor, len(nids))
 			testTrans := NewTestTransport()

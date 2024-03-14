@@ -137,16 +137,20 @@ func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.D
 
 // GetCiphertext queries and returns a ciphertext.
 func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID pkg.CiphertextID) (*pkg.Ciphertext, error) {
-	apiCt, err := hc.HeliumClient.GetCiphertext(hc.outgoingContext(ctx), ctID.ToGRPC())
+	apiCt, err := hc.HeliumClient.GetCiphertext(hc.outgoingContext(ctx), &api.CiphertextID{CiphertextId: string(ctID)})
 	if err != nil {
 		return nil, err
 	}
-	return pkg.NewCiphertextFromGRPC(apiCt)
+	return getCiphertextFromAPI(apiCt)
 }
 
 // PutCiphertext sends a ciphertext to the helium server.
 func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct pkg.Ciphertext) error {
-	_, err := hc.HeliumClient.PutCiphertext(hc.outgoingContext(ctx), ct.ToGRPC())
+	apiCt, err := getAPICiphertext(&ct)
+	if err != nil {
+		return err
+	}
+	_, err = hc.HeliumClient.PutCiphertext(hc.outgoingContext(ctx), apiCt)
 	return err
 }
 

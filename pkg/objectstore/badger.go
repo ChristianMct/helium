@@ -8,7 +8,8 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// ObjectStore is a type implementing the objectstore.ObjectStore interface with a permanent storage backend.
+// badgerObjectStore is a type implementing the objectstore.ObjectStore interface with a permanent storage backend
+// based on BadgerDB.
 type badgerObjectStore struct {
 	db          *badger.DB
 	bytesStored int

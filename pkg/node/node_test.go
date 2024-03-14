@@ -54,7 +54,7 @@ type testNode struct {
 	*Node
 	compute.InputProvider
 	OutputReceiver chan circuits.Output
-	Outputs        map[circuits.ID]circuits.Output
+	Outputs        map[pkg.CircuitID]circuits.Output
 }
 
 func NewTestNodes(lt *LocalTest) (all, clients map[pkg.NodeID]*testNode, cloud *testNode) {
@@ -62,7 +62,7 @@ func NewTestNodes(lt *LocalTest) (all, clients map[pkg.NodeID]*testNode, cloud *
 	cloud = &testNode{}
 	cloud.Node = lt.HelperNode
 	cloud.InputProvider = compute.NoInput
-	cloud.Outputs = make(map[circuits.ID]circuits.Output)
+	cloud.Outputs = make(map[pkg.CircuitID]circuits.Output)
 	all[cloud.id] = cloud
 
 	clients = make(map[pkg.NodeID]*testNode)
@@ -70,7 +70,7 @@ func NewTestNodes(lt *LocalTest) (all, clients map[pkg.NodeID]*testNode, cloud *
 		cli := &testNode{}
 		cli.Node = n
 		cli.InputProvider = compute.NoInput
-		cli.Outputs = make(map[circuits.ID]circuits.Output)
+		cli.Outputs = make(map[pkg.CircuitID]circuits.Output)
 		clients[n.id] = cli
 		all[n.id] = cli
 	}
@@ -118,7 +118,7 @@ func TestNodeSetup(t *testing.T) {
 			all, clients, cloud := NewTestNodes(lt)
 			_, _ = clients, cloud
 
-			ctx := pkg.NewContext(&sessParams.ID, nil)
+			ctx := pkg.NewBackgroundContext(sessParams.ID)
 
 			app := App{
 				SetupDescription: &testSetupDescription,
@@ -192,7 +192,7 @@ func TestNodeCompute(t *testing.T) {
 				}
 			}
 
-			ctx := pkg.NewContext(&sessParams.ID, nil)
+			ctx := pkg.NewBackgroundContext(sessParams.ID)
 			hid := cloud.id
 
 			app := App{
@@ -215,7 +215,7 @@ func TestNodeCompute(t *testing.T) {
 						cdescs <- cdescsn
 					}
 					for out := range outs {
-						node.Outputs[out.ID] = out
+						node.Outputs[out.CircuitID] = out
 					}
 					return nil
 				})
@@ -223,11 +223,11 @@ func TestNodeCompute(t *testing.T) {
 
 			nodemap := map[string]pkg.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
 			cdesc := <-cdescs
-			expResult := make(map[circuits.ID]uint64)
+			expResult := make(map[pkg.CircuitID]uint64)
 			for _, tc := range ts.CircuitSigs {
 				for i := 0; i < ts.Rep; i++ {
-					cid := circuits.ID(fmt.Sprintf("%s-%d", tc.Name, i))
-					cdesc <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, ID: cid, NodeMapping: nodemap, Evaluator: hid}
+					cid := pkg.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+					cdesc <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: hid}
 					expResult[cid] = tc.ExpResult
 				}
 			}

@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// ObjectStore is a type implementing the objectstore.ObjectStore interface with a main memory backend.
+// memObjectStore is a type implementing the objectstore.ObjectStore interface with a main memory backend.
 type memObjectStore struct {
 	objstore map[string]any
 	mtx      sync.RWMutex

@@ -73,7 +73,7 @@ type testnode struct {
 	*session.Session
 
 	OutputReceiver chan circuits.Output
-	Outputs        map[circuits.ID]circuits.Output
+	Outputs        map[pkg.CircuitID]circuits.Output
 }
 
 type testNodeTrans struct {
@@ -110,7 +110,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 				}
 				sessParams := testSess.SessParams
 
-				ctx := pkg.NewContext(&sessParams.ID, nil)
+				ctx := pkg.NewBackgroundContext(sessParams.ID)
 
 				nids := utils.NewSet(sessParams.Nodes)
 
@@ -139,7 +139,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 					t.Fatal(err)
 				}
 				clou.OutputReceiver = make(chan circuits.Output)
-				clou.Outputs = make(map[circuits.ID]circuits.Output)
+				clou.Outputs = make(map[pkg.CircuitID]circuits.Output)
 
 				clients := make(map[pkg.NodeID]*testnode, ts.N)
 				for nid := range nids {
@@ -158,7 +158,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 						return pt, nil
 					}
 					cli.OutputReceiver = make(chan circuits.Output)
-					cli.Outputs = make(map[circuits.ID]circuits.Output)
+					cli.Outputs = make(map[pkg.CircuitID]circuits.Output)
 					clou.Executor.Register(nid)
 					clients[nid] = cli
 					all[nid] = cli
@@ -176,7 +176,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 					cli := node
 					g.Go(func() error {
 						for out := range cli.OutputReceiver {
-							cli.Outputs[out.ID] = out
+							cli.Outputs[out.CircuitID] = out
 						}
 						return nil
 					})
@@ -188,13 +188,13 @@ func TestCloudAssistedCompute(t *testing.T) {
 				}
 
 				cds := make([]circuits.Descriptor, 0, len(ts.CircuitSigs)*ts.Rep)
-				expResult := make(map[circuits.ID]uint64)
+				expResult := make(map[pkg.CircuitID]uint64)
 				for _, tc := range ts.CircuitSigs {
 					for r := 0; r < ts.Rep; r++ {
-						cid := circuits.ID(fmt.Sprintf("%s-%d", tc.Name, r))
+						cid := pkg.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
 						cd := circuits.Descriptor{
 							Signature:   tc.Signature,
-							ID:          cid,
+							CircuitID:   cid,
 							NodeMapping: testNodeMapping,
 							Evaluator:   "helper",
 						}

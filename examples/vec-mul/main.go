@@ -154,7 +154,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := pkg.NewContext(&config.SessionParameters[0].ID, nil)
+	ctx := pkg.NewBackgroundContext(config.SessionParameters[0].ID)
 	cdescs, outputs, err := n.Run(ctx, app, ip)
 	if err != nil {
 		panic(err)
@@ -163,7 +163,7 @@ func main() {
 	if nodeID == helperID {
 		cdescs <- circuits.Descriptor{
 			Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")},
-			ID:          "mul-4-dec-0",
+			CircuitID:   "mul-4-dec-0",
 			NodeMapping: map[string]pkg.NodeID{"p0": "node-1", "p1": "node-2", "p2": "node-3", "p3": "node-4", "eval": "helper", "rec": "helper"},
 			Evaluator:   "helper",
 		}

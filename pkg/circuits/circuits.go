@@ -74,16 +74,12 @@ type Signature struct {
 	Args map[string]string
 }
 
-// ID is a type for circuit IDs.
-// A circuit ID is a string that uniquely identifies a circuit instance within the system.
-type ID string
-
 // Descriptor is a struct for specifying a circuit execution.
 // It holds the identification information for the circuit, as well as a concrete mapping from the
 // node ids in the circuit definition.
 type Descriptor struct {
 	Signature
-	ID
+	pkg.CircuitID
 	NodeMapping map[string]pkg.NodeID
 	Evaluator   pkg.NodeID
 }
@@ -125,7 +121,7 @@ const (
 
 // Output is a type for circuit outputs. It associates the output operand with the ID of the circuit that has produced it.
 type Output struct {
-	ID
+	pkg.CircuitID
 	Operand
 }
 

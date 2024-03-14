@@ -6,7 +6,7 @@ import (
 	"log"
 )
 
-// ObjectStore is a type implementing the objectstore.ObjectStore interface with a hybrid storage backend.
+// hybridObjectStore is a type implementing the objectstore.ObjectStore interface with a hybrid storage backend.
 // It combines an in-memory backend and a persistent backend.
 type hybridObjectStore struct {
 	badgerObjectStore *badgerObjectStore

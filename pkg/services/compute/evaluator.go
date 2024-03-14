@@ -138,7 +138,7 @@ func (se *evaluatorRuntime) keyOpSig(pt protocols.Type, in circuits.Operand, par
 
 func (se *evaluatorRuntime) keyOpExec(sig protocols.Signature, in circuits.Operand) (err error) {
 
-	ctx := pkg.NewContext(&se.sess.ID, (*pkg.CircuitID)(&se.cDesc.ID))
+	ctx := pkg.NewBackgroundContext(se.sess.ID, se.cDesc.CircuitID)
 
 	if err := se.protoExec.RunKeyOperation(ctx, sig); err != nil {
 		return err
@@ -157,7 +157,7 @@ func keyOpOutputLabel(inLabel circuits.OperandLabel, sig protocols.Signature) ci
 }
 
 func (se *evaluatorRuntime) getOperandLabelForRuntime(cOpLabel circuits.OperandLabel) circuits.OperandLabel {
-	return cOpLabel.ForCircuit(se.cDesc.ID).ForMapping(se.cDesc.NodeMapping)
+	return cOpLabel.ForCircuit(se.cDesc.CircuitID).ForMapping(se.cDesc.NodeMapping)
 }
 
 func (se *evaluatorRuntime) DEC(in circuits.Operand, rec pkg.NodeID, params map[string]string) (err error) {
@@ -197,7 +197,7 @@ func (se *evaluatorRuntime) NewEvaluator() circuits.Evaluator {
 }
 
 func (se *evaluatorRuntime) Logf(msg string, v ...any) {
-	log.Printf("%s | [%s] %s\n", se.cDesc.Evaluator, se.cDesc.ID, fmt.Sprintf(msg, v...))
+	log.Printf("%s | [%s] %s\n", se.cDesc.Evaluator, se.cDesc.CircuitID, fmt.Sprintf(msg, v...))
 }
 
 func (ew *fheEvaluator) NewDecompQPBuffer() []ringqp.Poly {

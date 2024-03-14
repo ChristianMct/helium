@@ -71,7 +71,7 @@ func TestCloudAssistedSetup(t *testing.T) {
 				}
 				sessParams := testSess.SessParams
 
-				ctx := pkg.NewContext(&sessParams.ID, nil)
+				ctx := pkg.NewBackgroundContext(sessParams.ID)
 
 				nids := utils.NewSet(sessParams.Nodes)
 

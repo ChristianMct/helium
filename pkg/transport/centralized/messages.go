@@ -80,7 +80,7 @@ func getAPICircuitDesc(cd circuits.Descriptor) *api.CircuitDescriptor {
 			Name: string(cd.Name),
 			Args: make(map[string]string, len(cd.Args)),
 		},
-		CircuitID:   &api.CircuitID{CircuitID: string(cd.ID)},
+		CircuitID:   &api.CircuitID{CircuitID: string(cd.CircuitID)},
 		NodeMapping: make(map[string]*api.NodeID, len(cd.NodeMapping)),
 		Evaluator:   &api.NodeID{NodeId: string(cd.Evaluator)},
 	}
@@ -102,7 +102,7 @@ func getCircuitDescFromAPI(apiCd *api.CircuitDescriptor) *circuits.Descriptor {
 			Name: circuits.Name(apiCd.CircuitSignature.Name),
 			Args: make(map[string]string, len(apiCd.CircuitSignature.Args)),
 		},
-		ID:          circuits.ID(apiCd.CircuitID.CircuitID),
+		CircuitID:   pkg.CircuitID(apiCd.CircuitID.CircuitID),
 		NodeMapping: make(map[string]pkg.NodeID, len(apiCd.NodeMapping)),
 		Evaluator:   pkg.NodeID(apiCd.Evaluator.NodeId),
 	}
@@ -162,4 +162,27 @@ func getShareFromAPI(s *api.Share) (protocols.Share, error) {
 		return protocols.Share{}, err
 	}
 	return ps, nil
+}
+
+func getAPICiphertext(ct *pkg.Ciphertext) (*api.Ciphertext, error) {
+	ctBytes, err := ct.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	typ := api.CiphertextType(ct.Type)
+	return &api.Ciphertext{
+		Metadata:   &api.CiphertextMetadata{Id: &api.CiphertextID{CiphertextId: string(ct.ID)}, Type: &typ},
+		Ciphertext: ctBytes,
+	}, nil
+}
+
+func getCiphertextFromAPI(apiCt *api.Ciphertext) (*pkg.Ciphertext, error) {
+	var ct pkg.Ciphertext
+	ct.CiphertextMetadata.ID = pkg.CiphertextID(apiCt.Metadata.GetId().CiphertextId)
+	ct.CiphertextMetadata.Type = pkg.CiphertextType(apiCt.Metadata.GetType())
+	err := ct.Ciphertext.UnmarshalBinary(apiCt.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	return &ct, nil
 }

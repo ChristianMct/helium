@@ -77,12 +77,12 @@ func (opl OperandLabel) NodeID() pkg.NodeID {
 }
 
 // CircuitID returns the circuit id part of the operand label.
-func (opl OperandLabel) CircuitID() ID {
+func (opl OperandLabel) CircuitID() pkg.CircuitID {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
 	}
-	return ID(strings.Trim(path.Dir(nopl.Path), "/"))
+	return pkg.CircuitID(strings.Trim(path.Dir(nopl.Path), "/"))
 }
 
 // HasNode returns true if the operand label has the given host id.
@@ -96,7 +96,7 @@ func (opl OperandLabel) HasNode(id pkg.NodeID) bool {
 
 // ForCircuit returns a new operand label for the given circuit id, with
 // the circuit id part set to cid.
-func (opl OperandLabel) ForCircuit(cid ID) OperandLabel {
+func (opl OperandLabel) ForCircuit(cid pkg.CircuitID) OperandLabel {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))

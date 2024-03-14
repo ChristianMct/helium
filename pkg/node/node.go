@@ -567,11 +567,11 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 
 	var current int
 	runProto := make(map[protocols.ID]protocols.Descriptor)
-	runCircuit := make(map[circuits.ID]circuits.Descriptor)
+	runCircuit := make(map[pkg.CircuitID]circuits.Descriptor)
 	for ev := range events {
 
 		if ev.IsComputeEvent() {
-			cid := ev.CircuitEvent.ID
+			cid := ev.CircuitEvent.CircuitID
 			switch ev.CircuitEvent.EventType {
 			case circuits.Started:
 				runCircuit[cid] = ev.CircuitEvent.Descriptor

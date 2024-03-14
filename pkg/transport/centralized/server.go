@@ -324,12 +324,18 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *api.Cipherte
 	if err != nil {
 		return nil, err
 	}
-	return ct.ToGRPC(), nil
+
+	apiCt, err := getAPICiphertext(ct)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "error converting ciphertext to API: %s", err)
+	}
+
+	return apiCt, nil
 }
 
 // PutCiphertext is a gRPC handler for the PutCiphertext method of the Helium service.
 func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *api.Ciphertext) (*api.CiphertextID, error) {
-	ct, err := pkg.NewCiphertextFromGRPC(apict)
+	ct, err := getCiphertextFromAPI(apict)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ciphertext: %w", err)
 	}
@@ -343,7 +349,7 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *api.Ciphert
 	if err != nil {
 		return nil, err
 	}
-	return ct.ID.ToGRPC(), nil
+	return &api.CiphertextID{CiphertextId: string(ct.ID)}, nil
 }
 
 func (hsv *HeliumServer) Logf(msg string, v ...any) {

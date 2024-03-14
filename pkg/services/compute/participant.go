@@ -131,7 +131,7 @@ func (p *participantRuntime) CompletedProtocol(pd protocols.Descriptor) error {
 // Input reads an input operand with the given label from the context.
 func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 
-	opl = opl.ForCircuit(p.cd.ID).ForMapping(p.cd.NodeMapping)
+	opl = opl.ForCircuit(p.cd.CircuitID).ForMapping(p.cd.NodeMapping)
 
 	if opl.NodeID() != p.sess.NodeID {
 		return circuits.NewDummyFutureOperand(opl)
@@ -193,7 +193,7 @@ func (p *participantRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
 }
 
 func (p *participantRuntime) NewOperand(opl circuits.OperandLabel) circuits.Operand {
-	opl = opl.ForCircuit(p.cd.ID).ForMapping(p.cd.NodeMapping)
+	opl = opl.ForCircuit(p.cd.CircuitID).ForMapping(p.cd.NodeMapping)
 	return circuits.Operand{OperandLabel: opl}
 }
 
@@ -232,7 +232,7 @@ func (p *participantRuntime) DEC(in circuits.Operand, rec pkg.NodeID, params map
 	pt := rlwe.NewPlaintext(p.sess.Params, p.sess.Params.MaxLevel())
 	decg.Decrypt(&ct.Ciphertext, pt) // TODO: bug in lattigo ShallowCopy/WithKey function: params not copied but needed by DecryptNew
 
-	p.or <- circuits.Output{ID: p.cd.ID, Operand: circuits.Operand{OperandLabel: outLabel, Ciphertext: &rlwe.Ciphertext{Operand: pt.Operand}}}
+	p.or <- circuits.Output{CircuitID: p.cd.CircuitID, Operand: circuits.Operand{OperandLabel: outLabel, Ciphertext: &rlwe.Ciphertext{Operand: pt.Operand}}}
 
 	return nil
 }
