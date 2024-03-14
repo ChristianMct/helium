@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/ldsec/helium/pkg"
-	"github.com/ldsec/helium/pkg/api"
 	"github.com/ldsec/helium/pkg/coordinator"
 	"github.com/ldsec/helium/pkg/protocols"
+	"github.com/ldsec/helium/pkg/transport/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"

@@ -50,21 +50,9 @@ vet: ## Check for suspicious constructs
 
 ## Protocol Buffers
 gen-proto: ## Compile protobuf files
-	protoc --go_out=./pkg/api --go_opt=paths=source_relative --go-grpc_out=./pkg/api \
-		--go-grpc_opt=paths=source_relative --proto_path=./api ./api/*.proto
+	protoc --go_out=./pkg/transport/api --go_opt=paths=source_relative --go-grpc_out=./pkg/transport/api \
+		--go-grpc_opt=paths=source_relative --proto_path=./pkg/transport ./pkg/transport/*.proto
 
-## Docker:
-docker: ## Use the Dockerfile to build the container
-	echo "build helium" && docker build --rm -t heliummpc/helium:latest . -f ./Dockerfile
-
-push:docker ## publish the helium images
-	docker push heliummpc/helium:latest
-
-push-exps:
-	rsync -r deployment/scenarios root@iccluster086.iccluster.epfl.ch:~
-	rsync -r deployment/scenarios root@iccluster087.iccluster.epfl.ch:~
-
-setexp: push push-exps
 
 ## Help:
 help: ## Show this help.
