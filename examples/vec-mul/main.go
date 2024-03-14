@@ -7,15 +7,15 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/ldsec/helium/pkg"
-	"github.com/ldsec/helium/pkg/circuits"
-	"github.com/ldsec/helium/pkg/node"
-	"github.com/ldsec/helium/pkg/objectstore"
-	"github.com/ldsec/helium/pkg/protocols"
-	"github.com/ldsec/helium/pkg/services/compute"
-	"github.com/ldsec/helium/pkg/services/setup"
-	"github.com/ldsec/helium/pkg/session"
-	"github.com/ldsec/helium/pkg/transport/centralized"
+	"github.com/ldsec/helium/helium"
+	"github.com/ldsec/helium/helium/circuits"
+	"github.com/ldsec/helium/helium/node"
+	"github.com/ldsec/helium/helium/objectstore"
+	"github.com/ldsec/helium/helium/protocols"
+	"github.com/ldsec/helium/helium/services/compute"
+	"github.com/ldsec/helium/helium/services/setup"
+	"github.com/ldsec/helium/helium/session"
+	"github.com/ldsec/helium/helium/transport/centralized"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
@@ -25,8 +25,8 @@ var (
 
 	// sessionParams defines the session parameters for the example application
 	sessionParams = session.Parameters{
-		ID:    "example-session",                                    // the id of the session must be unique
-		Nodes: []pkg.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
+		ID:    "example-session",                                       // the id of the session must be unique
+		Nodes: []helium.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
 		RLWEParams: bgv.ParametersLiteral{
 			T:    79873,
 			LogN: 14,
@@ -34,7 +34,7 @@ var (
 			LogP: []int{55, 55},
 		},
 		Threshold:  3,
-		ShamirPks:  map[pkg.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4},
+		ShamirPks:  map[helium.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4},
 		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},
 		Secrets:    nil, // read from /var/run/secrets
 	}
@@ -61,10 +61,10 @@ var (
 		TLSConfig:         centralized.TLSConfig{InsecureChannels: true},
 	}
 
-	nodelist = pkg.NodesList{
-		pkg.NodeInfo{NodeID: "helper", NodeAddress: "helper:40000"},
-		pkg.NodeInfo{NodeID: "node-1"}, pkg.NodeInfo{NodeID: "node-2"},
-		pkg.NodeInfo{NodeID: "node-3"}, pkg.NodeInfo{NodeID: "node-4"}}
+	nodelist = helium.NodesList{
+		helium.NodeInfo{NodeID: "helper", NodeAddress: "helper:40000"},
+		helium.NodeInfo{NodeID: "node-1"}, helium.NodeInfo{NodeID: "node-2"},
+		helium.NodeInfo{NodeID: "node-3"}, helium.NodeInfo{NodeID: "node-4"}}
 
 	app = node.App{
 		SetupDescription: &setup.Description{ // TODO: remove receivers ?
@@ -91,9 +91,9 @@ var (
 )
 
 var (
-	nodeID   pkg.NodeID
-	nodeAddr pkg.NodeAddress
-	helperID pkg.NodeID = "helper"
+	nodeID   helium.NodeID
+	nodeAddr helium.NodeAddress
+	helperID helium.NodeID = "helper"
 	input    uint64
 )
 
@@ -154,7 +154,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx := pkg.NewBackgroundContext(config.SessionParameters[0].ID)
+	ctx := helium.NewBackgroundContext(config.SessionParameters[0].ID)
 	cdescs, outputs, err := n.Run(ctx, app, ip)
 	if err != nil {
 		panic(err)
@@ -164,7 +164,7 @@ func main() {
 		cdescs <- circuits.Descriptor{
 			Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")},
 			CircuitID:   "mul-4-dec-0",
-			NodeMapping: map[string]pkg.NodeID{"p0": "node-1", "p1": "node-2", "p2": "node-3", "p3": "node-4", "eval": "helper", "rec": "helper"},
+			NodeMapping: map[string]helium.NodeID{"p0": "node-1", "p1": "node-2", "p2": "node-3", "p3": "node-4", "eval": "helper", "rec": "helper"},
 			Evaluator:   "helper",
 		}
 	}
@@ -188,7 +188,7 @@ func main() {
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
-func loadSecrets(sp session.Parameters, nid pkg.NodeID) (secrets *session.Secrets, err error) {
+func loadSecrets(sp session.Parameters, nid helium.NodeID) (secrets *session.Secrets, err error) {
 
 	ss, err := session.GenTestSecretKeys(sp)
 	if err != nil {
