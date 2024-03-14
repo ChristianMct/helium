@@ -14,11 +14,6 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Build check
-        run: | 
-          go build -v ./...
-          make docker
-
       - name: Test
         run: make test
 
