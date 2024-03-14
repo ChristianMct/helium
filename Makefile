@@ -63,8 +63,8 @@ lint: check_reqs fmt vet staticcheck ## Run all the linters
 
 ## Protocol Buffers
 gen-proto: ## Compile protobuf files
-	protoc --go_out=./helium/transport/api --go_opt=paths=source_relative --go-grpc_out=./helium/transport/api \
-		--go-grpc_opt=paths=source_relative --proto_path=./helium/transport ./helium/transport/*.proto
+	protoc --go_out=./transport/api --go_opt=paths=source_relative --go-grpc_out=./transport/api \
+		--go-grpc_opt=paths=source_relative --proto_path=./transport ./transport/*.proto
 
 ## Help:
 help: ## Show this help.
