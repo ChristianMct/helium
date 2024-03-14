@@ -150,7 +150,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					cli.Coordinator = coord.NewNodeCoordinator(nid)
+					cli.Coordinator = coord.NewPeerCoordinator(nid)
 
 					pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
 					testSess.Encoder.Encode(NodeIDtoTestInput(string(nid)), pt)
@@ -205,7 +205,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 				}
 
 				for _, cd := range cds {
-					coord.New(coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}})
+					coord.LogEvent(coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}})
 				}
 				coord.Close()
 

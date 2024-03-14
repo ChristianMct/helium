@@ -1,4 +1,4 @@
-// Package circuit provides the types and interfaces for defining, parsing and executing circuits.
+// Package circuits provides the types and interfaces for defining, parsing and executing circuits.
 package circuits
 
 import (

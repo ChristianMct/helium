@@ -2,6 +2,13 @@ GOCMD=go
 GOTEST=$(GOCMD) test
 GOVET=$(GOCMD) vet
 
+REQS = $(GOCMD) goimports staticcheck
+
+.PHONY: check_tools
+check_reqs:
+	@$(foreach exec,$(REQS),\
+		$(if $(shell which $(exec)),true,$(error "$(exec) not found in PATH.")))
+
 ARTIFACTS_PATH=out
 EXPORT_RESULT?=false # for CI please set EXPORT_RESULT to true
 
@@ -13,46 +20,51 @@ RESET  := $(shell tput -Txterm sgr0)
 
 .PHONY: all test
 
-all: help
+all: lint test
 
 ## Test:
 test: ## Run the tests of the project
-ifeq ($(EXPORT_RESULT), true)
-	mkdir -p "${ARTIFACTS_PATH}"
-	GO111MODULE=off go get -u github.com/jstemmer/go-junit-report
-	$(eval OUTPUT_OPTIONS = | tee /dev/tty | go-junit-report -set-exit-code > "${ARTIFACTS_PATH}/junit-report.xml")
-endif
-	$(GOTEST) ./pkg/... $(OUTPUT_OPTIONS)
+	$(GOTEST) ./...
 
-coverage: ## Run the tests of the project and export the coverage
-	$(GOTEST) -cover -covermode=count -coverprofile="${ARTIFACTS_PATH}/profile.cov" ./pkg/... || true
-	$(GOCMD) tool cover -func "${ARTIFACTS_PATH}/profile.cov"
-ifeq ($(EXPORT_RESULT), true)
-	mkdir -p "${ARTIFACTS_PATH}"
-	GO111MODULE=off go get -u github.com/AlekSi/gocov-xml
-	GO111MODULE=off go get -u github.com/axw/gocov/gocov
-	gocov convert "${ARTIFACTS_PATH}/profile.cov" | gocov-xml > "${ARTIFACTS_PATH}/coverage.xml"
-endif
+fmt: # Run go fmt
+	@FMTOUT=$$(go fmt ./...); \
+	if [ -z $$FMTOUT ]; then\
+        echo "go fmt: OK";\
+	else \
+		echo "go fmt: problems in files:";\
+		echo $$FMTOUT;\
+		false;\
+    fi
 
-## Lint:
-lint: lint-go vet ## Run all available linters
+vet: # Run go vet
+	@if GOVETOUT=$$(go vet ./... 2>&1); then\
+        echo "go vet: OK";\
+	else \
+		echo "go vet: problems in files:";\
+		echo "$$GOVETOUT";\
+		false;\
+    fi
 
-lint-go: ## lint go files
-	# Coding style static check.
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.51.2
-	@go mod tidy
-	golangci-lint run || true
-	@echo "${YELLOW}WARN${RESET}  this test never fails - please check the log for actual issues"
+staticcheck: # Run staticcheck
+	@STATICCHECKOUT=$$(staticcheck -go 1.20 -checks all ./...); \
+	if [ -z "$$STATICCHECKOUT" ]; then\
+        echo "staticcheck: OK";\
+	else \
+		echo "staticcheck: problems in files:";\
+		echo "$$STATICCHECKOUT";\
+		false;\
+    fi
+	
+	@echo Checking all local changes are committed
+	go mod tidy
+	out=`git status --porcelain`; echo "$$out"; [ -z "$$out" ]
 
-
-vet: ## Check for suspicious constructs
-	go vet ./pkg/...
+lint: check_reqs fmt vet staticcheck ## Run all the linters
 
 ## Protocol Buffers
 gen-proto: ## Compile protobuf files
 	protoc --go_out=./pkg/transport/api --go_opt=paths=source_relative --go-grpc_out=./pkg/transport/api \
 		--go-grpc_opt=paths=source_relative --proto_path=./pkg/transport ./pkg/transport/*.proto
-
 
 ## Help:
 help: ## Show this help.
