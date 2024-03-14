@@ -14,6 +14,9 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Set up tools
+        run: make install_tools
+
       - name: Test
         run: make test
 

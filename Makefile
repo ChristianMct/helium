@@ -2,12 +2,9 @@ GOCMD=go
 GOTEST=$(GOCMD) test
 GOVET=$(GOCMD) vet
 
-REQS = $(GOCMD) goimports staticcheck
+LINT_TOOL=goimports staticcheck
+TOOLS =$(GOCMD) $(LINT_TOOL)
 
-.PHONY: check_tools
-check_reqs:
-	@$(foreach exec,$(REQS),\
-		$(if $(shell which $(exec)),true,$(error "$(exec) not found in PATH.")))
 
 ARTIFACTS_PATH=out
 EXPORT_RESULT?=false # for CI please set EXPORT_RESULT to true
@@ -18,9 +15,9 @@ WHITE  := $(shell tput -Txterm setaf 7)
 CYAN   := $(shell tput -Txterm setaf 6)
 RESET  := $(shell tput -Txterm sgr0)
 
-.PHONY: all test
+.PHONY: all test check_reqs fmt vet staticcheck tidy lint gen-proto help
 
-all: lint test
+all: check_reqs test lint
 
 ## Test:
 test: ## Run the tests of the project
@@ -79,3 +76,12 @@ help: ## Show this help.
 		if (/^[a-zA-Z_-]+:.*?##.*$$/) {printf "    ${YELLOW}%-20s${GREEN}%s${RESET}\n", $$1, $$2} \
 		else if (/^## .*$$/) {printf "  ${CYAN}%s${RESET}\n", substr($$1,4)} \
 		}' $(MAKEFILE_LIST)
+
+check_tools: ## Check if all required tools are installed
+	@$(foreach exec,$(TOOLS),\
+		$(if $(shell which $(exec)),true,$(error "$(exec) not found in PATH.")))
+
+install_tools: ## Install all required tools
+	@echo "Installing tools"
+	@$(GOCMD) install golang.org/x/tools/cmd/goimports@latest
+	@$(GOCMD) install honnef.co/go/tools/cmd/staticcheck@2023.1.7
