@@ -21,46 +21,47 @@ Helium's two main types are:
 - The `node.Node` type which runs `node.App` applications by running the MHE setup phase and letting the user trigger circuit evaluations.
 
 Here is an overview of an Helium application:
-```
+```go
   // declares an helium application
   app = node.App{
+
     // describes the required MHE setup
-		SetupDescription: &setup.Description{ Cpk: true, Rlk: true},
+    SetupDescription: &setup.Description{ Cpk: true, Rlk: true},
     
     // declares the application's circuits
-		Circuits: map[circuits.Name]circuits.Circuit{
-			"mul-2-dec": func(rt circuits.Runtime) error {
-				in0, in1 := rt.Input("//p0/in"), rt.Input("//p1/in") // read the encrypted inputs from nodes p0 and p1
+    Circuits: map[circuits.Name]circuits.Circuit{
+      "mul-2-dec": func(rt circuits.Runtime) error {
+        in0, in1 := rt.Input("//p0/in"), rt.Input("//p1/in") // read the encrypted inputs from nodes p0 and p1
 
         // multiplies the inputs 
-				opRes := rt.NewOperand("//eval/prod")
-				opRes.Ciphertext, _ = rt.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
+        opRes := rt.NewOperand("//eval/prod")
+        opRes.Ciphertext, _ = rt.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
 
         // decrypts the result with receiver "rec"
-				return rt.DEC(opRes, "rec", map[string]string{
-					"smudging": "40.0",
-				})
-			},
-		},
-	}
+        return rt.DEC(opRes, "rec", map[string]string{
+          "smudging": "40.0",
+        })
+      },
+    },
+  }
 
-	inputProvider = func(ctx context.Context, cid helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
+  inputProvider = func(ctx context.Context, cid helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
       // ... user-defined logic to provide input for a given circuit
-	}
+  }
 
-	ctx, config, nodelist := // ... (omitted config, usually loaded from files or command-line flags)
+  ctx, config, nodelist := // ... (omitted config, usually loaded from files or command-line flags)
 
-	n, cdescs, outputs, err := node.RunNew(ctx, config, nodelist, app, inputProvider) // create an helium node that runs the app
-	if err != nil {
-		log.Fatal(err)
-	}
+  n, cdescs, outputs, err := node.RunNew(ctx, config, nodelist, app, inputProvider) // create an helium node that runs the app
+  if err != nil {
+    log.Fatal(err)
+  }
 
   // cdesc is a channel to send circuit evaluation request(s)
   cdescs <- circuits.Descriptor{
-			Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")}, // evaluates circuit "mul-4-dec"
-			CircuitID:   "mul-4-dec-0",                                        // as circuit  "mul-4-dec-0"
-			// ... other runtime-specific info 
-	}
+    Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")}, // evaluates circuit "mul-4-dec"
+    CircuitID:   "mul-4-dec-0",                                        // as circuit  "mul-4-dec-0"
+    // ... other runtime-specific info 
+  }
 
   // outputs is a channel to recieve the evaluation(s) output(s)
   out <- outputs 
