@@ -1,3 +1,7 @@
+<p align="center">
+	<img src="images/helium_logo.png" />
+</p>
+
 # Helium
 
 Helium is a secure multiparty computation (MPC) framework based on multiparty homomorphic encryption (MHE). 
