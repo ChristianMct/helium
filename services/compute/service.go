@@ -88,10 +88,12 @@ type CircuitRuntime interface {
 // - *rlwe.Ciphertext: an encrypted input
 // - *rlwe.Plaintext: a Lattigo plaintext input, which will be encrypted by the framework
 // - []uint64: a Go plaintext input, which will be encoded and encrypted by the framework
-type InputProvider func(context.Context, circuits.OperandLabel) (any, error)
+type InputProvider func(context.Context, helium.CircuitID, circuits.OperandLabel, session.Session) (any, error)
 
 // NoInput is an input provider that returns nil for all inputs.
-var NoInput InputProvider = func(_ context.Context, _ circuits.OperandLabel) (any, error) { return nil, nil }
+var NoInput InputProvider = func(_ context.Context, _ helium.CircuitID, _ circuits.OperandLabel, _ session.Session) (any, error) {
+	return nil, nil
+}
 
 // OutputReceiver is a type for receiving outputs from a circuit.
 type OutputReceiver chan<- circuits.Output

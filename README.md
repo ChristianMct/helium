@@ -1,11 +1,91 @@
 # Helium
 
-Helium is a versatile secure multiparty computation framework based on multiparty homomorphic encryption (MHE). 
-It uses the [Lattigo library](https://github.com/tuneinsight/lattigo) for the M(HE) operation and [gRPC](https://grpc.io/) for its service and network layer.
+Helium is a secure multiparty computation (MPC) framework based on multiparty homomorphic encryption (MHE). 
+The framework provides an interface for computing multiparty homorphic circuits and takes care of executing the necessary MHE protocols under the hood.
+It uses the [Lattigo library](https://github.com/tuneinsight/lattigo) for the M(HE) operations, and provides a built-in network transport layer based on
+[gRPC](https://grpc.io).
+The framework currently supports the helper-assisted setting, where the parties in the MPC receive assistance from honest-but-curious server.
+The system and its operating principles are described in the paper: [Helium: Scalable MPC among Lightweight Participants and under Churn](https://eprint.iacr.org/2024/194).
+
+**Disclaimer**: this is an highly experiental first release, aimed at providing a proof-of-concept. 
+The code is expected to evolve without guaranteeing backward compatibility and it should not be used in a production setting.
+
+## Synopsis
+Helium is a Go package that provides the types and methods to implement an end-to-end MHE application.
+Helium's two main types are:
+- The `node.App` type which lets the user define an application by specifying the circuits to be run.
+- The `node.Node` type which runs `node.App` applications by running the MHE setup phase and letting the user trigger circuit evaluations.
+
+Here is an overview of an Helium application:
+```
+  // declares an helium application
+  app = node.App{
+    // describes the required MHE setup
+		SetupDescription: &setup.Description{ Cpk: true, Rlk: true},
+    
+    // declares the application's circuits
+		Circuits: map[circuits.Name]circuits.Circuit{
+			"mul-2-dec": func(rt circuits.Runtime) error {
+				in0, in1 := rt.Input("//p0/in"), rt.Input("//p1/in") // read the encrypted inputs from nodes p0 and p1
+
+        // multiplies the inputs 
+				opRes := rt.NewOperand("//eval/prod")
+				opRes.Ciphertext, _ = rt.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
+
+        // decrypts the result with receiver "rec"
+				return rt.DEC(opRes, "rec", map[string]string{
+					"smudging": "40.0",
+				})
+			},
+		},
+	}
+
+	inputProvider = func(ctx context.Context, cid helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
+      // ... user-defined logic to provide input for a given circuit
+	}
+
+	ctx, config, nodelist := // ... (omitted config, usually loaded from files or command-line flags)
+
+	n, cdescs, outputs, err := node.RunNew(ctx, config, nodelist, app, inputProvider) // create an helium node that runs the app
+	if err != nil {
+		log.Fatal(err)
+	}
+
+  // cdesc is a channel to send circuit evaluation request(s)
+  cdescs <- circuits.Descriptor{
+			Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")}, // evaluates circuit "mul-4-dec"
+			CircuitID:   "mul-4-dec-0",                                        // as circuit  "mul-4-dec-0"
+			// ... other runtime-specific info 
+	}
+
+  // outputs is a channel to recieve the evaluation(s) output(s)
+  out <- outputs 
+  // ... 
+```
+
+A complete example application is available in the [examples](/examples/vec-mul/) folder.
+
+## Features
+The framework currently supports the following features:
+- N-out-of-N-threshold and T-out-of-N-threshold
+- Helper-assisted setting
+- Setup phase for any multiparty RLWE scheme suppported by Lattigo, compute phase for BGV.
+- Circuit evaluation with output to the input-parties (internal) and to the helper (external).
+
+Current limitations:
+- This release does not fully implement the secure failure-handling mechanism of the Helium paper. The full implementation is currently being cleaned up
+and requires changes to the Lattigo library.
+- In the T-out-of-N setting, Helium assumes that the secret-key generation is already performed and that the user provides the generated secret-key.
+Implementing this phase in the framework is planned.
+- Altough supported by the MHE scheme, external computation-receiver other than the helper (ie., re-encryption under arbitrary public-keys) are not yet supported.
+Supporting this feature is expected soon as it is rather easy to implement.
+- The current version of Helium targets a proof of concept for lightweight MPC in the helper-assisted model. Altough most of the low-level code is already 
+generic enough to support peer-to-peer applications, some more work on the high-level node implementation would be required to support fully it.
+
+Roadmap: to come.
 
 ## MHE-based MPC
 
-The framework enables a group of N parties to compute a joint function of their private inputs under encryption and to release the result to a designated receiver.
 Helium currently supports the MHE scheme and associated MPC protocol described in the paper ["Multiparty Homomorphic Encryption from Ring-Learning-With-Errors"](https://eprint.iacr.org/2020/304.pdf) along with its extension to t-out-of-N-threshold encryption described in ["An Efficient Threshold Access-Structure for RLWE-Based Multiparty Homomorphic Encryption"](https://eprint.iacr.org/2022/780.pdf). These schemes provide security against passive attackers that can corrupt up to t-1 of the input parties and can operate in various system models such as peer-to-peer, cloud-assisted or hybrid architecture.
 
 The protocol consists in 2 main phases, the **Setup** phase and the **Computation** phase, as illustrated in the diagram below. 
@@ -14,70 +94,17 @@ Its goal is to generate a collective public-key for which decryption requires co
 In the Computation phase, the parties provide their inputs encrypted under the generated collective key.
 Then, the circuit is homomorphically evaluated and the output is collaboratively re-encrypted to the receiver secret-key.
 
-![Diagram of MHE-MPC](images/mhempc.png)
+## Issues & Contact
 
-## Features
+Please make use of Github's issue tracker for reporting bugs or ask questions. 
+Feel free to contact me if you are interested in the project and would like to contribute. My contact email should be easy to find.
 
-The framework currently supports the following features:
-
-* Access-structure:
-  - N-out-of-N-threshold setup phase
-  - t-out-of-N-threshold setup phase
-
-* Schemes:
-  - BFV
-  - BGV
-  - CKKS
-
-* System models:
-  - Peer-to-peer
-  - Cloud-assisted (thin clients)
-  - Hybrids
-
-## Repository overview
-
-* `api`: Remote procedure call definition (`.proto`) files.
-* `apps`: standalone applications.
-* `apps/node`: go application for a single, standalone Helium node
-* `deployment`: deployment-related files.
-* `deployment/test-local`: a docker-based local deployment for test purposes.
-* `pkg`: all supporting Go packages
-* `test`: test-related configuration files and data. 
-
-## Architecture overview
-A party in the Helium framework is a node (`node.Node` type) and is identified by a unique identifier `utils.NodeID`.
-Interactions between the nodes are done through remote procedure calls (RPCs), and follow a REST-like semantic.
-Hence, nodes can be both client and server for other nodes, and the framework functions are provided by services.
-
-### Services
-Helium provide the following services:
-* [SetupService](/pkg/services/setup/service.go): handles the Setup phase of the MHE-MPC protocol.
-* [ComputeService](/pkg/services/compute/service.go): handles the computation phase the MHE-MPC protocol. (WIP)
-* [ManageService](/pkg/services/manage/service.go): handles interactions that are not related to the MHE-MPC protocol
-
-### Sessions
-Transversal to all the services is the notion of session (`session.Session`). A session is the context for the computation and represents the persistent state of the parties in the MHE-based MPC protocol.
-It notably holds:
-- the MHE cryptographic parameters
-- the information on the other nodes
-- the secret-key of the party
-- the various public-keys
-
-(WIP) Sessions are created by the `ManageService`, their cryptographic material is initialized by the `SetupService` and they are then used as a computation context by the `ComputeService`.
-
-### Node types
-
-**Full vs Light**. Helium nodes can be either "full" or "light". A full node is instantiated with a bindable network address and exposes a server for each of the service.
-Light nodes are instantiated without a bindable address and can only communicate with other node by calling their API (hence, can only directly communicate with full nodes).
-This means that at least one full node is required in the system.
-Nodes interact with full nodes by actively querying them for their inputs in the protocol (using GET-like API endpoints),
-and with light-nodes by passively waiting for them to provide their inputs (using PUT-like API endpoints). 
-
-**Internal vs External**. A Helium node is internal when it is part of the access-structure for the session's secret-key and is external otherwise.
-External parties can assist a set of internal parties in the execution of the MHE-MPC protocol by aggregating their public shares and evaluating homomorphic circuits over their inputs.
-
-#### Cloud-assisted setting
-The canonical cloud-assisted MHE-MPC protocol is instantiated by running all the input parties as light nodes and provide them with an external helper party running a full node "in the cloud".
-
-#### Peer-to-peer setting
-The traditional peer-to-peer MPC setting corresponds to running all input parties as full-nodes without assistance from external parties.
+## Citing Helium
+```
+@article{mouchet2024helium,
+  title={Helium: Scalable MPC among Lightweight Participants and under Churn},
+  author={Mouchet, Christian and Chatel, Sylvain and Pyrgelis, Apostolos and Troncoso, Carmela},
+  journal={Cryptology ePrint Archive},
+  year={2024}
+}
+```

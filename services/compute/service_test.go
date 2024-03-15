@@ -154,7 +154,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 					pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
 					testSess.Encoder.Encode(NodeIDtoTestInput(string(nid)), pt)
-					cli.InputProvider = func(ctx context.Context, ol circuits.OperandLabel) (any, error) {
+					cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
 						return pt, nil
 					}
 					cli.OutputReceiver = make(chan circuits.Output)

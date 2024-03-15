@@ -63,9 +63,9 @@ type Node struct {
 	setupDone chan struct{}
 }
 
-// NewNode creates a new Helium node from the provided config and node list.
+// New creates a new Helium node from the provided config and node list.
 // The method returns an error if the config is invalid or if the node list is empty.
-func NewNode(config Config, nodeList helium.NodesList) (node *Node, err error) {
+func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 	node = new(Node)
 
 	if err := ValidateConfig(config, nodeList); err != nil {
@@ -130,6 +130,22 @@ func NewNode(config Config, nodeList helium.NodesList) (node *Node, err error) {
 	node.setupDone = make(chan struct{})
 
 	return node, err
+}
+
+// RunNew creates a new Helium node from the provided config and node list, and runs the node with the provided app under the given context.
+func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app App, ip compute.InputProvider) (node *Node, cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
+	node, err = New(config, nodeList)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	err = node.Connect(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	cdescs, outs, err = node.Run(ctx, app, ip)
+	return
 }
 
 // Connect connects the node's transport layer to the network.

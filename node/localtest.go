@@ -84,14 +84,14 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	}
 
 	test.Nodes = make([]*Node, 1+config.PeerNodes)
-	test.HelperNode, err = NewNode(test.HelperConfig, test.NodesList)
+	test.HelperNode, err = New(test.HelperConfig, test.NodesList)
 	if err != nil {
 		return nil, err
 	}
 	test.Nodes[0] = test.HelperNode
 	for i, nc := range test.SessNodeConfigs {
 		var err error
-		test.Nodes[i+1], err = NewNode(nc, test.NodesList)
+		test.Nodes[i+1], err = New(nc, test.NodesList)
 		if err != nil {
 			return nil, err
 		}

@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"strconv"
 
 	"github.com/ldsec/helium"
 	"github.com/ldsec/helium/circuits"
@@ -67,22 +66,20 @@ var (
 		helium.NodeInfo{NodeID: "node-3"}, helium.NodeInfo{NodeID: "node-4"}}
 
 	app = node.App{
-		SetupDescription: &setup.Description{ // TODO: remove receivers ?
+		SetupDescription: &setup.Description{
 			Cpk: true,
 			Rlk: true,
 		},
 		Circuits: map[circuits.Name]circuits.Circuit{
-			"mul-4-dec": func(ec circuits.Runtime) error {
-				in0, in1, in2, in3 := ec.Input("//p0/in"), ec.Input("//p1/in"), ec.Input("//p2/in"), ec.Input("//p3/in")
+			"mul-4-dec": func(rt circuits.Runtime) error {
+				in0, in1, in2, in3 := rt.Input("//p0/in"), rt.Input("//p1/in"), rt.Input("//p2/in"), rt.Input("//p3/in")
 
-				opRes := ec.NewOperand("//eval/prod")
-				opRes.Ciphertext = bgv.NewCiphertext(ec.Parameters(), 1, ec.Parameters().MaxLevel())
-				ctmul01, _ := ec.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
-				ctmul23, _ := ec.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext)
-				opRes.Ciphertext, _ = ec.MulRelinNew(ctmul01, ctmul23)
+				opRes := rt.NewOperand("//eval/prod")
+				ctmul01, _ := rt.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
+				ctmul23, _ := rt.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext)
+				opRes.Ciphertext, _ = rt.MulRelinNew(ctmul01, ctmul23)
 
-				return ec.DEC(opRes, "rec", map[string]string{
-					"lvl":      strconv.Itoa(ec.Parameters().MaxLevel()),
+				return rt.DEC(opRes, "rec", map[string]string{
 					"smudging": "40.0",
 				})
 			},
@@ -134,15 +131,7 @@ func main() {
 	}
 	config.ID = nodeID
 
-	// Create a new node
-	n, err := node.NewNode(config, nodelist)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	sess, _ := n.GetSessionFromID(sessionParams.ID)
-
-	ip = func(ctx context.Context, ol circuits.OperandLabel) (any, error) {
+	ip = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
 		in := make([]uint64, sess.Params.PlaintextSlots())
 		for i := range in {
 			in[i] = input % sessionParams.RLWEParams.T
@@ -150,14 +139,10 @@ func main() {
 		return in, nil
 	}
 
-	if err := n.Connect(context.Background()); err != nil {
-		log.Fatal(err)
-	}
-
 	ctx := helium.NewBackgroundContext(config.SessionParameters[0].ID)
-	cdescs, outputs, err := n.Run(ctx, app, ip)
+	n, cdescs, outputs, err := node.RunNew(ctx, config, nodelist, app, ip)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	if nodeID == helperID {

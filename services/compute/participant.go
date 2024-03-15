@@ -137,7 +137,7 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 		return circuits.NewDummyFutureOperand(opl)
 	}
 
-	in, err := p.inputProvider(p.ctx, opl)
+	in, err := p.inputProvider(p.ctx, p.cd.CircuitID, opl, *p.sess)
 	if err != nil {
 		panic(fmt.Errorf("could not get inputs from input provider: %w", err)) // TODO return error
 	}
