@@ -80,6 +80,7 @@ func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err
 		}
 	}
 
+	sess.RLWEParams = sessParams.RLWEParams
 	sess.Params, err = bgv.NewParametersFromLiteral(sessParams.RLWEParams)
 	if err != nil {
 		return nil, fmt.Errorf("could not create session parameters: %s", err)

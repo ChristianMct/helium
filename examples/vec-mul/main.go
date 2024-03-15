@@ -21,7 +21,6 @@ import (
 )
 
 var (
-
 	// sessionParams defines the session parameters for the example application
 	sessionParams = session.Parameters{
 		ID:    "example-session",                                       // the id of the session must be unique
