@@ -1,6 +1,6 @@
 module github.com/ldsec/helium
 
-go 1.20
+go 1.21
 
 require (
 	github.com/dgraph-io/badger/v4 v4.1.0

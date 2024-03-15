@@ -62,6 +62,3 @@ out
 *key
 *crt
 *csr
-
-# Config - used if debuging apps locally
-config/
