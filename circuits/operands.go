@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/ldsec/helium"
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 

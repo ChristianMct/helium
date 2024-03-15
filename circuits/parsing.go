@@ -6,9 +6,9 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/protocols"
-	"github.com/ldsec/helium/utils"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

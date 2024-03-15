@@ -7,10 +7,10 @@ import (
 
 	"golang.org/x/exp/maps"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/circuits"
-	"github.com/ldsec/helium/protocols"
-	"github.com/ldsec/helium/session"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"

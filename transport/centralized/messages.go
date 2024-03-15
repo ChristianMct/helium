@@ -3,12 +3,12 @@ package centralized
 import (
 	"fmt"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/circuits"
-	"github.com/ldsec/helium/coordinator"
-	"github.com/ldsec/helium/protocols"
-	"github.com/ldsec/helium/transport/pb"
-	"github.com/ldsec/helium/utils"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/coordinator"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/transport/pb"
+	"github.com/ChristianMct/helium/utils"
 )
 
 func getAPIEvent(event coordinator.Event) *pb.Event {

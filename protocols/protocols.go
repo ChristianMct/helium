@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/session"
-	"github.com/ldsec/helium/utils"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 	"golang.org/x/crypto/blake2b"

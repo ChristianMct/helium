@@ -1,7 +1,7 @@
 package coordinator
 
 import (
-	"github.com/ldsec/helium"
+	"github.com/ChristianMct/helium"
 )
 
 // Coordinator defines the interface for a coordinator.

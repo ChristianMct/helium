@@ -6,8 +6,8 @@ package coordinator
 import (
 	"fmt"
 
-	"github.com/ldsec/helium/circuits"
-	"github.com/ldsec/helium/protocols"
+	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/protocols"
 )
 
 // Event is a type for coordination events in the coordinator.

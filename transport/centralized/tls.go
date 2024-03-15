@@ -3,7 +3,7 @@ package centralized
 import (
 	//nolint:gosec // sha1 needed to check certificate
 
-	"github.com/ldsec/helium"
+	"github.com/ChristianMct/helium"
 )
 
 // TLSConfig is a struct for specifying TLS-related configuration.

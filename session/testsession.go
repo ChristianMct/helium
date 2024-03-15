@@ -3,7 +3,7 @@ package session
 import (
 	"fmt"
 
-	"github.com/ldsec/helium"
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

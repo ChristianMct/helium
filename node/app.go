@@ -1,8 +1,8 @@
 package node
 
 import (
-	"github.com/ldsec/helium/circuits"
-	"github.com/ldsec/helium/services/setup"
+	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/services/setup"
 )
 
 // App represents an Helium application. It specifes the setup phase

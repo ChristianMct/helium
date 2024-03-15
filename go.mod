@@ -1,4 +1,4 @@
-module github.com/ldsec/helium
+module github.com/ChristianMct/helium
 
 go 1.21
 

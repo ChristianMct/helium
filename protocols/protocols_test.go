@@ -6,9 +6,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/session"
-	"github.com/ldsec/helium/utils"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/drlwe"

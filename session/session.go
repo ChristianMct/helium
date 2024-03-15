@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/utils"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v4/bgv"
 	"github.com/tuneinsight/lattigo/v4/ring"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

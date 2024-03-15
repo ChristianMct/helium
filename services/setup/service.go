@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/objectstore"
-	"github.com/ldsec/helium/protocols"
-	"github.com/ldsec/helium/session"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/objectstore"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v4/rlwe"
 )
 

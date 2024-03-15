@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/protocols"
-	"github.com/ldsec/helium/session"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v4/drlwe"
 	"github.com/tuneinsight/lattigo/v4/rlwe"

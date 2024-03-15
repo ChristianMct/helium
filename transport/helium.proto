@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "github.com/ldsec/helium/transport/pb";
+option go_package = "github.com/ChristianMct/helium/transport/pb";
 
 package helium_proto;
 

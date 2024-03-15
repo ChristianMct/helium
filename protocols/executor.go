@@ -6,9 +6,9 @@ import (
 	"log"
 	"sync"
 
-	"github.com/ldsec/helium"
-	"github.com/ldsec/helium/session"
-	"github.com/ldsec/helium/utils"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/utils"
 	"golang.org/x/sync/errgroup"
 )
 
