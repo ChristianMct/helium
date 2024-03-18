@@ -12,8 +12,8 @@ import (
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
 )
@@ -99,7 +99,7 @@ func TestNodeSetup(t *testing.T) {
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
-			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
+			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{PlaintextModulus: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
 			require.Nil(t, err)
 			sessParams := session.Parameters{
 				ID:         "test-session",
@@ -166,7 +166,7 @@ func TestNodeCompute(t *testing.T) {
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
-			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
+			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{PlaintextModulus: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
 			require.Nil(t, err)
 			sessParams := session.Parameters{
 				ID:         "test-session",
@@ -185,7 +185,7 @@ func TestNodeCompute(t *testing.T) {
 			all, clients, cloud := NewTestNodes(lt)
 
 			for _, cli := range clients {
-				pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
+				pt := bgv.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
 				testSess.Encoder.Encode(NodeIDtoTestInput(string(cli.id)), pt)
 				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
 					return pt, nil
@@ -249,8 +249,8 @@ func TestNodeCompute(t *testing.T) {
 				out, has := rec.Outputs[cid]
 				require.True(t, has, "reciever should have an output")
 				delete(rec.Outputs, cid)
-				pt := &rlwe.Plaintext{Operand: out.Ciphertext.Operand, Value: out.Ciphertext.Value[0]}
-				res := make([]uint64, testSess.RlweParams.PlaintextSlots())
+				pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
+				res := make([]uint64, testSess.RlweParams.MaxSlots())
 				testSess.Encoder.Decode(pt, res)
 				//fmt.Println(out.OperandLabel, res[:10])
 				require.Equal(t, expRes, res[0])

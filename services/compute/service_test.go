@@ -15,16 +15,16 @@ import (
 	"github.com/ChristianMct/helium/utils"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/sync/errgroup"
 )
 
 var TestPN12QP109 = bgv.ParametersLiteral{
-	LogN: 12,
-	Q:    []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
-	P:    []uint64{0xa001},                         // 15 bits
-	T:    65537,
+	LogN:             12,
+	Q:                []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
+	P:                []uint64{0xa001},                         // 15 bits
+	PlaintextModulus: 65537,
 }
 
 var rangeParam = []bgv.ParametersLiteral{TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}
@@ -152,7 +152,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 					}
 					cli.Coordinator = coord.NewPeerCoordinator(nid)
 
-					pt := rlwe.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
+					pt := bgv.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
 					testSess.Encoder.Encode(NodeIDtoTestInput(string(nid)), pt)
 					cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
 						return pt, nil
@@ -217,9 +217,10 @@ func TestCloudAssistedCompute(t *testing.T) {
 					out, has := rec.Outputs[cid]
 					require.True(t, has, "reciever should have an output")
 					delete(rec.Outputs, cid)
-					pt := &rlwe.Plaintext{Operand: out.Ciphertext.Operand, Value: out.Ciphertext.Value[0]}
-					res := make([]uint64, testSess.RlweParams.PlaintextSlots())
-					testSess.Encoder.Decode(pt, res)
+					pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
+					res := make([]uint64, testSess.RlweParams.MaxSlots())
+					err := testSess.Encoder.Decode(pt, res)
+					require.Nil(t, err)
 					//fmt.Println(out.OperandLabel, res[:10])
 					require.Equal(t, expRes, res[0])
 				}

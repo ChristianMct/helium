@@ -9,7 +9,7 @@ import (
 	"math/rand"
 	"os"
 
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 // Set is a mutable set of elements of type T.

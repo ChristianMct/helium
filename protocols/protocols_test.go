@@ -10,9 +10,9 @@ import (
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
 type testSetting struct {
@@ -27,10 +27,10 @@ var testSettings = []testSetting{
 }
 
 var TestPN12QP109 = bgv.ParametersLiteral{
-	LogN: 12,
-	Q:    []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
-	P:    []uint64{0xa001},                         // 15 bits
-	T:    65537,
+	LogN:             12,
+	Q:                []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
+	P:                []uint64{0xa001},                         // 15 bits
+	PlaintextModulus: 65537,
 }
 
 func TestProtocols(t *testing.T) {
@@ -51,10 +51,7 @@ func TestProtocols(t *testing.T) {
 		sessParams := testSess.SessParams
 		nids := utils.NewSet(sessParams.Nodes)
 
-		encryptor, err := bgv.NewEncryptor(testSess.RlweParams, testSess.SkIdeal)
-		if err != nil {
-			t.Fatal(err)
-		}
+		encryptor := bgv.NewEncryptor(testSess.RlweParams, testSess.SkIdeal)
 
 		ct := encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
 
@@ -177,7 +174,7 @@ func checkOutput(out interface{}, pd Descriptor, testSess session.TestSession, t
 	nParties := len(testSess.NodeSessions)
 	sk := testSess.SkIdeal
 	params := testSess.RlweParams
-	decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+	decompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
 
 	switch pd.Signature.Type {
 	case CKG:
@@ -202,10 +199,7 @@ func checkOutput(out interface{}, pd Descriptor, testSess session.TestSession, t
 		if err != nil {
 			t.Fatal(err)
 		}
-		dec, err := rlwe.NewDecryptor(testSess.RlweParams, recSk)
-		if err != nil {
-			t.Fatal(err)
-		}
+		dec := rlwe.NewDecryptor(testSess.RlweParams, recSk)
 
 		ct, isCt := out.(*rlwe.Ciphertext)
 		require.True(t, isCt)

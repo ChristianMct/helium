@@ -15,8 +15,8 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"golang.org/x/crypto/blake2b"
 )
 

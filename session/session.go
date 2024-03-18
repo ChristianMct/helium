@@ -8,12 +8,11 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/ring"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"github.com/tuneinsight/lattigo/v4/utils/sampling"
-
-	"github.com/tuneinsight/lattigo/v4/drlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/ring"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
 
 // Session holds the session's critical state.
@@ -122,7 +121,9 @@ func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err
 	return sess, nil
 }
 
-func genSecretKey(params rlwe.ParametersInterface, prng sampling.PRNG) (sk *rlwe.SecretKey, err error) {
+func genSecretKey(pp rlwe.ParameterProvider, prng sampling.PRNG) (sk *rlwe.SecretKey, err error) {
+
+	params := pp.GetRLWEParameters()
 
 	ts, err := ring.NewSampler(prng, params.RingQ(), params.Xs(), false)
 	if err != nil {
@@ -163,7 +164,7 @@ func (sess *Session) GetSecretKeyForGroup(parties []helium.NodeID) (sk *rlwe.Sec
 		if sess.ThresholdSecretKey == nil {
 			return nil, fmt.Errorf("node has no threshold secret key")
 		}
-		drlwe.NewCombiner(sess.Params.Parameters,
+		drlwe.NewCombiner(*sess.Params.GetRLWEParameters(),
 			sess.GetShamirPublicPoints()[sess.NodeID],
 			sess.GetShamirPublicPointsList(),
 			sess.Threshold).GenAdditiveShare(spks, sess.ShamirPks[sess.NodeID], *sess.ThresholdSecretKey, sk)

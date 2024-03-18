@@ -1,7 +1,7 @@
 package circuits
 
 import (
-	"github.com/tuneinsight/lattigo/v4/bgv"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
 // TestCircuits contains a set of test circuits for the helium framework.

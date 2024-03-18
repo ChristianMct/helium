@@ -11,8 +11,8 @@ import (
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/session"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 )
 
 // Description is a struct for specifying an MHE setup phase.
@@ -90,7 +90,7 @@ func CheckTestSetup(ctx context.Context, t *testing.T, nid helium.NodeID, lt *se
 			t.Fatalf("%s | %s", nid, err)
 		}
 
-		decompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+		decompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
 		require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params.Parameters), noiseBound, "rtk for galEl %d should be correct", galEl)
 
@@ -103,7 +103,7 @@ func CheckTestSetup(ctx context.Context, t *testing.T, nid helium.NodeID, lt *se
 			t.Fatalf("%s | %s", nid, err)
 		}
 
-		BaseRNSDecompositionVectorSize := params.DecompRNS(params.MaxLevelQ(), params.MaxLevelP())
+		BaseRNSDecompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
 		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
 
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)

@@ -23,8 +23,8 @@ import (
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/centralized"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/net/context"
 )
 
@@ -540,6 +540,11 @@ func (node *Node) Unregister(peer helium.NodeID) error {
 }
 
 // FHEProvider interface implementation
+
+// GetParameters returns the parameters from the context's session.
+func (node *Node) GetParameters(ctx context.Context) (*bgv.Parameters, error) {
+	return node.compute.GetParameters(ctx)
+}
 
 // GetEncoder returns a lattigo encoder from the context's session.
 func (node *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {

@@ -8,7 +8,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 // NodeID is the unique identifier of a node.

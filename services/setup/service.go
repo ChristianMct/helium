@@ -12,7 +12,7 @@ import (
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/session"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 // ServiceConfig is the configuration for the setup service.

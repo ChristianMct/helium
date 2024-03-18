@@ -15,9 +15,9 @@ import (
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/centralized"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
 var (
@@ -26,10 +26,10 @@ var (
 		ID:    "example-session",                                       // the id of the session must be unique
 		Nodes: []helium.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
 		RLWEParams: bgv.ParametersLiteral{ // the FHE parameters
-			T:    79873,
-			LogN: 14,
-			LogQ: []int{56, 55, 55, 54, 54, 54},
-			LogP: []int{55, 55},
+			PlaintextModulus: 79873,
+			LogN:             14,
+			LogQ:             []int{56, 55, 55, 54, 54, 54},
+			LogP:             []int{55, 55},
 		},
 		Threshold:  3,                                                                                             // the number of honest nodes assumed by the system.
 		ShamirPks:  map[helium.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
@@ -148,9 +148,9 @@ func main() {
 
 	// creates an InputProvider function from the node's private input
 	ip := func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
-		in := make([]uint64, sess.Params.PlaintextSlots())
+		in := make([]uint64, sess.Params.MaxSlots())
 		for i := range in {
-			in[i] = input % sess.RLWEParams.T
+			in[i] = input % sess.RLWEParams.PlaintextModulus
 		}
 		return in, nil
 	}
@@ -179,6 +179,11 @@ func main() {
 	}
 	close(cdescs) // when no more circuits evaluation are required, the user closes the cdesc channel
 
+	params, err := n.GetParameters(ctx)
+	if err != nil {
+		log.Fatalf("%s | [main] error getting session parameters: %v\n", nodeID, err)
+	}
+
 	encoder, err := n.GetEncoder(ctx)
 	if err != nil {
 		log.Fatalf("%s | [main] error getting session encoder: %v\n", nodeID, err)
@@ -190,8 +195,8 @@ func main() {
 	n.Close()
 
 	if hasOut {
-		pt := &rlwe.Plaintext{Operand: out.Ciphertext.Operand, Value: out.Ciphertext.Value[0]}
-		res := make([]uint64, encoder.Parameters().PlaintextSlots())
+		pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
+		res := make([]uint64, params.MaxSlots())
 		encoder.Decode(pt, res)
 		fmt.Printf("%v\n", res)
 	}

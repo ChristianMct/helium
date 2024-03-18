@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/ChristianMct/helium"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 // Operand is a type for representing circuit operands.

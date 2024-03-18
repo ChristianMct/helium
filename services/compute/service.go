@@ -15,8 +15,8 @@ import (
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/session"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -47,6 +47,7 @@ type PublicKeyProvider interface {
 // FHEProvider is an interface for requesting FHE-related objects as implemented
 // in the Lattigo library.
 type FHEProvider interface {
+	GetParameters(ctx context.Context) (*bgv.Parameters, error)
 	GetEncoder(ctx context.Context) (*bgv.Encoder, error)
 	GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error)
 	GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
@@ -782,6 +783,14 @@ func (s *Service) Outgoing() chan<- protocols.Event {
 
 // FHEProvider interface
 
+// GetParameters returns the parameters of the context's session.
+func (s *Service) GetParameters(ctx context.Context) (*bgv.Parameters, error) {
+	if sess, has := s.sessions.GetSessionFromContext(ctx); has {
+		return &sess.Params, nil
+	}
+	return nil, fmt.Errorf("no session found for context")
+}
+
 // GetEncoder returns a new encoder from the context's session.
 func (s *Service) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
@@ -805,7 +814,7 @@ func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
 		return nil, fmt.Errorf("cannot retrieve the collective public key : %w", err)
 	}
 
-	return rlwe.NewEncryptor(sess.Params, cpk)
+	return rlwe.NewEncryptor(sess.Params, cpk), nil
 }
 
 // GetEvaluator returns a new evaluator from the context's session and relevant evaluation keys.
@@ -826,7 +835,7 @@ func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 		return nil, fmt.Errorf("no session found for this context")
 	}
 
-	return rlwe.NewDecryptor(sess.Params, rlwe.NewSecretKey(sess.Params)) // decryptor under sk=0 (sk is determined at output)
+	return rlwe.NewDecryptor(sess.Params, rlwe.NewSecretKey(sess.Params)), nil // decryptor under sk=0 (sk is determined at output)
 
 }
 

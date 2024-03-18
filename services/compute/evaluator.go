@@ -11,9 +11,9 @@ import (
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/session"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
 // KeyOperationRunner is an interface for running key operations.
@@ -201,8 +201,8 @@ func (se *evaluatorRuntime) Logf(msg string, v ...any) {
 }
 
 func (ew *fheEvaluator) NewDecompQPBuffer() []ringqp.Poly {
-	params := ew.Parameters()
-	decompRNS := params.DecompRNS(params.MaxLevelQ(), 0)
+	params := ew.GetParameters()
+	decompRNS := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), 0)
 	ringQP := params.RingQP()
 	buffDecompQP := make([]ringqp.Poly, decompRNS)
 	for i := 0; i < decompRNS; i++ {

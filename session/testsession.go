@@ -4,11 +4,11 @@ import (
 	"fmt"
 
 	"github.com/ChristianMct/helium"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
-	"github.com/tuneinsight/lattigo/v4/rlwe/ringqp"
-	"github.com/tuneinsight/lattigo/v4/utils/sampling"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
 
 type TestSession struct {
@@ -92,17 +92,13 @@ func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSessi
 	ts.CachedKeyBackend = helium.NewCachedPublicKeyBackend(helium.NewTestKeyBackend(ts.RlweParams.Parameters, ts.SkIdeal))
 
 	ts.Encoder = bgv.NewEncoder(ts.RlweParams)
-	ts.Encryptor, err = bgv.NewEncryptor(ts.RlweParams, ts.SkIdeal)
-	if err != nil {
-		return nil, err
-	}
-	ts.Decrpytor, err = bgv.NewDecryptor(ts.RlweParams, ts.SkIdeal)
-
-	return ts, err
+	ts.Encryptor = bgv.NewEncryptor(ts.RlweParams, ts.SkIdeal)
+	ts.Decrpytor = bgv.NewDecryptor(ts.RlweParams, ts.SkIdeal)
+	return ts, nil
 }
 
 func GenTestSecretKeys(sessParams Parameters) (secs map[helium.NodeID]*Secrets, err error) {
-	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams.RLWEParametersLiteral())
+	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams.GetRLWEParametersLiteral())
 	if err != nil {
 		return nil, err
 	}

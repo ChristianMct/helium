@@ -15,14 +15,14 @@ import (
 	"github.com/ChristianMct/helium/session"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v4/bgv"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
 var TestPN12QP109 = bgv.ParametersLiteral{
-	LogN: 12,
-	Q:    []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
-	P:    []uint64{0xa001},                         // 15 bits
-	T:    65537,
+	LogN:             12,
+	Q:                []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
+	P:                []uint64{0xa001},                         // 15 bits
+	PlaintextModulus: 65537,
 }
 
 var rangeParam = []bgv.ParametersLiteral{TestPN12QP109 /* rlwe.TestPN13QP218 , rlwe.TestPN14QP438, rlwe.TestPN15QP880*/}

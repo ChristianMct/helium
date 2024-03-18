@@ -9,7 +9,7 @@ import (
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"golang.org/x/sync/errgroup"
 )
 

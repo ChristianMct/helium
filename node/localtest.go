@@ -20,8 +20,8 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/centralized"
-	"github.com/tuneinsight/lattigo/v4/bgv"
-	"github.com/tuneinsight/lattigo/v4/drlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/test/bufconn"
 )

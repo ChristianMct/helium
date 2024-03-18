@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/tuneinsight/lattigo/v4/rlwe"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 // PublicKeyProvider is an interface for retrieving public keys.
@@ -148,15 +148,15 @@ func NewTestKeyBackend(params rlwe.Parameters, skIdeal *rlwe.SecretKey) *TestKey
 
 // GetCollectivePublicKey returns the collective public key for the session in ctx.
 func (tkb *TestKeyProvider) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	return tkb.keygen.GenPublicKeyNew(tkb.skIdeal)
+	return tkb.keygen.GenPublicKeyNew(tkb.skIdeal), nil
 }
 
 // GetGaloisKey returns the galois key for the session in ctx and the given Galois element.
 func (tkb *TestKeyProvider) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	return tkb.keygen.GenGaloisKeyNew(galEl, tkb.skIdeal)
+	return tkb.keygen.GenGaloisKeyNew(galEl, tkb.skIdeal), nil
 }
 
 // GetRelinearizationKey returns the relinearization key for the session in ctx.
 func (tkb *TestKeyProvider) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	return tkb.keygen.GenRelinearizationKeyNew(tkb.skIdeal)
+	return tkb.keygen.GenRelinearizationKeyNew(tkb.skIdeal), nil
 }
