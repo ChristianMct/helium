@@ -13,6 +13,7 @@ import (
 	"github.com/ChristianMct/helium/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v5/he/heint"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
@@ -99,7 +100,8 @@ func TestNodeSetup(t *testing.T) {
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
-			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{PlaintextModulus: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
+
+			params, err := heint.NewParametersFromLiteral(heint.ParametersLiteral{LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}, PlaintextModulus: 79873}) // matmul
 			require.Nil(t, err)
 			sessParams := session.Parameters{
 				ID:         "test-session",
@@ -165,12 +167,12 @@ func TestNodeCompute(t *testing.T) {
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
+			paramLiteral := bgv.ParametersLiteral{PlaintextModulus: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}
+
 			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
-			params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{PlaintextModulus: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}) // matmul
-			require.Nil(t, err)
 			sessParams := session.Parameters{
 				ID:         "test-session",
-				RLWEParams: params.ParametersLiteral(),
+				RLWEParams: paramLiteral,
 				Threshold:  ts.T,
 			}
 
@@ -183,12 +185,10 @@ func TestNodeCompute(t *testing.T) {
 			testSess := lt.TestSession
 
 			all, clients, cloud := NewTestNodes(lt)
-
 			for _, cli := range clients {
-				pt := bgv.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
-				testSess.Encoder.Encode(NodeIDtoTestInput(string(cli.id)), pt)
+				cid := cli.id
 				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
-					return pt, nil
+					return NodeIDtoTestInput(string(cid)), nil
 				}
 			}
 
@@ -244,14 +244,18 @@ func TestNodeCompute(t *testing.T) {
 				require.NotZero(t, netStats.DataSent, "node %s should have sent data", node.id)
 			}
 
+			bgvParams, err := bgv.NewParameters(testSess.RlweParams, paramLiteral.PlaintextModulus)
+			require.Nil(t, err)
+			encoder := bgv.NewEncoder(bgvParams)
+
 			rec := all[ts.Reciever]
 			for cid, expRes := range expResult {
 				out, has := rec.Outputs[cid]
 				require.True(t, has, "reciever should have an output")
 				delete(rec.Outputs, cid)
 				pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
-				res := make([]uint64, testSess.RlweParams.MaxSlots())
-				testSess.Encoder.Decode(pt, res)
+				res := make([]uint64, bgvParams.MaxSlots())
+				encoder.Decode(pt, res)
 				//fmt.Println(out.OperandLabel, res[:10])
 				require.Equal(t, expRes, res[0])
 			}

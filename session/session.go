@@ -12,14 +12,20 @@ import (
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
+
+type FHEParameters interface { // TODO: Lattigo could have a common interface for parameters
+	GetRLWEParameters() *rlwe.Parameters
+}
 
 // Session holds the session's critical state.
 type Session struct {
 	Parameters
 	NodeID helium.NodeID
-	Params bgv.Parameters
+
+	Params FHEParameters
 
 	secretKey *rlwe.SecretKey
 	rlkEphSk  *rlwe.SecretKey
@@ -30,11 +36,15 @@ type Secrets struct {
 	ThresholdSecretKey *drlwe.ShamirSecretShare
 }
 
+type RLWEParamerersLiteralProvider interface {
+	GetRLWEParametersLiteral() rlwe.ParametersLiteral
+}
+
 // Parameters contains data used to initialize a Session.
 type Parameters struct {
 	ID         helium.SessionID
 	Nodes      []helium.NodeID
-	RLWEParams bgv.ParametersLiteral
+	RLWEParams RLWEParamerersLiteralProvider
 	Threshold  int
 	ShamirPks  map[helium.NodeID]drlwe.ShamirPublicPoint
 	PublicSeed []byte
@@ -80,7 +90,7 @@ func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err
 	}
 
 	sess.RLWEParams = sessParams.RLWEParams
-	sess.Params, err = bgv.NewParametersFromLiteral(sessParams.RLWEParams)
+	sess.Params, err = newParamsFromLiteral(sessParams.RLWEParams)
 	if err != nil {
 		return nil, fmt.Errorf("could not create session parameters: %s", err)
 	}
@@ -119,6 +129,18 @@ func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err
 	}
 
 	return sess, nil
+}
+
+func newParamsFromLiteral(paramsLit RLWEParamerersLiteralProvider) (params FHEParameters, err error) {
+	switch pl := paramsLit.(type) {
+	case bgv.ParametersLiteral:
+		params, err = bgv.NewParametersFromLiteral(pl)
+	case ckks.ParametersLiteral:
+		params, err = ckks.NewParametersFromLiteral(pl)
+	default:
+		err = fmt.Errorf("unknown FHE parameters type")
+	}
+	return
 }
 
 func genSecretKey(pp rlwe.ParameterProvider, prng sampling.PRNG) (sk *rlwe.SecretKey, err error) {

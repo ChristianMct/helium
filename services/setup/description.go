@@ -80,7 +80,7 @@ func CheckTestSetup(ctx context.Context, t *testing.T, nid helium.NodeID, lt *se
 			t.Fatalf("%s | %s", nid, err)
 		}
 
-		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params.Parameters), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
+		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
 	}
 
 	// check RTG
@@ -91,8 +91,8 @@ func CheckTestSetup(ctx context.Context, t *testing.T, nid helium.NodeID, lt *se
 		}
 
 		decompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
-		require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params.Parameters), noiseBound, "rtk for galEl %d should be correct", galEl)
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+		require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params), noiseBound, "rtk for galEl %d should be correct", galEl)
 
 	}
 
@@ -104,8 +104,8 @@ func CheckTestSetup(ctx context.Context, t *testing.T, nid helium.NodeID, lt *se
 		}
 
 		BaseRNSDecompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
-		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
 
-		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	}
 }

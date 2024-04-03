@@ -239,6 +239,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 					select {
 					case qsig, more := <-s.queuedSig:
 						if !more {
+							//s.Logf("closed signature queue")
 							return nil
 						}
 						err := s.runSignature(qsig.ctx, qsig.sig, qsig.rec)
@@ -247,6 +248,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 							return fmt.Errorf("error in signature queue processing: %w", err)
 						}
 					case <-prctx.Done():
+						s.Logf("context was cancelled")
 						return nil
 					}
 
@@ -261,6 +263,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 				select {
 				case qpd, more := <-s.queuedPart:
 					if !more {
+						s.Logf("closed participation queue")
 						return nil
 					}
 					if err := s.runAsParticipant(qpd.ctx, qpd.pd); err != nil {
@@ -268,6 +271,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 						return fmt.Errorf("error during protocol execution as participant: %w", err)
 					}
 				case <-prctx.Done():
+					s.Logf("context was cancelled")
 					return nil
 				}
 
@@ -450,7 +454,7 @@ func (s *Executor) RunSignature(ctx context.Context, sig Signature, aggOutRec Ag
 func (s *Executor) runSignature(ctx context.Context, sig Signature, aggOutRec AggregationOutputReceiver) (err error) {
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
-		return fmt.Errorf("session could not extract session from context")
+		return fmt.Errorf("could not extract session from context")
 	}
 
 	//s.Logf("getting key operation descriptor: %s", sig)
@@ -466,7 +470,7 @@ func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor,
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
-		return fmt.Errorf("session could not extract session from context")
+		return fmt.Errorf("could not extract session from context")
 	}
 
 	return s.runAsAggregator(ctx, sess, pd, aggOutRec)
@@ -480,7 +484,7 @@ func (s *Executor) runAsParticipant(ctx context.Context, pd Descriptor) error {
 
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
-		return fmt.Errorf("session could not extract session from context")
+		return fmt.Errorf("could not extract session from context")
 	}
 
 	s.Logf("started protocol %s as participant", pd.HID())

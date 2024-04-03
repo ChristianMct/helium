@@ -12,8 +12,9 @@ import (
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
+	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 )
 
 // KeyOperationRunner is an interface for running key operations.
@@ -38,6 +39,7 @@ type evaluatorRuntime struct {
 	//c      circuits.Circuit
 	//params bgv.Parameters
 	sess        *session.Session
+	pkProvider  circuits.PublicKeyProvider
 	fheProvider FHEProvider
 
 	// protocols
@@ -48,7 +50,7 @@ type evaluatorRuntime struct {
 	inputs, ops, outputs map[circuits.OperandLabel]*circuits.FutureOperand
 
 	// eval
-	*fheEvaluator
+	eval he.Evaluator
 }
 
 // CircuitInstance (framework-facing) API
@@ -72,11 +74,41 @@ func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata) (err
 
 	se.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
 
-	se.fheEvaluator, err = se.fheProvider.GetEvaluator(ctx, md.NeedRlk, md.GaloisKeys.Elements())
+	se.eval, err = se.getEvaluatorForCircuit(se.sess.Params, md)
 	if err != nil {
-		return err
+		se.Logf("failed to get evaluator: %v", err)
 	}
 	return
+}
+
+func (se *evaluatorRuntime) getEvaluatorForCircuit(params session.FHEParameters, md circuits.Metadata) (eval he.Evaluator, err error) {
+
+	var rlk *rlwe.RelinearizationKey
+	if md.NeedRlk { // TODO NEXT: this is not populated without circuit parsing. Compute service could have a keyset computed from the setup description.
+		rlk, err = se.pkProvider.GetRelinearizationKey(se.ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	gks := make([]*rlwe.GaloisKey, 0, len(md.GaloisKeys))
+	for galEl := range md.GaloisKeys {
+		gk, err := se.pkProvider.GetGaloisKey(se.ctx, galEl)
+		if err != nil {
+			return nil, err
+		}
+		gks = append(gks, gk)
+	}
+	ks := rlwe.NewMemEvaluationKeySet(rlk, gks...)
+
+	switch pp := params.(type) {
+	case bgv.Parameters:
+		eval = bgv.NewEvaluator(pp, ks)
+	case ckks.Parameters:
+		eval = ckks.NewEvaluator(pp, ks)
+	}
+
+	return eval, nil
+
 }
 
 func (se *evaluatorRuntime) Eval(ctx context.Context, c circuits.Circuit) (err error) {
@@ -126,9 +158,13 @@ func (se *evaluatorRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
 	panic("not supported yet") // TODO implement
 }
 
-func (se *evaluatorRuntime) NewOperand(opl circuits.OperandLabel) circuits.Operand {
+func (se *evaluatorRuntime) NewOperand(opl circuits.OperandLabel) *circuits.Operand {
 	opl = se.getOperandLabelForRuntime(opl)
-	return circuits.Operand{OperandLabel: opl}
+	return &circuits.Operand{OperandLabel: opl}
+}
+
+func (se *evaluatorRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error {
+	return f(se.eval)
 }
 
 func (se *evaluatorRuntime) keyOpSig(pt protocols.Type, in circuits.Operand, params map[string]string) protocols.Signature {
@@ -161,11 +197,14 @@ func (se *evaluatorRuntime) getOperandLabelForRuntime(cOpLabel circuits.OperandL
 }
 
 func (se *evaluatorRuntime) DEC(in circuits.Operand, rec helium.NodeID, params map[string]string) (err error) {
-	if _, has := se.ops[in.OperandLabel]; !has {
-		fop := circuits.NewFutureOperand(in.OperandLabel)
-		fop.Set(in)
+	var fop *circuits.FutureOperand
+	var has bool
+	if fop, has = se.ops[in.OperandLabel]; !has {
+		fop = circuits.NewFutureOperand(in.OperandLabel)
 		se.ops[in.OperandLabel] = fop
 	}
+	fop.Set(in)
+
 	pparams := maps.Clone(params)
 	pparams["target"] = string(se.cDesc.NodeMapping[string(rec)])
 	pparams["op"] = string(in.OperandLabel)
@@ -183,55 +222,10 @@ func (se *evaluatorRuntime) PCKS(in circuits.Operand, rec helium.NodeID, params 
 	return se.keyOpExec(sig, in)
 }
 
-func (se *evaluatorRuntime) Parameters() bgv.Parameters {
+func (se *evaluatorRuntime) Parameters() session.FHEParameters {
 	return se.sess.Params
-}
-
-// fheEvaluator is a wrapper around lattigo's Evaluator that implements the circuits.Evaluator interface.
-type fheEvaluator struct {
-	*bgv.Evaluator
-}
-
-func (se *evaluatorRuntime) NewEvaluator() circuits.Evaluator {
-	return &fheEvaluator{se.fheEvaluator.ShallowCopy()}
 }
 
 func (se *evaluatorRuntime) Logf(msg string, v ...any) {
 	log.Printf("%s | [%s] %s\n", se.cDesc.Evaluator, se.cDesc.CircuitID, fmt.Sprintf(msg, v...))
-}
-
-func (ew *fheEvaluator) NewDecompQPBuffer() []ringqp.Poly {
-	params := ew.GetParameters()
-	decompRNS := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), 0)
-	ringQP := params.RingQP()
-	buffDecompQP := make([]ringqp.Poly, decompRNS)
-	for i := 0; i < decompRNS; i++ {
-		buffDecompQP[i] = ringQP.NewPoly()
-	}
-	return buffDecompQP
-}
-
-func newLattigoEvaluator(ctx context.Context, relin bool, galEls []uint64, params bgv.Parameters, pkbk PublicKeyProvider) (eval *fheEvaluator, err error) {
-	rlk := new(rlwe.RelinearizationKey)
-	if relin {
-		rlk, err = pkbk.GetRelinearizationKey(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	gks := make([]*rlwe.GaloisKey, 0, len(galEls))
-	for _, galEl := range galEls {
-		var err error
-		gk, err := pkbk.GetGaloisKey(ctx, galEl)
-		if err != nil {
-			return nil, err
-		}
-		gks = append(gks, gk)
-	}
-
-	//rtks := rlwe.NewRotationKeySet(se.params.Parameters, se.cDesc.GaloisKeys.Elements())
-	evk := rlwe.NewMemEvaluationKeySet(rlk, gks...)
-	eval = &fheEvaluator{bgv.NewEvaluator(params, evk)}
-	return eval, nil
 }

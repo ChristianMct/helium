@@ -167,7 +167,7 @@ func NewProtocol(pd Descriptor, sess *session.Session) (*Protocol, error) {
 	}
 
 	// intialize the protocol
-	p.proto, err = newMHEProtocol(pd.Signature, sess.Params.Parameters)
+	p.proto, err = newMHEProtocol(pd.Signature, *sess.Params.GetRLWEParameters()) // TODO: lattigo could return rlwe.Parameters
 	if err != nil {
 		return nil, err
 	}

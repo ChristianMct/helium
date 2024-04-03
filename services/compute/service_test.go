@@ -143,6 +143,7 @@ func TestCloudAssistedCompute(t *testing.T) {
 
 				clients := make(map[helium.NodeID]*testnode, ts.N)
 				for nid := range nids {
+					nid := nid
 					cli := new(testnode)
 					cli.Session = testSess.NodeSessions[nid]
 					srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
@@ -152,10 +153,9 @@ func TestCloudAssistedCompute(t *testing.T) {
 					}
 					cli.Coordinator = coord.NewPeerCoordinator(nid)
 
-					pt := bgv.NewPlaintext(testSess.RlweParams, testSess.RlweParams.MaxLevel())
-					testSess.Encoder.Encode(NodeIDtoTestInput(string(nid)), pt)
+					require.Nil(t, err)
 					cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
-						return pt, nil
+						return NodeIDtoTestInput(string(nid)), nil
 					}
 					cli.OutputReceiver = make(chan circuits.Output)
 					cli.Outputs = make(map[helium.CircuitID]circuits.Output)
@@ -212,16 +212,22 @@ func TestCloudAssistedCompute(t *testing.T) {
 				err = g.Wait() // waits for all parties to terminate
 				require.Nil(t, err)
 
+				bgvParams, err := bgv.NewParameters(testSess.RlweParams, literalParams.PlaintextModulus)
+				require.Nil(t, err)
+				encoder := bgv.NewEncoder(bgvParams)
+
+				fmt.Println("all done")
 				rec := all[ts.Reciever]
 				for cid, expRes := range expResult {
 					out, has := rec.Outputs[cid]
 					require.True(t, has, "reciever should have an output")
 					delete(rec.Outputs, cid)
 					pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
-					res := make([]uint64, testSess.RlweParams.MaxSlots())
-					err := testSess.Encoder.Decode(pt, res)
+					pt.IsNTT = true
+					res := make([]uint64, bgvParams.MaxSlots())
+					err := encoder.Decode(pt, res)
 					require.Nil(t, err)
-					//fmt.Println(out.OperandLabel, res[:10])
+					fmt.Println(out.OperandLabel, res[:10])
 					require.Equal(t, expRes, res[0])
 				}
 

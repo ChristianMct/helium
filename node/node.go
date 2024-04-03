@@ -24,7 +24,6 @@ import (
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/centralized"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/net/context"
 )
 
@@ -542,14 +541,14 @@ func (node *Node) Unregister(peer helium.NodeID) error {
 // FHEProvider interface implementation
 
 // GetParameters returns the parameters from the context's session.
-func (node *Node) GetParameters(ctx context.Context) (*bgv.Parameters, error) {
+func (node *Node) GetParameters(ctx context.Context) (session.FHEParameters, error) {
 	return node.compute.GetParameters(ctx)
 }
 
-// GetEncoder returns a lattigo encoder from the context's session.
-func (node *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
-	return node.compute.GetEncoder(ctx)
-}
+// // GetEncoder returns a lattigo encoder from the context's session.
+// func (node *Node) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
+// 	return node.compute.GetEncoder(ctx)
+// }
 
 // GetEncryptor returns a lattigo encryptor from the context's session.
 // The encryptor is initialized with the collective public key.

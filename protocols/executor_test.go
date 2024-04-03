@@ -143,7 +143,7 @@ func TestExecutor(t *testing.T) {
 			close(testTrans.incoming)
 
 			for aggOut := range aggOutC {
-				out := AllocateOutput(aggOut.Descriptor.Signature, testSess.RlweParams.Parameters)
+				out := AllocateOutput(aggOut.Descriptor.Signature, testSess.RlweParams)
 				err = helper.GetOutput(ctx, aggOut, out)
 				require.Nil(t, err)
 				checkOutput(out, aggOut.Descriptor, *testSess, t)

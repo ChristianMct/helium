@@ -2,15 +2,15 @@
 package circuits
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/ring"
-	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/he"
 )
 
 // Circuit is a type for representing circuits, which are Go functions interacting with
@@ -20,6 +20,8 @@ type Circuit func(Runtime) error
 // Runtime defines the interface that is available to circuits to access
 // their execution context.
 type Runtime interface {
+	Parameters() session.FHEParameters
+
 	// Input reads an input operand with the given label from the context.
 	// When specifying the label, the user:
 	//  - can use a placeholder id for the node, the mapping for which is provided in the Signature.
@@ -36,7 +38,9 @@ type Runtime interface {
 	// When specifying the label, the user:
 	//  - can use a placeholder id for the node, the mapping for which is provided in the Signature.
 	//  - can omit the session-id part as it wil be automatically resolved by the runtime.
-	NewOperand(OperandLabel) Operand
+	NewOperand(OperandLabel) *Operand
+
+	EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error // TODO Eval once freed // TODO NEXT: node allocates evaluators and pass them here.
 
 	// DEC performes the decryption of in, with private output to rec.
 	// The decrypted operand is considered an output for the this circuit and the
@@ -51,14 +55,14 @@ type Runtime interface {
 	// It expect the users to provide the key-switch parameters, including the level
 	// at which the operation is performed and the smudging parameter.
 	PCKS(in Operand, rec helium.NodeID, params map[string]string) error
+}
 
-	// Parameters returns the encryption parameters for the circuit.
-	Parameters() bgv.Parameters
-
-	// NewEvaluator returns a new evaluator to be used in this circuit.
-	NewEvaluator() Evaluator
-
-	Evaluator
+// PublicKeyProvider is an interface for querying public encryption- and evaluation-keys.
+// The setup service is a notable implementation of this interface.
+type PublicKeyProvider interface {
+	GetCollectivePublicKey(context.Context) (*rlwe.PublicKey, error)
+	GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error)
+	GetRelinearizationKey(context.Context) (*rlwe.RelinearizationKey, error)
 }
 
 // Name is a type for circuit names.
@@ -123,24 +127,6 @@ const (
 type Output struct {
 	helium.CircuitID
 	Operand
-}
-
-// Evaluator is an interface that is directly supported by circuit runtimes.
-type Evaluator interface {
-	Add(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error)
-	Sub(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error)
-	Mul(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error)
-	MulNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error)
-	MulRelin(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error)
-	MulRelinNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error)
-	MulThenAdd(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error)
-	Relinearize(op0, op1 *rlwe.Ciphertext) (err error)
-	Rescale(op0, op1 *rlwe.Ciphertext) (err error)
-	InnerSum(ctIn *rlwe.Ciphertext, batchSize, n int, opOut *rlwe.Ciphertext) (err error)
-	AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error)
-
-	DecomposeNTT(levelQ, levelP, nbPi int, c2 ring.Poly, c2IsNTT bool, decompQP []ringqp.Poly)
-	NewDecompQPBuffer() []ringqp.Poly
 }
 
 var statusToString = []string{"COMPLETED", "STARTED", "EXECUTING", "FAILED"}

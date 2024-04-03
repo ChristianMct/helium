@@ -17,6 +17,7 @@ import (
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -36,21 +37,17 @@ type Transport interface {
 	GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error)
 }
 
-// PublicKeyProvider is an interface for querying public encryption- and evaluation-keys.
-// The setup service is a notable implementation of this interface.
-type PublicKeyProvider interface {
-	GetCollectivePublicKey(context.Context) (*rlwe.PublicKey, error)
-	GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error)
-	GetRelinearizationKey(context.Context) (*rlwe.RelinearizationKey, error)
+type Encoder interface {
+	//Encode(any, *rlwe.Plaintext) error // TODO: Lattigo should have a more generic interface
 }
 
 // FHEProvider is an interface for requesting FHE-related objects as implemented
 // in the Lattigo library.
 type FHEProvider interface {
-	GetParameters(ctx context.Context) (*bgv.Parameters, error)
-	GetEncoder(ctx context.Context) (*bgv.Encoder, error)
+	GetParameters(ctx context.Context) (session.FHEParameters, error)
+	GetEncoder(ctx context.Context) (Encoder, error)
 	GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error)
-	GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
+	//GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
 	GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error)
 }
 
@@ -122,7 +119,7 @@ type Service struct {
 	*protocols.Executor
 	transport Transport
 
-	pubkeyBackend PublicKeyProvider
+	pubkeyBackend circuits.PublicKeyProvider
 
 	inputProvider InputProvider
 	localOutputs  chan circuits.Output
@@ -155,7 +152,7 @@ const (
 )
 
 // NewComputeService creates a new compute service instance.
-func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk PublicKeyProvider, trans Transport) (s *Service, err error) {
+func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk circuits.PublicKeyProvider, trans Transport) (s *Service, err error) {
 	s = new(Service)
 
 	s.config = conf
@@ -346,6 +343,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		evalRoutines.Go(func() error {
 			for cd := range s.queuedCircuits {
 				if err := s.runCircuit(erctx, cd); err != nil {
+					s.Logf("error during circuit execution %s: %v", cd.CircuitID, err)
 					return err
 				}
 			}
@@ -471,6 +469,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 			ctx:         ctx,
 			cDesc:       cd,
 			sess:        sess,
+			pkProvider:  s.pubkeyBackend,
 			protoExec:   s,
 			fheProvider: s,
 		}
@@ -717,7 +716,7 @@ func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocols
 		return fmt.Errorf("invalid aggregation output: unkown output operand: %s", outOpl)
 	}
 
-	out := protocols.AllocateOutput(aggOut.Descriptor.Signature, sess.Params.Parameters)
+	out := protocols.AllocateOutput(aggOut.Descriptor.Signature, *sess.Params.GetRLWEParameters())
 	err = s.Executor.GetOutput(ctx, aggOut, out)
 	if err != nil {
 		return fmt.Errorf("protocol output resulted in an error: %w", err)
@@ -784,21 +783,31 @@ func (s *Service) Outgoing() chan<- protocols.Event {
 // FHEProvider interface
 
 // GetParameters returns the parameters of the context's session.
-func (s *Service) GetParameters(ctx context.Context) (*bgv.Parameters, error) {
+func (s *Service) GetParameters(ctx context.Context) (session.FHEParameters, error) {
 	if sess, has := s.sessions.GetSessionFromContext(ctx); has {
-		return &sess.Params, nil
+		return sess.Params, nil
 	}
 	return nil, fmt.Errorf("no session found for context")
 }
 
 // GetEncoder returns a new encoder from the context's session.
-func (s *Service) GetEncoder(ctx context.Context) (*bgv.Encoder, error) {
+func (s *Service) GetEncoder(ctx context.Context) (enc Encoder, err error) {
+
 	sess, has := s.sessions.GetSessionFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("no session found for this context")
 	}
 
-	return bgv.NewEncoder(sess.Params), nil
+	switch p := sess.Params.(type) {
+	case bgv.Parameters:
+		enc = bgv.NewEncoder(p)
+	case ckks.Parameters:
+		enc = ckks.NewEncoder(p)
+	default:
+		return nil, fmt.Errorf("session has unsupported parameters type: %T", p)
+	}
+
+	return enc, nil
 }
 
 // GetEncryptor returns a new encryptor from the context's session and the collective public key.
@@ -817,15 +826,15 @@ func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
 	return rlwe.NewEncryptor(sess.Params, cpk), nil
 }
 
-// GetEvaluator returns a new evaluator from the context's session and relevant evaluation keys.
-func (s *Service) GetEvaluator(ctx context.Context, relin bool, galEls []uint64) (*fheEvaluator, error) {
-	sess, has := s.sessions.GetSessionFromContext(ctx)
-	if !has {
-		return nil, fmt.Errorf("no session found for this context")
-	}
+// // GetEvaluator returns a new evaluator from the context's session and relevant evaluation keys.
+// func (s *Service) GetEvaluator(ctx context.Context, relin bool, galEls []uint64) (*fheEvaluator, error) {
+// 	sess, has := s.sessions.GetSessionFromContext(ctx)
+// 	if !has {
+// 		return nil, fmt.Errorf("no session found for this context")
+// 	}
 
-	return newLattigoEvaluator(ctx, relin, galEls, sess.Params, s.pubkeyBackend)
-}
+// 	return newLattigoEvaluator(ctx, relin, galEls, sess.Params, s.pubkeyBackend)
+// }
 
 // GetDecryptor returns a new decryptor from the context's session.
 // The decryptor is inialized with a secret key of 0.

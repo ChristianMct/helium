@@ -51,7 +51,7 @@ func TestProtocols(t *testing.T) {
 		sessParams := testSess.SessParams
 		nids := utils.NewSet(sessParams.Nodes)
 
-		encryptor := bgv.NewEncryptor(testSess.RlweParams, testSess.SkIdeal)
+		encryptor := rlwe.NewEncryptor(testSess.RlweParams, testSess.SkIdeal)
 
 		ct := encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
 
@@ -62,7 +62,7 @@ func TestProtocols(t *testing.T) {
 			{Type: DEC, Args: map[string]string{"target": "node-0", "smudging": "40"}},
 		}
 
-		zeroKey := rlwe.NewSecretKey(testSess.RlweParams.Parameters)
+		zeroKey := rlwe.NewSecretKey(testSess.RlweParams)
 
 		for _, sig := range sigs {
 			parts, err := GetParticipants(sig, nids, ts.T)
@@ -97,7 +97,7 @@ func TestProtocols(t *testing.T) {
 				}
 				aggOut := runProto(pd, *testSess, input, t)
 
-				out := AllocateOutput(pd.Signature, testSess.RlweParams.Parameters)
+				out := AllocateOutput(pd.Signature, testSess.RlweParams)
 				err = p.Output(input, aggOut, out)
 				require.Nil(t, err)
 				checkOutput(out, pd, *testSess, t)
@@ -180,20 +180,20 @@ func checkOutput(out interface{}, pd Descriptor, testSess session.TestSession, t
 	case CKG:
 		pk, isPk := out.(*rlwe.PublicKey)
 		require.True(t, isPk)
-		require.Less(t, rlwe.NoisePublicKey(pk, sk, params.Parameters), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
+		require.Less(t, rlwe.NoisePublicKey(pk, sk, params), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
 	case RTG:
 		swk, isSwk := out.(*rlwe.GaloisKey)
 		require.True(t, isSwk)
 
-		noise := rlwe.NoiseGaloisKey(swk, sk, params.Parameters)
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params.Parameters, nParties)) + 1
+		noise := rlwe.NoiseGaloisKey(swk, sk, params)
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
 		require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
 	case RKG:
 		rlk, isRlk := out.(*rlwe.RelinearizationKey)
 		require.True(t, isRlk)
 
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params.Parameters, nParties)) + 1
-		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params.Parameters), noiseBound)
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	case DEC:
 		recSk, err := testSess.NodeSessions[helium.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
 		if err != nil {

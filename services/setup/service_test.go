@@ -18,7 +18,7 @@ import (
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
-var TestPN12QP109 = bgv.ParametersLiteral{
+var TestPN12QP109 = bgv.ParametersLiteral{ // TODO: could be rlwe but missing lattigo method to convert to rlwe.ParametersLiteral
 	LogN:             12,
 	Q:                []uint64{0x7ffffffec001, 0x400000008001}, // 47 + 46 bits
 	P:                []uint64{0xa001},                         // 15 bits

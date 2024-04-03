@@ -8,16 +8,14 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/ring"
-	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/he"
 )
 
 // Parse parses a circuit and returns its metadata.
 // The parsing is done by symbolic execution of the circuit.
-func Parse(c Circuit, cd Descriptor, params bgv.Parameters) (*Metadata, error) {
+func Parse(c Circuit, cd Descriptor, params session.FHEParameters) (*Metadata, error) {
 	dummyCtx := newCircuitParserCtx(cd, params)
 	if err := c(dummyCtx); err != nil {
 		return nil, fmt.Errorf("error while parsing circuit: %w", err)
@@ -26,15 +24,15 @@ func Parse(c Circuit, cd Descriptor, params bgv.Parameters) (*Metadata, error) {
 }
 
 type circuitParserContext struct {
-	dummyEvaluator
+	//dummyEvaluator
 	cd     Descriptor
 	md     Metadata
 	SubCtx map[helium.CircuitID]*circuitParserContext
-	params bgv.Parameters
+	params session.FHEParameters
 	l      sync.Mutex
 }
 
-func newCircuitParserCtx(cd Descriptor, params bgv.Parameters) *circuitParserContext {
+func newCircuitParserCtx(cd Descriptor, params session.FHEParameters) *circuitParserContext {
 	cpc := &circuitParserContext{
 		cd: cd,
 		md: Metadata{
@@ -50,7 +48,7 @@ func newCircuitParserCtx(cd Descriptor, params bgv.Parameters) *circuitParserCon
 		SubCtx: make(map[helium.CircuitID]*circuitParserContext, 0),
 		params: params,
 	}
-	cpc.dummyEvaluator.ctx = cpc
+	//cpc.dummyEvaluator.ctx = cpc
 	return cpc
 }
 
@@ -91,11 +89,11 @@ func (e *circuitParserContext) Load(in OperandLabel) *Operand {
 	return &Operand{OperandLabel: in} // TODO: collect ciphertext dependencies
 }
 
-func (e *circuitParserContext) NewOperand(opl OperandLabel) Operand {
+func (e *circuitParserContext) NewOperand(opl OperandLabel) *Operand {
 	e.l.Lock()
 	defer e.l.Unlock()
 	e.md.Ops.Add(opl.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping))
-	return Operand{OperandLabel: opl}
+	return &Operand{OperandLabel: opl}
 }
 
 func (e *circuitParserContext) Set(op Operand) {
@@ -208,105 +206,113 @@ func (e *circuitParserContext) PCKS(in Operand, rec helium.NodeID, params map[st
 	return nil
 }
 
-func (e *circuitParserContext) Parameters() bgv.Parameters {
+func (e *circuitParserContext) Parameters() session.FHEParameters {
 	e.l.Lock()
 	defer e.l.Unlock()
 	return e.params
 }
 
-func (e *circuitParserContext) MulRelin(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
+func (e *circuitParserContext) EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error {
 	e.l.Lock()
 	defer e.l.Unlock()
-	e.md.NeedRlk = true
+	e.md.NeedRlk = needRlk
+	e.md.GaloisKeys.AddAll(utils.NewSet(galKeys))
 	return nil
 }
 
-func (e *circuitParserContext) MulRelinNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
-	e.l.Lock()
-	defer e.l.Unlock()
-	e.md.NeedRlk = true
-	return nil, nil
-}
+// func (e *circuitParserContext) MulRelin(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
+// 	e.l.Lock()
+// 	defer e.l.Unlock()
+// 	e.md.NeedRlk = true
+// 	return nil
+// }
 
-func (e *circuitParserContext) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
-	e.l.Lock()
-	defer e.l.Unlock()
-	e.md.NeedRlk = true
-	return nil
-}
+// func (e *circuitParserContext) MulRelinNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
+// 	e.l.Lock()
+// 	defer e.l.Unlock()
+// 	e.md.NeedRlk = true
+// 	return nil, nil
+// }
 
-func (e *circuitParserContext) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
-	e.l.Lock()
-	defer e.l.Unlock()
-	e.md.GaloisKeys.AddAll(utils.NewSet(e.ctx.params.GaloisElementsForInnerSum(batchSize, n)))
-	return nil
-}
+// func (e *circuitParserContext) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
+// 	e.l.Lock()
+// 	defer e.l.Unlock()
+// 	e.md.NeedRlk = true
+// 	return nil
+// }
 
-func (e *circuitParserContext) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
-	e.l.Lock()
-	defer e.l.Unlock()
-	e.md.GaloisKeys.Add(galEl)
-	return nil
-}
+// func (e *circuitParserContext) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
+// 	e.l.Lock()
+// 	defer e.l.Unlock()
+// 	e.md.GaloisKeys.AddAll(utils.NewSet(e.ctx.params.GaloisElementsForInnerSum(batchSize, n)))
+// 	return nil
+// }
 
-type dummyEvaluator struct{ ctx *circuitParserContext }
+// func (e *circuitParserContext) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
+// 	e.l.Lock()
+// 	defer e.l.Unlock()
+// 	e.md.GaloisKeys.Add(galEl)
+// 	return nil
+// }
 
-func (de *dummyEvaluator) Add(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// type dummyEvaluator struct{ ctx *circuitParserContext }
 
-func (de *dummyEvaluator) Sub(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) Add(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) Mul(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) Sub(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) MulNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
-	return nil, nil
-}
+// func (de *dummyEvaluator) Mul(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) MulRelin(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) MulNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
+// 	return nil, nil
+// }
 
-func (de *dummyEvaluator) MulRelinNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
-	return nil, nil
-}
+// func (de *dummyEvaluator) MulRelin(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) MulRelinNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
+// 	return nil, nil
+// }
 
-func (de *dummyEvaluator) MulThenAdd(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) Rescale(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) MulThenAdd(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) Rescale(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) NewEvaluator() Evaluator {
-	return de
-}
+// func (de *dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) EvalWithKey(_ rlwe.EvaluationKeySet) Evaluator {
-	return de
-}
+// func (de *dummyEvaluator) NewEvaluator() Evaluator {
+// 	return de
+// }
 
-func (de *dummyEvaluator) NewDecompQPBuffer() []ringqp.Poly {
-	return nil
-}
+// func (de *dummyEvaluator) EvalWithKey(_ rlwe.EvaluationKeySet) Evaluator {
+// 	return de
+// }
 
-func (de *dummyEvaluator) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
+// func (de *dummyEvaluator) NewDecompQPBuffer() []ringqp.Poly {
+// 	return nil
+// }
 
-func (de *dummyEvaluator) DecomposeNTT(levelQ, levelP, nbPi int, c2 ring.Poly, c2IsNTT bool, decompQP []ringqp.Poly) {
+// func (de *dummyEvaluator) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
+// 	return nil
+// }
 
-}
+// func (de *dummyEvaluator) DecomposeNTT(levelQ, levelP, nbPi int, c2 ring.Poly, c2IsNTT bool, decompQP []ringqp.Poly) {
+
+// }

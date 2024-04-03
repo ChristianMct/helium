@@ -11,9 +11,9 @@ import (
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/ring"
-	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
+	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 )
 
 // participantRuntime is a runtime for a participant (a non-evaluator node) in a computation.
@@ -40,12 +40,9 @@ type participantRuntime struct {
 
 	// init
 	*protocols.CompleteMap
-	*bgv.Encoder
+	Encoder
 	*rlwe.Encryptor
 	*rlwe.Decryptor
-
-	// eval
-	dummyEvaluator
 }
 
 // Service interface
@@ -142,7 +139,7 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 		panic(fmt.Errorf("could not get inputs from input provider: %w", err)) // TODO return error
 	}
 
-	isValidBGVPlaintextType := func(in interface{}) bool {
+	isValidPlaintextType := func(in interface{}) bool {
 		switch in.(type) {
 		case []uint64, []int64:
 			return true
@@ -154,9 +151,18 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 
 	var inct helium.Ciphertext
 	switch {
-	case isValidBGVPlaintextType(in):
-		inpt := rlwe.NewPlaintext(p.sess.Params, p.sess.Params.MaxLevel())
-		err = p.Encoder.Encode(in, inpt)
+	case isValidPlaintextType(in):
+		var inpt *rlwe.Plaintext
+		switch enc := p.Encoder.(type) { // TODO: lattigo should have a generic Encode interface
+		case *bgv.Encoder:
+			inpt = bgv.NewPlaintext(p.sess.Params.(bgv.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
+			err = enc.Encode(in, inpt)
+		case *ckks.Encoder:
+			inpt = ckks.NewPlaintext(p.sess.Params.(ckks.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
+			err = enc.Encode(in, inpt)
+		default:
+			err = fmt.Errorf("invalid encoder type %T", enc)
+		}
 		if err != nil {
 			panic(err)
 		}
@@ -176,7 +182,7 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 			CiphertextMetadata: helium.CiphertextMetadata{ID: helium.CiphertextID(opl)},
 		}
 	default:
-		panic("invalid input type")
+		panic(fmt.Errorf("invalid input type %T, should be either *rlwe.Plaintext or *rlwe.Ciphertext", in))
 	}
 
 	err = p.trans.PutCiphertext(p.ctx, inct)
@@ -192,9 +198,13 @@ func (p *participantRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
 	return &circuits.Operand{OperandLabel: opl}
 }
 
-func (p *participantRuntime) NewOperand(opl circuits.OperandLabel) circuits.Operand {
+func (p *participantRuntime) NewOperand(opl circuits.OperandLabel) *circuits.Operand {
 	opl = opl.ForCircuit(p.cd.CircuitID).ForMapping(p.cd.NodeMapping)
-	return circuits.Operand{OperandLabel: opl}
+	return &circuits.Operand{OperandLabel: opl}
+}
+
+func (p *participantRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(_ he.Evaluator) error) error {
+	return nil
 }
 
 // DEC runs a DEC protocol over the provided operand within the context.
@@ -229,8 +239,8 @@ func (p *participantRuntime) DEC(in circuits.Operand, rec helium.NodeID, params 
 
 	decg := p.Decryptor.WithKey(skg)
 
-	pt := rlwe.NewPlaintext(p.sess.Params, p.sess.Params.MaxLevel())
-	decg.Decrypt(&ct.Ciphertext, pt) // TODO: bug in lattigo ShallowCopy/WithKey function: params not copied but needed by DecryptNew
+	pt := rlwe.NewPlaintext(p.sess.Params, p.sess.Params.GetRLWEParameters().MaxLevel()) // TODO would be nice to call on Params directly
+	decg.Decrypt(&ct.Ciphertext, pt)                                                     // TODO: bug in lattigo ShallowCopy/WithKey function: params not copied but needed by DecryptNew
 
 	p.or <- circuits.Output{CircuitID: p.cd.CircuitID, Operand: circuits.Operand{OperandLabel: outLabel, Ciphertext: &rlwe.Ciphertext{Element: pt.Element}}}
 
@@ -243,66 +253,8 @@ func (p *participantRuntime) PCKS(in circuits.Operand, rec helium.NodeID, params
 }
 
 // Parameters returns the encryption parameters for the circuit.
-func (p *participantRuntime) Parameters() bgv.Parameters {
+func (p *participantRuntime) Parameters() session.FHEParameters {
 	return p.sess.Params
-}
-
-// dummyEvaluator is an evaluator that does nothing.
-type dummyEvaluator struct{}
-
-func (de *dummyEvaluator) Add(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) Sub(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) Mul(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) MulNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
-	return nil, nil
-}
-
-func (de *dummyEvaluator) MulRelin(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) MulRelinNew(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (opOut *rlwe.Ciphertext, err error) {
-	return nil, nil
-}
-
-func (de *dummyEvaluator) MulThenAdd(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) Relinearize(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) Rescale(op0 *rlwe.Ciphertext, op1 *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) InnerSum(ctIn *rlwe.Ciphertext, batchSize int, n int, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) AutomorphismHoisted(level int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, opOut *rlwe.Ciphertext) (err error) {
-	return nil
-}
-
-func (de *dummyEvaluator) DecomposeNTT(levelQ int, levelP int, nbPi int, c2 ring.Poly, c2IsNTT bool, decompQP []ringqp.Poly) {
-}
-
-func (de *dummyEvaluator) NewDecompQPBuffer() []ringqp.Poly {
-	return nil
-}
-
-func (de *dummyEvaluator) NewEvaluator() circuits.Evaluator {
-	return de
 }
 
 func isRLWEPLaintext(in interface{}) bool {

@@ -16,7 +16,8 @@ import (
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/centralized"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/he"
+	"github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
@@ -26,15 +27,15 @@ var (
 		ID:    "example-session",                                       // the id of the session must be unique
 		Nodes: []helium.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
 		RLWEParams: bgv.ParametersLiteral{ // the FHE parameters
-			PlaintextModulus: 79873,
 			LogN:             14,
 			LogQ:             []int{56, 55, 55, 54, 54, 54},
 			LogP:             []int{55, 55},
+			PlaintextModulus: 65537,
 		},
-		Threshold:  3,                                                                                             // the number of honest nodes assumed by the system.
-		ShamirPks:  map[helium.NodeID]drlwe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
-		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                                 // the CRS
-		Secrets:    nil,                                                                                           // normally read from a file, simulated here for simplicity (see loadSecrets)
+		Threshold:  3,                                                                                           // the number of honest nodes assumed by the system.
+		ShamirPks:  map[helium.NodeID]mhe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
+		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                               // the CRS
+		Secrets:    nil,                                                                                         // normally read from a file, simulated here for simplicity (see loadSecrets)
 	}
 
 	// the configuration of peer nodes
@@ -90,13 +91,25 @@ var (
 
 				// computes the product between all inputs
 				opRes := rt.NewOperand("//eval/prod")
-				ctmul01, _ := rt.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
-				ctmul23, _ := rt.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext)
-				opRes.Ciphertext, _ = rt.MulRelinNew(ctmul01, ctmul23)
+				err := rt.EvalLocal(true, nil, func(e he.Evaluator) error {
+					var ctmul01, ctmul23 *rlwe.Ciphertext
+					var err error
+					if ctmul01, err = e.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext); err != nil {
+						return err
+					}
+					if ctmul23, _ = e.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext); err != nil {
+						return err
+					}
+					opRes.Ciphertext, err = e.MulRelinNew(ctmul01, ctmul23)
+					return err
+				})
+				if err != nil {
+					return err
+				}
 
 				// decrypts the result with result receiver id "rec". The node id can be a place-holder and the actual id is provided
 				// when querying for a circuit's execution.
-				return rt.DEC(opRes, "rec", map[string]string{
+				return rt.DEC(*opRes, "rec", map[string]string{
 					"smudging": "40.0", // use 40 bits of smudging.
 				})
 			},
@@ -147,19 +160,26 @@ func main() {
 	config.ID = nodeID
 
 	// creates an InputProvider function from the node's private input
-	ip := func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
-		in := make([]uint64, sess.Params.MaxSlots())
-		for i := range in {
-			in[i] = input % sess.RLWEParams.PlaintextModulus
+	var ip compute.InputProvider
+	if nodeID == helperID {
+		ip = compute.NoInput // the cloud has no input, the compute.NoInput InputProvider is used
+	} else {
+		ip = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
+			bgvParams := sess.Params.(bgv.Parameters)
+			in := make([]uint64, bgvParams.MaxSlots())
+			// the session nodes create their input by replicating the user-provided input for each slot
+			for i := range in {
+				in[i] = input % bgvParams.PlaintextModulus()
+			}
+			return in, nil
 		}
-		return in, nil
 	}
 
 	// runs the app on a new node
 	ctx := helium.NewBackgroundContext(config.SessionParameters[0].ID)
 	n, cdescs, outputs, err := node.RunNew(ctx, config, nodelist, app, ip)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("could not run node: %s", err)
 	}
 
 	// the helper node starts the computation by sending a circuit description to the cdescs channel
@@ -183,11 +203,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("%s | [main] error getting session parameters: %v\n", nodeID, err)
 	}
-
-	encoder, err := n.GetEncoder(ctx)
-	if err != nil {
-		log.Fatalf("%s | [main] error getting session encoder: %v\n", nodeID, err)
-	}
+	encoder := bgv.NewEncoder(params.(bgv.Parameters))
 
 	// outputs are received on the outputs channel. The output is a Lattigo rlwe.Plaintext.
 	out, hasOut := <-outputs
@@ -196,7 +212,8 @@ func main() {
 
 	if hasOut {
 		pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
-		res := make([]uint64, params.MaxSlots())
+		pt.IsNTT = true
+		res := make([]uint64, params.(bgv.Parameters).MaxSlots())
 		encoder.Decode(pt, res)
 		fmt.Printf("%v\n", res)
 	}

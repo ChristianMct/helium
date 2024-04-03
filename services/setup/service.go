@@ -221,7 +221,7 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) 
 		return nil, fmt.Errorf("session not found in context")
 	}
 
-	out := protocols.AllocateOutput(sig, sess.Params.Parameters) // TODO cache ?
+	out := protocols.AllocateOutput(sig, *sess.Params.GetRLWEParameters()) // TODO cache ?
 	err = s.execuctor.GetOutput(ctx, *aggOut, out)
 	if err != nil {
 		return nil, fmt.Errorf("error while getting output: %w", err)

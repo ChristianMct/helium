@@ -7,13 +7,12 @@ import (
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
 
 type TestSession struct {
 	SessParams    Parameters
-	RlweParams    bgv.Parameters
+	RlweParams    rlwe.Parameters
 	SkIdeal       *rlwe.SecretKey
 	NodeSessions  map[helium.NodeID]*Session
 	HelperSession *Session
@@ -22,12 +21,12 @@ type TestSession struct {
 	*helium.CachedKeyBackend
 
 	// lattigo helpers
-	Encoder   *bgv.Encoder
+	//Encoder   *bgv.Encoder
 	Encryptor *rlwe.Encryptor
 	Decrpytor *rlwe.Decryptor
 }
 
-func NewTestSession(N, T int, rlweparams bgv.ParametersLiteral, helperID helium.NodeID) (*TestSession, error) {
+func NewTestSession(N, T int, rlweparams RLWEParamerersLiteralProvider, helperID helium.NodeID) (*TestSession, error) {
 	nids := make([]helium.NodeID, N)
 	nspk := make(map[helium.NodeID]drlwe.ShamirPublicPoint)
 	for i := range nids {
@@ -54,7 +53,7 @@ func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSessi
 	ts.SessParams = sp
 
 	var err error
-	ts.RlweParams, err = bgv.NewParametersFromLiteral(sp.RLWEParams)
+	ts.RlweParams, err = rlwe.NewParametersFromLiteral(sp.RLWEParams.GetRLWEParametersLiteral())
 	if err != nil {
 		panic(err)
 	}
@@ -89,11 +88,10 @@ func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSessi
 		return nil, err
 	}
 
-	ts.CachedKeyBackend = helium.NewCachedPublicKeyBackend(helium.NewTestKeyBackend(ts.RlweParams.Parameters, ts.SkIdeal))
+	ts.CachedKeyBackend = helium.NewCachedPublicKeyBackend(helium.NewTestKeyBackend(ts.RlweParams, ts.SkIdeal))
 
-	ts.Encoder = bgv.NewEncoder(ts.RlweParams)
-	ts.Encryptor = bgv.NewEncryptor(ts.RlweParams, ts.SkIdeal)
-	ts.Decrpytor = bgv.NewDecryptor(ts.RlweParams, ts.SkIdeal)
+	ts.Encryptor = rlwe.NewEncryptor(ts.RlweParams, ts.SkIdeal)
+	ts.Decrpytor = rlwe.NewDecryptor(ts.RlweParams, ts.SkIdeal)
 	return ts, nil
 }
 
