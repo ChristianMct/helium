@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/transport/pb"
 	"github.com/ChristianMct/helium/utils"
 )
@@ -29,21 +29,21 @@ func getAPIEvent(event coordinator.Event) *pb.Event {
 func getEventFromAPI(apiEvent *pb.Event) coordinator.Event {
 	event := coordinator.Event{}
 	if apiEvent.CircuitEvent != nil {
-		event.CircuitEvent = &circuits.Event{
-			EventType:  circuits.EventType(apiEvent.CircuitEvent.Type),
+		event.CircuitEvent = &circuit.Event{
+			EventType:  circuit.EventType(apiEvent.CircuitEvent.Type),
 			Descriptor: *getCircuitDescFromAPI(apiEvent.CircuitEvent.Descriptor_),
 		}
 	}
 	if apiEvent.ProtocolEvent != nil {
-		event.ProtocolEvent = &protocols.Event{
-			EventType:  protocols.EventType(apiEvent.ProtocolEvent.Type),
+		event.ProtocolEvent = &protocol.Event{
+			EventType:  protocol.EventType(apiEvent.ProtocolEvent.Type),
 			Descriptor: *getProtocolDescFromAPI(apiEvent.ProtocolEvent.Descriptor_),
 		}
 	}
 	return event
 }
 
-func getAPIProtocolDesc(pd *protocols.Descriptor) *pb.ProtocolDescriptor {
+func getAPIProtocolDesc(pd *protocol.Descriptor) *pb.ProtocolDescriptor {
 	apiDesc := &pb.ProtocolDescriptor{
 		ProtocolType: pb.ProtocolType(pd.Signature.Type),
 		Args:         make(map[string]string, len(pd.Signature.Args)),
@@ -59,9 +59,9 @@ func getAPIProtocolDesc(pd *protocols.Descriptor) *pb.ProtocolDescriptor {
 	return apiDesc
 }
 
-func getProtocolDescFromAPI(apiPD *pb.ProtocolDescriptor) *protocols.Descriptor {
-	desc := &protocols.Descriptor{
-		Signature:    protocols.Signature{Type: protocols.Type(apiPD.ProtocolType), Args: make(map[string]string)},
+func getProtocolDescFromAPI(apiPD *pb.ProtocolDescriptor) *protocol.Descriptor {
+	desc := &protocol.Descriptor{
+		Signature:    protocol.Signature{Type: protocol.Type(apiPD.ProtocolType), Args: make(map[string]string)},
 		Aggregator:   helium.NodeID(apiPD.Aggregator.NodeId),
 		Participants: make([]helium.NodeID, 0, len(apiPD.Participants)),
 	}
@@ -74,7 +74,7 @@ func getProtocolDescFromAPI(apiPD *pb.ProtocolDescriptor) *protocols.Descriptor 
 	return desc
 }
 
-func getAPICircuitDesc(cd circuits.Descriptor) *pb.CircuitDescriptor {
+func getAPICircuitDesc(cd circuit.Descriptor) *pb.CircuitDescriptor {
 	apiDesc := &pb.CircuitDescriptor{
 		CircuitSignature: &pb.CircuitSignature{
 			Name: string(cd.Name),
@@ -96,10 +96,10 @@ func getAPICircuitDesc(cd circuits.Descriptor) *pb.CircuitDescriptor {
 	return apiDesc
 }
 
-func getCircuitDescFromAPI(apiCd *pb.CircuitDescriptor) *circuits.Descriptor {
-	cd := &circuits.Descriptor{
-		Signature: circuits.Signature{
-			Name: circuits.Name(apiCd.CircuitSignature.Name),
+func getCircuitDescFromAPI(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
+	cd := &circuit.Descriptor{
+		Signature: circuit.Signature{
+			Name: circuit.Name(apiCd.CircuitSignature.Name),
 			Args: make(map[string]string, len(apiCd.CircuitSignature.Args)),
 		},
 		CircuitID:   helium.CircuitID(apiCd.CircuitID.CircuitID),
@@ -118,7 +118,7 @@ func getCircuitDescFromAPI(apiCd *pb.CircuitDescriptor) *circuits.Descriptor {
 	return cd
 }
 
-func getAPIShare(s *protocols.Share) (*pb.Share, error) {
+func getAPIShare(s *protocol.Share) (*pb.Share, error) {
 	outShareBytes, err := s.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -137,16 +137,16 @@ func getAPIShare(s *protocols.Share) (*pb.Share, error) {
 	return apiShare, nil
 }
 
-func getShareFromAPI(s *pb.Share) (protocols.Share, error) {
+func getShareFromAPI(s *pb.Share) (protocol.Share, error) {
 	desc := s.GetMetadata()
-	pID := protocols.ID(desc.GetProtocolID().GetProtocolID())
-	pType := protocols.Type(desc.ProtocolType)
+	pID := protocol.ID(desc.GetProtocolID().GetProtocolID())
+	pType := protocol.Type(desc.ProtocolType)
 	share := pType.Share()
 	if share == nil {
-		return protocols.Share{}, fmt.Errorf("unknown share type: %s", pType)
+		return protocol.Share{}, fmt.Errorf("unknown share type: %s", pType)
 	}
-	ps := protocols.Share{
-		ShareMetadata: protocols.ShareMetadata{
+	ps := protocol.Share{
+		ShareMetadata: protocol.ShareMetadata{
 			ProtocolID:   pID,
 			ProtocolType: pType,
 			From:         make(utils.Set[helium.NodeID]),
@@ -159,7 +159,7 @@ func getShareFromAPI(s *pb.Share) (protocols.Share, error) {
 
 	err := ps.MHEShare.UnmarshalBinary(s.GetShare())
 	if err != nil {
-		return protocols.Share{}, err
+		return protocol.Share{}, err
 	}
 	return ps, nil
 }

@@ -8,8 +8,8 @@ import (
 	"golang.org/x/exp/maps"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
@@ -32,16 +32,16 @@ type participantRuntime struct {
 
 	// inst
 	ctx           context.Context // TODO: check if storing this context this way is a problem
-	cd            circuits.Descriptor
+	cd            circuit.Descriptor
 	sess          *session.Session
 	inputProvider InputProvider
 	trans         Transport
 	or            OutputReceiver
 	fheProvider   FHEProvider
-	incpd         chan protocols.Descriptor // buffer for pd incoming before Init
+	incpd         chan protocol.Descriptor // buffer for pd incoming before Init
 
 	// init
-	*protocols.CompleteMap
+	*protocol.CompleteMap
 	Encoder
 	*rlwe.Encryptor
 	*rlwe.Decryptor
@@ -49,7 +49,7 @@ type participantRuntime struct {
 
 // Service interface
 
-func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata) (err error) {
+func (p *participantRuntime) Init(ctx context.Context, md circuit.Metadata) (err error) {
 
 	p.Encoder, err = p.fheProvider.GetEncoder(ctx)
 	if err != nil {
@@ -66,11 +66,11 @@ func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata) (er
 		return err
 	}
 
-	p.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
+	p.CompleteMap = protocol.NewCompletedProt(maps.Values(md.KeySwitchOps))
 	return
 }
 
-func (p *participantRuntime) Eval(ctx context.Context, c circuits.Circuit) error {
+func (p *participantRuntime) Eval(ctx context.Context, c circuit.Circuit) error {
 
 	go func() {
 		for pd := range p.incpd {
@@ -95,22 +95,22 @@ func (p *participantRuntime) Eval(ctx context.Context, c circuits.Circuit) error
 	return nil
 }
 
-func (p *participantRuntime) IncomingOperand(_ circuits.Operand) error {
+func (p *participantRuntime) IncomingOperand(_ circuit.Operand) error {
 	panic("participant should not receive incoming operands")
 }
 
-func (p *participantRuntime) GetOperand(ctx context.Context, opl circuits.OperandLabel) (*circuits.Operand, bool) {
+func (p *participantRuntime) GetOperand(ctx context.Context, opl circuit.OperandLabel) (*circuit.Operand, bool) {
 	pkgct, err := p.trans.GetCiphertext(ctx, helium.CiphertextID(opl))
 	if err != nil {
 		return nil, false
 	}
 
-	return &circuits.Operand{OperandLabel: opl, Ciphertext: &pkgct.Ciphertext}, true
+	return &circuit.Operand{OperandLabel: opl, Ciphertext: &pkgct.Ciphertext}, true
 }
 
-func (p *participantRuntime) GetFutureOperand(ctx context.Context, opl circuits.OperandLabel) (*circuits.FutureOperand, bool) {
+func (p *participantRuntime) GetFutureOperand(ctx context.Context, opl circuit.OperandLabel) (*circuit.FutureOperand, bool) {
 
-	fop := circuits.NewFutureOperand(opl)
+	fop := circuit.NewFutureOperand(opl)
 
 	go func() {
 		op, _ := p.GetOperand(ctx, opl)
@@ -120,7 +120,7 @@ func (p *participantRuntime) GetFutureOperand(ctx context.Context, opl circuits.
 	return fop, true
 }
 
-func (p *participantRuntime) CompletedProtocol(pd protocols.Descriptor) error {
+func (p *participantRuntime) CompletedProtocol(pd protocol.Descriptor) error {
 	p.incpd <- pd
 	return nil
 }
@@ -152,12 +152,12 @@ func isValidCKKSPlaintextType(in interface{}) bool {
 }
 
 // Input reads an input operand with the given label from the context.
-func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
+func (p *participantRuntime) Input(opl circuit.OperandLabel) *circuit.FutureOperand {
 
 	opl = opl.ForCircuit(p.cd.CircuitID).ForMapping(p.cd.NodeMapping)
 
 	if opl.NodeID() != p.sess.NodeID {
-		return circuits.NewDummyFutureOperand(opl)
+		return circuit.NewDummyFutureOperand(opl)
 	}
 
 	in, err := p.inputProvider(p.ctx, p.cd.CircuitID, opl, *p.sess)
@@ -204,17 +204,17 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 		panic(err)
 	}
 
-	return circuits.NewDummyFutureOperand(opl)
+	return circuit.NewDummyFutureOperand(opl)
 }
 
 // Load reads an existing ciphertext in the session
-func (p *participantRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
-	return &circuits.Operand{OperandLabel: opl}
+func (p *participantRuntime) Load(opl circuit.OperandLabel) *circuit.Operand {
+	return &circuit.Operand{OperandLabel: opl}
 }
 
-func (p *participantRuntime) NewOperand(opl circuits.OperandLabel) *circuits.Operand {
+func (p *participantRuntime) NewOperand(opl circuit.OperandLabel) *circuit.Operand {
 	opl = opl.ForCircuit(p.cd.CircuitID).ForMapping(p.cd.NodeMapping)
-	return &circuits.Operand{OperandLabel: opl}
+	return &circuit.Operand{OperandLabel: opl}
 }
 
 func (p *participantRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(_ he.Evaluator) error) error {
@@ -222,7 +222,7 @@ func (p *participantRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(_ 
 }
 
 // DEC runs a DEC protocol over the provided operand within the context.
-func (p *participantRuntime) DEC(in circuits.Operand, rec helium.NodeID, params map[string]string) error {
+func (p *participantRuntime) DEC(in circuit.Operand, rec helium.NodeID, params map[string]string) error {
 
 	rec = p.cd.NodeMapping[string(rec)]
 	if rec != p.sess.NodeID {
@@ -232,7 +232,7 @@ func (p *participantRuntime) DEC(in circuits.Operand, rec helium.NodeID, params 
 	pparams := maps.Clone(params)
 	pparams["target"] = string(rec)
 	pparams["op"] = string(in.OperandLabel)
-	sig := protocols.Signature{Type: protocols.DEC, Args: pparams}
+	sig := protocol.Signature{Type: protocol.DEC, Args: pparams}
 
 	pd, err := p.AwaitCompletedDescriptorFor(sig)
 	if err != nil {
@@ -256,13 +256,13 @@ func (p *participantRuntime) DEC(in circuits.Operand, rec helium.NodeID, params 
 	pt := rlwe.NewPlaintext(p.sess.Params, p.sess.Params.GetRLWEParameters().MaxLevel()) // TODO would be nice to call on Params directly
 	decg.Decrypt(&ct.Ciphertext, pt)                                                     // TODO: bug in lattigo ShallowCopy/WithKey function: params not copied but needed by DecryptNew
 
-	p.or <- circuits.Output{CircuitID: p.cd.CircuitID, Operand: circuits.Operand{OperandLabel: outLabel, Ciphertext: &rlwe.Ciphertext{Element: pt.Element}}}
+	p.or <- circuit.Output{CircuitID: p.cd.CircuitID, Operand: circuit.Operand{OperandLabel: outLabel, Ciphertext: &rlwe.Ciphertext{Element: pt.Element}}}
 
 	return nil
 }
 
 // PCKS runs a PCKS protocol over the provided operand within the context.
-func (p *participantRuntime) PCKS(in circuits.Operand, rec helium.NodeID, params map[string]string) error {
+func (p *participantRuntime) PCKS(in circuit.Operand, rec helium.NodeID, params map[string]string) error {
 	panic("not implemented") // TODO: Implement
 }
 

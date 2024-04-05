@@ -7,10 +7,10 @@ import (
 	"log"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
@@ -46,8 +46,8 @@ var (
 		SessionParameters: []session.Parameters{sessionParams},
 
 		// in this example, peer node can only participate in one protocol and one circuit at a time
-		SetupConfig:   setup.ServiceConfig{Protocols: protocols.ExecutorConfig{MaxParticipation: 1}},
-		ComputeConfig: compute.ServiceConfig{MaxCircuitEvaluation: 1, Protocols: protocols.ExecutorConfig{MaxParticipation: 1}},
+		SetupConfig:   setup.ServiceConfig{Protocols: protocol.ExecutorConfig{MaxParticipation: 1}},
+		ComputeConfig: compute.ServiceConfig{MaxCircuitEvaluation: 1, Protocols: protocol.ExecutorConfig{MaxParticipation: 1}},
 
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},        // use a volatile in-memory store for state
 		TLSConfig:         centralized.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
@@ -61,8 +61,8 @@ var (
 		SessionParameters: []session.Parameters{sessionParams},
 
 		// allows 16 parallel protocol aggregation and each node is not chosen as participant for more than one protocol at the time.
-		SetupConfig:       setup.ServiceConfig{Protocols: protocols.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
-		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16, Protocols: protocols.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
+		SetupConfig:       setup.ServiceConfig{Protocols: protocol.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
+		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16, Protocols: protocol.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
 		TLSConfig:         centralized.TLSConfig{InsecureChannels: true},
 	}
@@ -81,9 +81,9 @@ var (
 			Rlk: true,       // the circuit requires the relinearization key (for homomorphic multiplication)
 			Gks: []uint64{}, // the circuit does not require any galois keys (for homomorphic rotation)
 		},
-		Circuits: map[circuits.Name]circuits.Circuit{
+		Circuits: map[circuit.Name]circuit.Circuit{
 			// defines a circuit named "mul-4-dec" that multiplies 4 inputs and decrypts the result
-			"mul-4-dec": func(rt circuits.Runtime) error {
+			"mul-4-dec": func(rt circuit.Runtime) error {
 
 				// reads the inputs from the parties. The node ids can be place-holders and the mapping actual ids are provided
 				// when querying for a circuit's execution.
@@ -163,7 +163,7 @@ func main() {
 	if nodeID == helperID {
 		ip = compute.NoInput // the cloud has no input, the compute.NoInput InputProvider is used
 	} else {
-		ip = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
+		ip = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, sess session.Session) (any, error) {
 			bgvParams := sess.Params.(bgv.Parameters)
 			in := make([]uint64, bgvParams.MaxSlots())
 			// the session nodes create their input by replicating the user-provided input for each slot
@@ -183,9 +183,9 @@ func main() {
 
 	// the helper node starts the computation by sending a circuit description to the cdescs channel
 	if nodeID == helperID {
-		cdescs <- circuits.Descriptor{
-			Signature: circuits.Signature{Name: circuits.Name("mul-4-dec")}, // the name of the circuit to be evaluated
-			CircuitID: "mul-4-dec-0",                                        // a unique, user-defined id for the circuit
+		cdescs <- circuit.Descriptor{
+			Signature: circuit.Signature{Name: circuit.Name("mul-4-dec")}, // the name of the circuit to be evaluated
+			CircuitID: "mul-4-dec-0",                                      // a unique, user-defined id for the circuit
 			NodeMapping: map[string]helium.NodeID{ // the mapping from node ids in the circuit to actual node ids
 				"p0":   "node-1",
 				"p1":   "node-2",

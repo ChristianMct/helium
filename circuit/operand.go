@@ -1,4 +1,4 @@
-package circuits
+package circuit
 
 import (
 	"fmt"

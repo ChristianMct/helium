@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
@@ -41,15 +41,15 @@ var testSettings = []testSetting{
 type testnode struct {
 	*Service
 	*session.Session
-	protocols.Coordinator
+	protocol.Coordinator
 }
 
 type testNodeTrans struct {
-	protocols.Transport
+	protocol.Transport
 	helperSrv *Service
 }
 
-func (tt *testNodeTrans) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+func (tt *testNodeTrans) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
 	return tt.helperSrv.GetAggregationOutput(ctx, pd)
 }
 
@@ -75,15 +75,15 @@ func TestCloudAssistedSetup(t *testing.T) {
 
 				nids := utils.NewSet(sessParams.Nodes)
 
-				coord := protocols.NewTestCoordinator()
-				protoTrans := protocols.NewTestTransport()
+				coord := protocol.NewTestCoordinator()
+				protoTrans := protocol.NewTestTransport()
 
 				all := make(map[helium.NodeID]*testnode, ts.N+1)
 				clou := new(testnode)
 				all["helper"] = clou
 
 				conf := ServiceConfig{
-					Protocols: protocols.ExecutorConfig{
+					Protocols: protocol.ExecutorConfig{
 						SigQueueSize:     300,
 						MaxProtoPerNode:  1,
 						MaxAggregation:   1,

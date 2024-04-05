@@ -1,6 +1,6 @@
-// Package protocols implements the MHE protocol execution.
+// Package protocol implements the MHE protocol execution.
 // It uses Lattigo as the underlying MHE library.
-package protocols
+package protocol
 
 import (
 	"context"

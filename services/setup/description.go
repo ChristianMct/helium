@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -27,27 +27,27 @@ type Description struct {
 }
 
 // SignatureList provides utility functions for a list of signatures.
-type SignatureList []protocols.Signature
+type SignatureList []protocol.Signature
 
 // DescriptionToSignatureList converts a Description to a list of protocol signatures to be executed.
 func DescriptionToSignatureList(sd Description) SignatureList {
 	sl := make(SignatureList, 0, 3+len(sd.Gks))
 	if sd.Cpk {
-		sign := protocols.Signature{Type: protocols.CKG}
+		sign := protocol.Signature{Type: protocol.CKG}
 		sl = append(sl, sign)
 	}
 	if sd.Rlk {
-		sl = append(sl, protocols.Signature{Type: protocols.RKG})
+		sl = append(sl, protocol.Signature{Type: protocol.RKG})
 	}
 	for _, gk := range sd.Gks {
-		sign := protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(gk, 10)}}
+		sign := protocol.Signature{Type: protocol.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(gk, 10)}}
 		sl = append(sl, sign)
 	}
 	return sl
 }
 
 // Contains checks if a list of signatures contains a given signature.
-func (sl SignatureList) Contains(other protocols.Signature) bool {
+func (sl SignatureList) Contains(other protocol.Signature) bool {
 	for _, sig := range sl {
 		if sig.Equals(other) {
 			return true

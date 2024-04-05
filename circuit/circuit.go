@@ -1,12 +1,12 @@
-// Package circuits provides the types and interfaces for defining, parsing and executing circuits.
-package circuits
+// Package circuit provides the types and interfaces for defining, parsing and executing circuits.
+package circuit
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -97,7 +97,7 @@ type Metadata struct {
 	Descriptor
 	InputSet, Ops, OutputSet utils.Set[OperandLabel]
 	InputsFor, OutputsFor    map[helium.NodeID]utils.Set[OperandLabel]
-	KeySwitchOps             map[string]protocols.Signature
+	KeySwitchOps             map[string]protocol.Signature
 	NeedRlk                  bool
 	GaloisKeys               utils.Set[uint64]
 }

@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/pkg/errors"
@@ -22,7 +22,7 @@ import (
 )
 
 type TestCircuitSig struct {
-	circuits.Signature
+	circuit.Signature
 	ExpResult interface{}
 }
 
@@ -49,12 +49,12 @@ type testnode struct {
 	InputProvider
 	*session.Session
 
-	OutputReceiver chan circuits.Output
-	Outputs        map[helium.CircuitID]circuits.Output
+	OutputReceiver chan circuit.Output
+	Outputs        map[helium.CircuitID]circuit.Output
 }
 
 type testNodeTrans struct {
-	protocols.Transport
+	protocol.Transport
 	helperSrv *Service
 }
 
@@ -76,8 +76,8 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 	}
 
 	var testCircuitSigs = []TestCircuitSig{
-		{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: uint64(3)},
-		{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: uint64(2)},
+		{Signature: circuit.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: uint64(3)},
+		{Signature: circuit.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: uint64(2)},
 	}
 
 	nodeIDtoTestInput := func(nid string) []uint64 {
@@ -113,7 +113,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			nids := utils.NewSet(sessParams.Nodes)
 
 			coord := coordinator.NewTestCoordinator()
-			protoTrans := protocols.NewTestTransport()
+			protoTrans := protocol.NewTestTransport()
 
 			all := make(map[helium.NodeID]*testnode, ts.N+1)
 			clou := new(testnode)
@@ -122,7 +122,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			conf := ServiceConfig{
 				CircQueueSize:        300,
 				MaxCircuitEvaluation: 5,
-				Protocols: protocols.ExecutorConfig{
+				Protocols: protocol.ExecutorConfig{
 					SigQueueSize:     300,
 					MaxProtoPerNode:  1,
 					MaxAggregation:   1,
@@ -136,8 +136,8 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			clou.OutputReceiver = make(chan circuits.Output)
-			clou.Outputs = make(map[helium.CircuitID]circuits.Output)
+			clou.OutputReceiver = make(chan circuit.Output)
+			clou.Outputs = make(map[helium.CircuitID]circuit.Output)
 
 			clients := make(map[helium.NodeID]*testnode, ts.N)
 			for nid := range nids {
@@ -152,18 +152,18 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				cli.Coordinator = coord.NewPeerCoordinator(nid)
 
 				require.Nil(t, err)
-				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
+				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
 					return nodeIDtoTestInput(string(nid)), nil
 				}
-				cli.OutputReceiver = make(chan circuits.Output)
-				cli.Outputs = make(map[helium.CircuitID]circuits.Output)
+				cli.OutputReceiver = make(chan circuit.Output)
+				cli.Outputs = make(map[helium.CircuitID]circuit.Output)
 				clou.Executor.Register(nid)
 				clients[nid] = cli
 				all[nid] = cli
 			}
 
 			for _, n := range all {
-				err = n.RegisterCircuits(circuits.TestCircuits)
+				err = n.RegisterCircuits(circuit.TestCircuits)
 				require.Nil(t, err)
 			}
 
@@ -185,12 +185,12 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				})
 			}
 
-			cds := make([]circuits.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
+			cds := make([]circuit.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
 			expResult := make(map[helium.CircuitID]uint64)
 			for _, tc := range testCircuitSigs {
 				for r := 0; r < ts.Rep; r++ {
 					cid := helium.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
-					cd := circuits.Descriptor{
+					cd := circuit.Descriptor{
 						Signature:   tc.Signature,
 						CircuitID:   cid,
 						NodeMapping: testNodeMapping,
@@ -203,7 +203,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			}
 
 			for _, cd := range cds {
-				coord.LogEvent(coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}})
+				coord.LogEvent(coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}})
 			}
 			coord.Close()
 
@@ -247,8 +247,8 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 	}
 
 	var testCircuitSigs = []TestCircuitSig{
-		{Signature: circuits.Signature{Name: "ckks-add-2-dec", Args: nil}, ExpResult: 1.0},
-		{Signature: circuits.Signature{Name: "ckks-mul-2-dec", Args: nil}, ExpResult: 0.2222222222222222},
+		{Signature: circuit.Signature{Name: "ckks-add-2-dec", Args: nil}, ExpResult: 1.0},
+		{Signature: circuit.Signature{Name: "ckks-mul-2-dec", Args: nil}, ExpResult: 0.2222222222222222},
 	}
 
 	nodeIDtoTestInput := func(nid string) []float64 {
@@ -284,7 +284,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			nids := utils.NewSet(sessParams.Nodes)
 
 			coord := coordinator.NewTestCoordinator()
-			protoTrans := protocols.NewTestTransport()
+			protoTrans := protocol.NewTestTransport()
 
 			all := make(map[helium.NodeID]*testnode, ts.N+1)
 			clou := new(testnode)
@@ -293,7 +293,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			conf := ServiceConfig{
 				CircQueueSize:        300,
 				MaxCircuitEvaluation: 5,
-				Protocols: protocols.ExecutorConfig{
+				Protocols: protocol.ExecutorConfig{
 					SigQueueSize:     300,
 					MaxProtoPerNode:  1,
 					MaxAggregation:   1,
@@ -307,8 +307,8 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			clou.OutputReceiver = make(chan circuits.Output)
-			clou.Outputs = make(map[helium.CircuitID]circuits.Output)
+			clou.OutputReceiver = make(chan circuit.Output)
+			clou.Outputs = make(map[helium.CircuitID]circuit.Output)
 
 			clients := make(map[helium.NodeID]*testnode, ts.N)
 			for nid := range nids {
@@ -323,18 +323,18 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				cli.Coordinator = coord.NewPeerCoordinator(nid)
 
 				require.Nil(t, err)
-				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
+				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
 					return nodeIDtoTestInput(string(nid)), nil
 				}
-				cli.OutputReceiver = make(chan circuits.Output)
-				cli.Outputs = make(map[helium.CircuitID]circuits.Output)
+				cli.OutputReceiver = make(chan circuit.Output)
+				cli.Outputs = make(map[helium.CircuitID]circuit.Output)
 				clou.Executor.Register(nid)
 				clients[nid] = cli
 				all[nid] = cli
 			}
 
 			for _, n := range all {
-				err = n.RegisterCircuits(circuits.TestCircuits)
+				err = n.RegisterCircuits(circuit.TestCircuits)
 				require.Nil(t, err)
 			}
 
@@ -356,12 +356,12 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				})
 			}
 
-			cds := make([]circuits.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
+			cds := make([]circuit.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
 			expResult := make(map[helium.CircuitID]float64)
 			for _, tc := range testCircuitSigs {
 				for r := 0; r < ts.Rep; r++ {
 					cid := helium.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
-					cd := circuits.Descriptor{
+					cd := circuit.Descriptor{
 						Signature:   tc.Signature,
 						CircuitID:   cid,
 						NodeMapping: testNodeMapping,
@@ -374,7 +374,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			}
 
 			for _, cd := range cds {
-				coord.LogEvent(coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}})
+				coord.LogEvent(coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}})
 			}
 			coord.Close()
 

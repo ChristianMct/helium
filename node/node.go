@@ -15,10 +15,10 @@ import (
 	"slices"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
@@ -48,7 +48,7 @@ type Node struct {
 	// transport
 	srv              *centralized.HeliumServer
 	cli              *centralized.HeliumClient
-	outgoingShares   chan protocols.Share
+	outgoingShares   chan protocol.Share
 	setupTransport   *protocolTransport
 	computeTransport *computeTransport
 
@@ -99,15 +99,15 @@ func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 		node.cli = centralized.NewHeliumClient(node.id, node.helperID, node.nodeList.AddressOf(node.helperID))
 	}
 
-	node.outgoingShares = make(chan protocols.Share)
+	node.outgoingShares = make(chan protocol.Share)
 	node.setupTransport = &protocolTransport{
 		outshares:            node.outgoingShares,
-		inshares:             make(chan protocols.Share),
+		inshares:             make(chan protocol.Share),
 		getAggregationOutput: node.GetAggregationOutput}
 	node.computeTransport = &computeTransport{
 		protocolTransport: protocolTransport{
 			outshares:            node.outgoingShares,
-			inshares:             make(chan protocols.Share),
+			inshares:             make(chan protocol.Share),
 			getAggregationOutput: node.GetAggregationOutput},
 		putCiphertext: node.PutCiphertext,
 		getCiphertext: node.GetCiphertext}
@@ -132,7 +132,7 @@ func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 }
 
 // RunNew creates a new Helium node from the provided config and node list, and runs the node with the provided app under the given context.
-func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app App, ip compute.InputProvider) (node *Node, cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
+func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app App, ip compute.InputProvider) (node *Node, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
 	node, err = New(config, nodeList)
 	if err != nil {
 		return nil, nil, nil, err
@@ -179,7 +179,7 @@ func (node *Node) Connect(ctx context.Context) error {
 //   - the method runs the setup and compute phases sequentially.
 //   - only the helper node can issue circuit descriptors.
 //   - loading and verification of the state from persistent storage is not implemented.
-func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
+func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
 
 	// recovers the session
 	sess, exists := node.GetSessionFromContext(ctx)
@@ -201,13 +201,13 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 
 	sigList := setup.DescriptionToSignatureList(*app.SetupDescription)
 
-	cds := make(chan circuits.Descriptor)
-	or := make(chan circuits.Output)
+	cds := make(chan circuit.Descriptor)
+	or := make(chan circuit.Output)
 
 	// runs the setup phase
 	if node.IsHelperNode() {
 
-		setupCoord := &protocolCoordinator{make(chan protocols.Event), make(chan protocols.Event)}
+		setupCoord := &protocolCoordinator{make(chan protocol.Event), make(chan protocol.Event)}
 
 		downstreamDone := make(chan struct{})
 		go func() {
@@ -263,7 +263,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 			<-node.setupDone
 			for cd := range cds {
 				node.Logf("new circuit descriptor: %s", cd)
-				cev := coordinator.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}}
+				cev := coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
 				computeCoord.incoming <- cev
 			}
 			node.Logf("user closed circuit discription channel, closing downstream")
@@ -297,7 +297,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 
 		go node.sendShares(ctx)
 
-		setupCoord := &protocolCoordinator{make(chan protocols.Event), make(chan protocols.Event)}
+		setupCoord := &protocolCoordinator{make(chan protocol.Event), make(chan protocol.Event)}
 		go func() {
 			err := node.setup.Run(ctx, setupCoord)
 			if err != nil {
@@ -350,7 +350,7 @@ func (node *Node) Close() error {
 // Transport interface implementation
 
 // PutShare is called by the transport upon receiving a new share.
-func (node *Node) PutShare(ctx context.Context, s protocols.Share) error {
+func (node *Node) PutShare(ctx context.Context, s protocol.Share) error {
 	switch {
 	case s.ProtocolType.IsSetup():
 		node.setupTransport.inshares <- s
@@ -365,7 +365,7 @@ func (node *Node) PutShare(ctx context.Context, s protocols.Share) error {
 // GetAggregationOutput returns the aggregation output for a given protocol descriptor.
 // If this node is the helper node, the method retrieves the output from the services.
 // If this node is a peer node, the method retrieves the output from the helper node.
-func (node *Node) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+func (node *Node) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
 	if node.id == node.helperID {
 		switch {
 		case pd.Signature.Type.IsSetup():
@@ -579,34 +579,34 @@ func (node *Node) sendShares(ctx context.Context) {
 	}
 }
 
-func recoverPresentState(events <-chan coordinator.Event, present int) (completedProto, runningProto []protocols.Descriptor, completedCirc, runningCirc []circuits.Descriptor, err error) {
+func recoverPresentState(events <-chan coordinator.Event, present int) (completedProto, runningProto []protocol.Descriptor, completedCirc, runningCirc []circuit.Descriptor, err error) {
 
 	if present == 0 {
 		return
 	}
 
 	var current int
-	runProto := make(map[protocols.ID]protocols.Descriptor)
-	runCircuit := make(map[helium.CircuitID]circuits.Descriptor)
+	runProto := make(map[protocol.ID]protocol.Descriptor)
+	runCircuit := make(map[helium.CircuitID]circuit.Descriptor)
 	for ev := range events {
 
 		if ev.IsComputeEvent() {
 			cid := ev.CircuitEvent.CircuitID
 			switch ev.CircuitEvent.EventType {
-			case circuits.Started:
+			case circuit.Started:
 				runCircuit[cid] = ev.CircuitEvent.Descriptor
-			case circuits.Executing:
+			case circuit.Executing:
 				if _, has := runCircuit[cid]; !has {
 					err = fmt.Errorf("inconsisted state, circuit %s execution event before start", cid)
 					return
 				}
-			case circuits.Completed, circuits.Failed:
+			case circuit.Completed, circuit.Failed:
 				if _, has := runCircuit[cid]; !has {
 					err = fmt.Errorf("inconsisted state, circuit %s termination event before start", cid)
 					return
 				}
 				delete(runCircuit, cid)
-				if ev.CircuitEvent.EventType == circuits.Completed {
+				if ev.CircuitEvent.EventType == circuit.Completed {
 					completedCirc = append(completedCirc, ev.CircuitEvent.Descriptor)
 				}
 			}
@@ -615,20 +615,20 @@ func recoverPresentState(events <-chan coordinator.Event, present int) (complete
 		if ev.IsProtocolEvent() {
 			pid := ev.ProtocolEvent.ID()
 			switch ev.ProtocolEvent.EventType {
-			case protocols.Started:
+			case protocol.Started:
 				runProto[pid] = ev.ProtocolEvent.Descriptor
-			case protocols.Executing:
+			case protocol.Executing:
 				if _, has := runProto[pid]; !has {
 					err = fmt.Errorf("inconsisted state, protocol %s execution event before start", ev.ProtocolEvent.HID())
 					return
 				}
-			case protocols.Completed, protocols.Failed:
+			case protocol.Completed, protocol.Failed:
 				if _, has := runProto[pid]; !has {
 					err = fmt.Errorf("inconsisted state, protocol %s termination event before start", ev.ProtocolEvent.HID())
 					return
 				}
 				delete(runProto, pid)
-				if ev.ProtocolEvent.EventType == protocols.Completed {
+				if ev.ProtocolEvent.EventType == protocol.Completed {
 					completedProto = append(completedProto, ev.ProtocolEvent.Descriptor)
 				}
 			}

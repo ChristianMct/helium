@@ -1,4 +1,4 @@
-package circuits
+package circuit
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/he"
@@ -42,7 +42,7 @@ func newCircuitParserCtx(cd Descriptor, params session.FHEParameters) *circuitPa
 			OutputSet:    utils.NewEmptySet[OperandLabel](),
 			InputsFor:    make(map[helium.NodeID]utils.Set[OperandLabel]),
 			OutputsFor:   make(map[helium.NodeID]utils.Set[OperandLabel]),
-			KeySwitchOps: make(map[string]protocols.Signature),
+			KeySwitchOps: make(map[string]protocol.Signature),
 			GaloisKeys:   make(utils.Set[uint64]),
 		},
 		SubCtx: make(map[helium.CircuitID]*circuitParserContext, 0),
@@ -134,7 +134,7 @@ func (e *circuitParserContext) output(out Operand, to helium.NodeID) {
 	outset.Add(opl)
 }
 
-func (e *circuitParserContext) registerKeyOps(sig protocols.Signature) error {
+func (e *circuitParserContext) registerKeyOps(sig protocol.Signature) error {
 
 	target, hasTarget := sig.Args["target"]
 	if !hasTarget {
@@ -155,13 +155,13 @@ func (e *circuitParserContext) registerKeyOps(sig protocols.Signature) error {
 	return nil
 }
 
-func GetProtocolSignature(t protocols.Type, in OperandLabel, params map[string]string) (pd protocols.Signature) {
+func GetProtocolSignature(t protocol.Type, in OperandLabel, params map[string]string) (pd protocol.Signature) {
 	parm := make(map[string]string, len(params))
 	for k, v := range params {
 		parm[k] = v
 	}
 	parm["op"] = string(in)
-	return protocols.Signature{Type: t, Args: parm}
+	return protocol.Signature{Type: t, Args: parm}
 }
 
 func (e *circuitParserContext) DEC(in Operand, rec helium.NodeID, params map[string]string) (err error) {
@@ -176,7 +176,7 @@ func (e *circuitParserContext) DEC(in Operand, rec helium.NodeID, params map[str
 	pparams := maps.Clone(params)
 	pparams["target"] = string(rec)
 
-	pd := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), pparams)
+	pd := GetProtocolSignature(protocol.DEC, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), pparams)
 	if err = e.registerKeyOps(pd); err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func (e *circuitParserContext) PCKS(in Operand, rec helium.NodeID, params map[st
 	pparams := maps.Clone(params)
 	pparams["target"] = string(rec)
 
-	pd := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), params)
+	pd := GetProtocolSignature(protocol.PCKS, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), params)
 	if err = e.registerKeyOps(pd); err != nil {
 		panic(err)
 	}

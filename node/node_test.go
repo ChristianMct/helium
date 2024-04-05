@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
@@ -20,7 +20,7 @@ import (
 )
 
 type TestCircuitSig struct {
-	circuits.Signature
+	circuit.Signature
 	ExpResult uint64
 }
 
@@ -39,8 +39,8 @@ var testSetupDescription = setup.Description{
 }
 
 var testCircuits = []TestCircuitSig{
-	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
+	{Signature: circuit.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
+	{Signature: circuit.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
 }
 
 var testSettings = []testSetting{
@@ -54,8 +54,8 @@ var testSettings = []testSetting{
 type testNode struct {
 	*Node
 	compute.InputProvider
-	OutputReceiver chan circuits.Output
-	Outputs        map[helium.CircuitID]circuits.Output
+	OutputReceiver chan circuit.Output
+	Outputs        map[helium.CircuitID]circuit.Output
 }
 
 func NewTestNodes(lt *LocalTest) (all, clients map[helium.NodeID]*testNode, cloud *testNode) {
@@ -63,7 +63,7 @@ func NewTestNodes(lt *LocalTest) (all, clients map[helium.NodeID]*testNode, clou
 	cloud = &testNode{}
 	cloud.Node = lt.HelperNode
 	cloud.InputProvider = compute.NoInput
-	cloud.Outputs = make(map[helium.CircuitID]circuits.Output)
+	cloud.Outputs = make(map[helium.CircuitID]circuit.Output)
 	all[cloud.id] = cloud
 
 	clients = make(map[helium.NodeID]*testNode)
@@ -71,7 +71,7 @@ func NewTestNodes(lt *LocalTest) (all, clients map[helium.NodeID]*testNode, clou
 		cli := &testNode{}
 		cli.Node = n
 		cli.InputProvider = compute.NoInput
-		cli.Outputs = make(map[helium.CircuitID]circuits.Output)
+		cli.Outputs = make(map[helium.CircuitID]circuit.Output)
 		clients[n.id] = cli
 		all[n.id] = cli
 	}
@@ -187,7 +187,7 @@ func TestNodeCompute(t *testing.T) {
 			all, clients, cloud := NewTestNodes(lt)
 			for _, cli := range clients {
 				cid := cli.id
-				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuits.OperandLabel, _ session.Session) (any, error) {
+				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
 					return NodeIDtoTestInput(string(cid)), nil
 				}
 			}
@@ -197,13 +197,13 @@ func TestNodeCompute(t *testing.T) {
 
 			app := App{
 				SetupDescription: &testSetupDescription,
-				Circuits:         circuits.TestCircuits,
+				Circuits:         circuit.TestCircuits,
 			}
 
 			lt.Start()
 			g, runctx := errgroup.WithContext(ctx)
 
-			var cdescs = make(chan chan<- circuits.Descriptor)
+			var cdescs = make(chan chan<- circuit.Descriptor)
 			for _, node := range all {
 				node := node
 				g.Go(func() error {
@@ -227,7 +227,7 @@ func TestNodeCompute(t *testing.T) {
 			for _, tc := range ts.CircuitSigs {
 				for i := 0; i < ts.Rep; i++ {
 					cid := helium.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
-					cdesc <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: hid}
+					cdesc <- circuit.Descriptor{Signature: circuit.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: hid}
 					expResult[cid] = tc.ExpResult
 				}
 			}

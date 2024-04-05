@@ -6,14 +6,14 @@ package coordinator
 import (
 	"fmt"
 
-	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/protocol"
 )
 
 // Event is a type for coordination events in the coordinator.
 type Event struct {
-	ProtocolEvent *protocols.Event
-	CircuitEvent  *circuits.Event // TODO refactor as setup and compute event wrapping protocol events ?
+	ProtocolEvent *protocol.Event
+	CircuitEvent  *circuit.Event // TODO refactor as setup and compute event wrapping protocol events ?
 }
 
 // IsProtocolEvent whether the event contains a protocol-related event.

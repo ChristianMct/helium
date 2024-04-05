@@ -8,8 +8,8 @@ import (
 	"golang.org/x/exp/maps"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
@@ -20,7 +20,7 @@ import (
 // KeyOperationRunner is an interface for running key operations.
 // It is used by the evaluatorRuntime to run key operations as they are requested by the circuit.
 type KeyOperationRunner interface {
-	RunKeyOperation(ctx context.Context, sig protocols.Signature) error
+	RunKeyOperation(ctx context.Context, sig protocol.Signature) error
 }
 
 // evaluatorRuntime is a CircuitRuntime (for the service side) and EvaluationContext (for the circuit cide) implementation for the evaluatorRuntime role.
@@ -35,19 +35,19 @@ type evaluatorRuntime struct {
 
 	// init
 	ctx   context.Context // TODO: check if storing this context this way is a problem
-	cDesc circuits.Descriptor
+	cDesc circuit.Descriptor
 	//c      circuits.Circuit
 	//params bgv.Parameters
 	sess        *session.Session
-	pkProvider  circuits.PublicKeyProvider
+	pkProvider  circuit.PublicKeyProvider
 	fheProvider FHEProvider
 
 	// protocols
 	protoExec KeyOperationRunner
-	*protocols.CompleteMap
+	*protocol.CompleteMap
 
 	// data
-	inputs, ops, outputs map[circuits.OperandLabel]*circuits.FutureOperand
+	inputs, ops, outputs map[circuit.OperandLabel]*circuit.FutureOperand
 
 	// eval
 	eval he.Evaluator
@@ -55,24 +55,24 @@ type evaluatorRuntime struct {
 
 // CircuitInstance (framework-facing) API
 
-func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata) (err error) {
+func (se *evaluatorRuntime) Init(ctx context.Context, md circuit.Metadata) (err error) {
 
-	se.ops = make(map[circuits.OperandLabel]*circuits.FutureOperand)
-	se.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
+	se.ops = make(map[circuit.OperandLabel]*circuit.FutureOperand)
+	se.inputs = make(map[circuit.OperandLabel]*circuit.FutureOperand)
 	for inLabel := range md.InputSet {
-		fop := circuits.NewFutureOperand(inLabel)
+		fop := circuit.NewFutureOperand(inLabel)
 		se.inputs[inLabel] = fop
 		se.ops[inLabel] = fop
 	}
 
-	se.outputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
+	se.outputs = make(map[circuit.OperandLabel]*circuit.FutureOperand)
 	for outLabel := range md.OutputSet {
-		fop := circuits.NewFutureOperand(outLabel)
+		fop := circuit.NewFutureOperand(outLabel)
 		se.outputs[outLabel] = fop
 		se.ops[outLabel] = fop
 	}
 
-	se.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
+	se.CompleteMap = protocol.NewCompletedProt(maps.Values(md.KeySwitchOps))
 
 	se.eval, err = se.getEvaluatorForCircuit(se.sess.Params, md) // TODO pooled evaluators ?
 	if err != nil {
@@ -81,7 +81,7 @@ func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata) (err
 	return
 }
 
-func (se *evaluatorRuntime) getEvaluatorForCircuit(params session.FHEParameters, md circuits.Metadata) (eval he.Evaluator, err error) {
+func (se *evaluatorRuntime) getEvaluatorForCircuit(params session.FHEParameters, md circuit.Metadata) (eval he.Evaluator, err error) {
 
 	var rlk *rlwe.RelinearizationKey
 	if md.NeedRlk {
@@ -111,7 +111,7 @@ func (se *evaluatorRuntime) getEvaluatorForCircuit(params session.FHEParameters,
 
 }
 
-func (se *evaluatorRuntime) Eval(ctx context.Context, c circuits.Circuit) (err error) {
+func (se *evaluatorRuntime) Eval(ctx context.Context, c circuit.Circuit) (err error) {
 	err = c(se)
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func (se *evaluatorRuntime) Eval(ctx context.Context, c circuits.Circuit) (err e
 
 }
 
-func (se *evaluatorRuntime) IncomingOperand(op circuits.Operand) error {
+func (se *evaluatorRuntime) IncomingOperand(op circuit.Operand) error {
 	fop, has := se.inputs[op.OperandLabel]
 	if !has {
 		return fmt.Errorf("unexpected input operand: %s", op.OperandLabel)
@@ -129,7 +129,7 @@ func (se *evaluatorRuntime) IncomingOperand(op circuits.Operand) error {
 	return nil
 }
 
-func (se *evaluatorRuntime) GetOperand(_ context.Context, opl circuits.OperandLabel) (op *circuits.Operand, has bool) {
+func (se *evaluatorRuntime) GetOperand(_ context.Context, opl circuit.OperandLabel) (op *circuit.Operand, has bool) {
 	fop, has := se.ops[opl]
 	if !has {
 		return
@@ -138,14 +138,14 @@ func (se *evaluatorRuntime) GetOperand(_ context.Context, opl circuits.OperandLa
 	return &opg, true
 }
 
-func (se *evaluatorRuntime) GetFutureOperand(_ context.Context, opl circuits.OperandLabel) (op *circuits.FutureOperand, has bool) {
+func (se *evaluatorRuntime) GetFutureOperand(_ context.Context, opl circuit.OperandLabel) (op *circuit.FutureOperand, has bool) {
 	fop, has := se.ops[opl]
 	return fop, has
 }
 
 // EvaluationContext (user-facing) API
 
-func (se *evaluatorRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
+func (se *evaluatorRuntime) Input(opl circuit.OperandLabel) *circuit.FutureOperand {
 	opl = se.getOperandLabelForRuntime(opl)
 	op, has := se.inputs[opl]
 	if !has {
@@ -154,25 +154,25 @@ func (se *evaluatorRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOpe
 	return op
 }
 
-func (se *evaluatorRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
+func (se *evaluatorRuntime) Load(opl circuit.OperandLabel) *circuit.Operand {
 	panic("not supported yet") // TODO implement
 }
 
-func (se *evaluatorRuntime) NewOperand(opl circuits.OperandLabel) *circuits.Operand {
+func (se *evaluatorRuntime) NewOperand(opl circuit.OperandLabel) *circuit.Operand {
 	opl = se.getOperandLabelForRuntime(opl)
-	return &circuits.Operand{OperandLabel: opl}
+	return &circuit.Operand{OperandLabel: opl}
 }
 
 func (se *evaluatorRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error {
 	return f(se.eval)
 }
 
-func (se *evaluatorRuntime) keyOpSig(pt protocols.Type, in circuits.Operand, params map[string]string) protocols.Signature {
+func (se *evaluatorRuntime) keyOpSig(pt protocol.Type, in circuit.Operand, params map[string]string) protocol.Signature {
 	params["op"] = string(in.OperandLabel)
-	return protocols.Signature{Type: pt, Args: params}
+	return protocol.Signature{Type: pt, Args: params}
 }
 
-func (se *evaluatorRuntime) keyOpExec(sig protocols.Signature, in circuits.Operand) (err error) {
+func (se *evaluatorRuntime) keyOpExec(sig protocol.Signature, in circuit.Operand) (err error) {
 
 	ctx := helium.NewBackgroundContext(se.sess.ID, se.cDesc.CircuitID)
 
@@ -188,19 +188,19 @@ func (se *evaluatorRuntime) keyOpExec(sig protocols.Signature, in circuits.Opera
 	return fmt.Errorf("key op should have an output future operand for %s", outLabel)
 }
 
-func keyOpOutputLabel(inLabel circuits.OperandLabel, sig protocols.Signature) circuits.OperandLabel {
-	return circuits.OperandLabel(fmt.Sprintf("%s-%s-out", inLabel, sig.Type))
+func keyOpOutputLabel(inLabel circuit.OperandLabel, sig protocol.Signature) circuit.OperandLabel {
+	return circuit.OperandLabel(fmt.Sprintf("%s-%s-out", inLabel, sig.Type))
 }
 
-func (se *evaluatorRuntime) getOperandLabelForRuntime(cOpLabel circuits.OperandLabel) circuits.OperandLabel {
+func (se *evaluatorRuntime) getOperandLabelForRuntime(cOpLabel circuit.OperandLabel) circuit.OperandLabel {
 	return cOpLabel.ForCircuit(se.cDesc.CircuitID).ForMapping(se.cDesc.NodeMapping)
 }
 
-func (se *evaluatorRuntime) DEC(in circuits.Operand, rec helium.NodeID, params map[string]string) (err error) {
-	var fop *circuits.FutureOperand
+func (se *evaluatorRuntime) DEC(in circuit.Operand, rec helium.NodeID, params map[string]string) (err error) {
+	var fop *circuit.FutureOperand
 	var has bool
 	if fop, has = se.ops[in.OperandLabel]; !has {
-		fop = circuits.NewFutureOperand(in.OperandLabel)
+		fop = circuit.NewFutureOperand(in.OperandLabel)
 		se.ops[in.OperandLabel] = fop
 	}
 	fop.Set(in)
@@ -208,17 +208,17 @@ func (se *evaluatorRuntime) DEC(in circuits.Operand, rec helium.NodeID, params m
 	pparams := maps.Clone(params)
 	pparams["target"] = string(se.cDesc.NodeMapping[string(rec)])
 	pparams["op"] = string(in.OperandLabel)
-	sig := se.keyOpSig(protocols.DEC, in, pparams)
+	sig := se.keyOpSig(protocol.DEC, in, pparams)
 	return se.keyOpExec(sig, in)
 }
 
-func (se *evaluatorRuntime) PCKS(in circuits.Operand, rec helium.NodeID, params map[string]string) (err error) {
+func (se *evaluatorRuntime) PCKS(in circuit.Operand, rec helium.NodeID, params map[string]string) (err error) {
 	if _, has := se.ops[in.OperandLabel]; !has {
-		fop := circuits.NewFutureOperand(in.OperandLabel)
+		fop := circuit.NewFutureOperand(in.OperandLabel)
 		fop.Set(in)
 		se.ops[in.OperandLabel] = fop
 	}
-	sig := se.keyOpSig(protocols.PCKS, in, params)
+	sig := se.keyOpSig(protocol.PCKS, in, params)
 	return se.keyOpExec(sig, in)
 }
 

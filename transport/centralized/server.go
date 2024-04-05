@@ -11,7 +11,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -39,8 +39,8 @@ type NodeWatcher interface {
 // its peers. The interface implementation is provided by the NewHeliumServer method, and the
 // created server makes calls to the interface methods when handling requests from its peers.
 type ProtocolHandler interface {
-	PutShare(context.Context, protocols.Share) error
-	GetAggregationOutput(context.Context, protocols.Descriptor) (*protocols.AggregationOutput, error)
+	PutShare(context.Context, protocol.Share) error
+	GetAggregationOutput(context.Context, protocol.Descriptor) (*protocol.AggregationOutput, error)
 }
 
 // CiphertextHandler is an interface for the helium server to handle ciphertext-related requests from

@@ -11,7 +11,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -112,7 +112,7 @@ func (hc *HeliumClient) Register(ctx context.Context) (events <-chan coordinator
 }
 
 // PutShare sends a share to the helium server.
-func (hc *HeliumClient) PutShare(ctx context.Context, share protocols.Share) error {
+func (hc *HeliumClient) PutShare(ctx context.Context, share protocol.Share) error {
 	apiShare, err := getAPIShare(&share)
 	if err != nil {
 		return err
@@ -122,7 +122,7 @@ func (hc *HeliumClient) PutShare(ctx context.Context, share protocols.Share) err
 }
 
 // GetAggregationOutput queries and returns the aggregation output for a given protocol descriptor.
-func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
 	apiOut, err := hc.HeliumClient.GetAggregationOutput(hc.outgoingContext(ctx), getAPIProtocolDesc(&pd))
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.D
 	if err != nil {
 		return nil, err
 	}
-	return &protocols.AggregationOutput{Share: s, Descriptor: pd}, nil
+	return &protocol.AggregationOutput{Share: s, Descriptor: pd}, nil
 }
 
 // GetCiphertext queries and returns a ciphertext.
