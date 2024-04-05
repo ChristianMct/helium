@@ -39,8 +39,8 @@ var testSetupDescription = setup.Description{
 }
 
 var testCircuits = []TestCircuitSig{
-	{Signature: circuits.Signature{Name: "add-2-dec", Args: nil}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "mul-2-dec", Args: nil}, ExpResult: 0},
+	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
 }
 
 var testSettings = []testSetting{

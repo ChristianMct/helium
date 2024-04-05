@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"math/big"
 
 	"golang.org/x/exp/maps"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
+	"github.com/tuneinsight/lattigo/v5/utils/bignum"
 )
 
 // participantRuntime is a runtime for a participant (a non-evaluator node) in a computation.
@@ -125,6 +127,30 @@ func (p *participantRuntime) CompletedProtocol(pd protocols.Descriptor) error {
 
 // Circuit Interface
 
+func isValidPlaintext(in interface{}) bool {
+	return isValidBGVPlaintextType(in) || isValidCKKSPlaintextType(in)
+}
+
+func isValidBGVPlaintextType(in interface{}) bool {
+	switch in.(type) {
+	case []uint64, []int64:
+		return true
+	default:
+		return false
+
+	}
+}
+
+func isValidCKKSPlaintextType(in interface{}) bool {
+	switch in.(type) {
+	case []complex128, []*bignum.Complex, []float64, []*big.Float:
+		return true
+	default:
+		return false
+
+	}
+}
+
 // Input reads an input operand with the given label from the context.
 func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 
@@ -139,32 +165,20 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 		panic(fmt.Errorf("could not get inputs from input provider: %w", err)) // TODO return error
 	}
 
-	isValidPlaintextType := func(in interface{}) bool {
-		switch in.(type) {
-		case []uint64, []int64:
-			return true
-		default:
-			return false
-
-		}
-	}
-
 	var inct helium.Ciphertext
 	switch {
-	case isValidPlaintextType(in):
+	case isValidPlaintext(in):
 		var inpt *rlwe.Plaintext
-		switch enc := p.Encoder.(type) { // TODO: lattigo should have a generic Encode interface
+		switch enc := p.Encoder.(type) {
 		case *bgv.Encoder:
 			inpt = bgv.NewPlaintext(p.sess.Params.(bgv.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
 			err = enc.Encode(in, inpt)
 		case *ckks.Encoder:
 			inpt = ckks.NewPlaintext(p.sess.Params.(ckks.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
-			err = enc.Encode(in, inpt)
-		default:
-			err = fmt.Errorf("invalid encoder type %T", enc)
+			err = p.Encoder.(*ckks.Encoder).Encode(in, inpt)
 		}
 		if err != nil {
-			panic(err)
+			panic(fmt.Errorf("cannot encode input: %w", err))
 		}
 		in = inpt
 		fallthrough
@@ -182,7 +196,7 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 			CiphertextMetadata: helium.CiphertextMetadata{ID: helium.CiphertextID(opl)},
 		}
 	default:
-		panic(fmt.Errorf("invalid input type %T, should be either *rlwe.Plaintext or *rlwe.Ciphertext", in))
+		panic(fmt.Errorf("invalid input type %T for session parameters of type %T", in, p.sess.Parameters))
 	}
 
 	err = p.trans.PutCiphertext(p.ctx, inct)

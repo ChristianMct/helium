@@ -40,7 +40,10 @@ type Runtime interface {
 	//  - can omit the session-id part as it wil be automatically resolved by the runtime.
 	NewOperand(OperandLabel) *Operand
 
-	EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error // TODO Eval once freed // TODO NEXT: node allocates evaluators and pass them here.
+	// EvalLocal is used to perform local operation on the ciphertext. This is where the FHE computation
+	// is performed. The user must specify the required evaluation keys needed by the function. The provided
+	// function must not call any other Runtime function (ie., it must be  strictly local circuit).
+	EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error
 
 	// DEC performes the decryption of in, with private output to rec.
 	// The decrypted operand is considered an output for the this circuit and the

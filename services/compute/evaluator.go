@@ -74,7 +74,7 @@ func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata) (err
 
 	se.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
 
-	se.eval, err = se.getEvaluatorForCircuit(se.sess.Params, md)
+	se.eval, err = se.getEvaluatorForCircuit(se.sess.Params, md) // TODO pooled evaluators ?
 	if err != nil {
 		se.Logf("failed to get evaluator: %v", err)
 	}
@@ -84,7 +84,7 @@ func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata) (err
 func (se *evaluatorRuntime) getEvaluatorForCircuit(params session.FHEParameters, md circuits.Metadata) (eval he.Evaluator, err error) {
 
 	var rlk *rlwe.RelinearizationKey
-	if md.NeedRlk { // TODO NEXT: this is not populated without circuit parsing. Compute service could have a keyset computed from the setup description.
+	if md.NeedRlk {
 		rlk, err = se.pkProvider.GetRelinearizationKey(se.ctx)
 		if err != nil {
 			return nil, err
