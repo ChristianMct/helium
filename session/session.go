@@ -36,18 +36,18 @@ type Secrets struct {
 	ThresholdSecretKey *drlwe.ShamirSecretShare
 }
 
-type RLWEParamerersLiteralProvider interface {
+type FHEParamerersLiteralProvider interface {
 	GetRLWEParametersLiteral() rlwe.ParametersLiteral
 }
 
 // Parameters contains data used to initialize a Session.
 type Parameters struct {
-	ID         helium.SessionID
-	Nodes      []helium.NodeID
-	RLWEParams RLWEParamerersLiteralProvider
-	Threshold  int
-	ShamirPks  map[helium.NodeID]drlwe.ShamirPublicPoint
-	PublicSeed []byte
+	ID            helium.SessionID
+	Nodes         []helium.NodeID
+	FHEParameters FHEParamerersLiteralProvider
+	Threshold     int
+	ShamirPks     map[helium.NodeID]drlwe.ShamirPublicPoint
+	PublicSeed    []byte
 	*Secrets
 }
 
@@ -89,8 +89,8 @@ func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err
 		}
 	}
 
-	sess.RLWEParams = sessParams.RLWEParams
-	sess.Params, err = newParamsFromLiteral(sessParams.RLWEParams)
+	sess.FHEParameters = sessParams.FHEParameters
+	sess.Params, err = newParamsFromLiteral(sessParams.FHEParameters)
 	if err != nil {
 		return nil, fmt.Errorf("could not create session parameters: %s", err)
 	}
@@ -131,7 +131,7 @@ func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err
 	return sess, nil
 }
 
-func newParamsFromLiteral(paramsLit RLWEParamerersLiteralProvider) (params FHEParameters, err error) {
+func newParamsFromLiteral(paramsLit FHEParamerersLiteralProvider) (params FHEParameters, err error) {
 	switch pl := paramsLit.(type) {
 	case bgv.ParametersLiteral:
 		params, err = bgv.NewParametersFromLiteral(pl)

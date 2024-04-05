@@ -26,7 +26,7 @@ type TestSession struct {
 	Decrpytor *rlwe.Decryptor
 }
 
-func NewTestSession(N, T int, rlweparams RLWEParamerersLiteralProvider, helperID helium.NodeID) (*TestSession, error) {
+func NewTestSession(N, T int, rlweparams FHEParamerersLiteralProvider, helperID helium.NodeID) (*TestSession, error) {
 	nids := make([]helium.NodeID, N)
 	nspk := make(map[helium.NodeID]drlwe.ShamirPublicPoint)
 	for i := range nids {
@@ -35,12 +35,12 @@ func NewTestSession(N, T int, rlweparams RLWEParamerersLiteralProvider, helperID
 	}
 
 	var sessParams = Parameters{
-		ID:         "testsess",
-		RLWEParams: rlweparams,
-		Threshold:  T,
-		Nodes:      nids,
-		ShamirPks:  nspk,
-		PublicSeed: []byte{'c', 'r', 's'},
+		ID:            "testsess",
+		FHEParameters: rlweparams,
+		Threshold:     T,
+		Nodes:         nids,
+		ShamirPks:     nspk,
+		PublicSeed:    []byte{'c', 'r', 's'},
 	}
 
 	return NewTestSessionFromParams(sessParams, helperID)
@@ -53,7 +53,7 @@ func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSessi
 	ts.SessParams = sp
 
 	var err error
-	ts.RlweParams, err = rlwe.NewParametersFromLiteral(sp.RLWEParams.GetRLWEParametersLiteral())
+	ts.RlweParams, err = rlwe.NewParametersFromLiteral(sp.FHEParameters.GetRLWEParametersLiteral())
 	if err != nil {
 		panic(err)
 	}
@@ -96,7 +96,7 @@ func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSessi
 }
 
 func GenTestSecretKeys(sessParams Parameters) (secs map[helium.NodeID]*Secrets, err error) {
-	params, err := rlwe.NewParametersFromLiteral(sessParams.RLWEParams.GetRLWEParametersLiteral())
+	params, err := rlwe.NewParametersFromLiteral(sessParams.FHEParameters.GetRLWEParametersLiteral())
 	if err != nil {
 		return nil, err
 	}

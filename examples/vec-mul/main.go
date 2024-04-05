@@ -26,7 +26,7 @@ var (
 	sessionParams = session.Parameters{
 		ID:    "example-session",                                       // the id of the session must be unique
 		Nodes: []helium.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
-		RLWEParams: bgv.ParametersLiteral{ // the FHE parameters
+		FHEParameters: bgv.ParametersLiteral{ // the FHE parameters
 			LogN:             14,
 			LogQ:             []int{56, 55, 55, 54, 54, 54},
 			LogP:             []int{55, 55},
@@ -91,19 +91,18 @@ var (
 
 				// computes the product between all inputs
 				opRes := rt.NewOperand("//eval/prod")
-				err := rt.EvalLocal(true, nil, func(e he.Evaluator) error {
+				if err := rt.EvalLocal(true, nil, func(eval he.Evaluator) error {
 					var ctmul01, ctmul23 *rlwe.Ciphertext
 					var err error
-					if ctmul01, err = e.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext); err != nil {
+					if ctmul01, err = eval.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext); err != nil {
 						return err
 					}
-					if ctmul23, _ = e.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext); err != nil {
+					if ctmul23, _ = eval.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext); err != nil {
 						return err
 					}
-					opRes.Ciphertext, err = e.MulRelinNew(ctmul01, ctmul23)
+					opRes.Ciphertext, err = eval.MulRelinNew(ctmul01, ctmul23)
 					return err
-				})
-				if err != nil {
+				}); err != nil {
 					return err
 				}
 

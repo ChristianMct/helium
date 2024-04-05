@@ -104,9 +104,9 @@ func TestNodeSetup(t *testing.T) {
 			params, err := heint.NewParametersFromLiteral(heint.ParametersLiteral{LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}, PlaintextModulus: 79873}) // matmul
 			require.Nil(t, err)
 			sessParams := session.Parameters{
-				ID:         "test-session",
-				RLWEParams: params.ParametersLiteral(),
-				Threshold:  ts.T,
+				ID:            "test-session",
+				FHEParameters: params.ParametersLiteral(),
+				Threshold:     ts.T,
 			}
 
 			lt, err := NewLocalTest(LocalTestConfig{
@@ -171,9 +171,9 @@ func TestNodeCompute(t *testing.T) {
 
 			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
 			sessParams := session.Parameters{
-				ID:         "test-session",
-				RLWEParams: paramLiteral,
-				Threshold:  ts.T,
+				ID:            "test-session",
+				FHEParameters: paramLiteral,
+				Threshold:     ts.T,
 			}
 
 			lt, err := NewLocalTest(LocalTestConfig{

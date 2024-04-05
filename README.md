@@ -33,9 +33,17 @@ Here is an overview of an Helium application:
       "mul-2-dec": func(rt circuits.Runtime) error {
         in0, in1 := rt.Input("//p0/in"), rt.Input("//p1/in") // read the encrypted inputs from nodes p0 and p1
 
-        // multiplies the inputs 
+        // multiplies the inputs as a local operation
         opRes := rt.NewOperand("//eval/prod")
-        opRes.Ciphertext, _ = rt.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
+        if err := rt.EvalLocal(
+          true, // circuit requires relin
+          nil,  // circuit does not require any rotation
+          func(eval he.Evaluator) error {
+					  return eval.MulRelin(in0.Get().Ciphertext, in1.Get().Ciphertext,  opRes.Ciphertext)
+				  }
+        ); err != nil {
+					return err
+				}
 
         // decrypts the result with receiver "rec"
         return rt.DEC(opRes, "rec", map[string]string{
