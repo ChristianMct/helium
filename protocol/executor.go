@@ -58,8 +58,6 @@ type Executor struct {
 		disconnected chan helium.NodeID
 	}
 
-	nodesToProtocols map[helium.NodeID]utils.Set[ID]
-
 	completedProtos []Descriptor
 }
 
@@ -193,10 +191,6 @@ func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.S
 
 	s.completedProtos = make([]Descriptor, 0)
 
-	// s.ResultBackend = newObjStoreResultBackend(objStore)
-	// s.rkgRound1Results = make(map[ID]Share)
-
-	s.nodesToProtocols = make(map[helium.NodeID]utils.Set[ID])
 	return s, nil
 }
 
@@ -383,7 +377,6 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 	//go func() {
 	var agg AggregationOutput
 	agg.Descriptor = pd
-	abort := make(chan helium.NodeID)
 	for done := false; !done; {
 		select {
 		case agg = <-aggregation:
@@ -395,15 +388,8 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 				continue
 			}
 
-			s.Logf("node %s disconnected before providing its share, protocol %s", participantID, pd.HID())
-
-			// time.AfterFunc(time.Second, func() { // leaves some time to process some more messages
-			// 	participantId := participantId
-			// 	abort <- participantId
-			// })
-		case <-abort:
+			s.Logf("node %s disconnected before providing its share, aborting protocol %s", participantID, pd.HID())
 			done = true
-			agg.Error = fmt.Errorf("protocol aggregation has aborted aborted")
 		}
 	}
 
@@ -537,10 +523,6 @@ func (s *Executor) GetOutput(ctx context.Context, aggOut AggregationOutput, rec 
 	return p.Output(input, aggOut, rec)
 }
 
-// func (s *Executor) Close() {
-// 	close(s.queuedSig)
-// }
-
 // Register is called by the transport when a new peer register itself for the setup.
 func (s *Executor) Register(peer helium.NodeID) error {
 	s.connectedNodesMu.Lock()
@@ -616,6 +598,7 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *session.Session) D
 		nodeProto := s.connectedNodes[nid]
 		nodeProto.Add(pd.ID())
 	}
+
 	s.connectedNodesMu.Unlock()
 
 	return pd
@@ -623,7 +606,7 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *session.Session) D
 
 func (s *Executor) DisconnectedNode(id helium.NodeID) {
 	s.runningProtoMu.RLock()
-	protoIds := s.nodesToProtocols[id]
+	protoIds := s.connectedNodes[id]
 	for pid := range protoIds {
 		s.runningProtos[pid].disconnected <- id
 	}
@@ -660,21 +643,36 @@ func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {
 }
 
 type testCoordinator struct {
+	hid                helium.NodeID
+	log                []Event
+	closed             bool
 	incoming, outgoing chan Event
 	clients            map[helium.NodeID]*testCoordinator
+
+	l sync.Mutex
 }
 
-func NewTestCoordinator() *testCoordinator {
-	tc := &testCoordinator{incoming: make(chan Event), outgoing: make(chan Event), clients: make(map[helium.NodeID]*testCoordinator)}
+func NewTestCoordinator(hid helium.NodeID) *testCoordinator {
+	tc := &testCoordinator{hid: hid,
+		log:      make([]Event, 0),
+		incoming: make(chan Event),
+		outgoing: make(chan Event),
+		clients:  make(map[helium.NodeID]*testCoordinator)}
 	go func() {
 		for ev := range tc.outgoing {
+			tc.l.Lock()
+			tc.log = append(tc.log, ev)
 			for _, cli := range tc.clients {
 				cli.incoming <- ev
 			}
+			tc.l.Unlock()
 		}
+		tc.l.Lock()
+		tc.closed = true
 		for _, cli := range tc.clients {
 			close(cli.incoming)
 		}
+		tc.l.Unlock()
 	}()
 	return tc
 }
@@ -683,9 +681,22 @@ func (tc *testCoordinator) Close() {
 	close(tc.incoming)
 }
 
-func (tc *testCoordinator) NewNodeCoordinator(nid helium.NodeID) *testCoordinator {
-	tcc := &testCoordinator{incoming: make(chan Event), outgoing: make(chan Event)}
-	tc.clients[nid] = tcc
+func (tc *testCoordinator) Register(nid helium.NodeID) *testCoordinator {
+	if nid == tc.hid {
+		return tc
+	}
+	tc.l.Lock()
+	p := len(tc.log)
+	tcc := &testCoordinator{incoming: make(chan Event, p), outgoing: make(chan Event)}
+	for _, ev := range tc.log {
+		tcc.incoming <- ev
+	}
+	if tc.closed {
+		close(tcc.incoming)
+	} else {
+		tc.clients[nid] = tcc
+	}
+	tc.l.Unlock()
 	return tcc
 }
 
@@ -695,10 +706,6 @@ func (tc *testCoordinator) Incoming() <-chan Event {
 
 func (tc *testCoordinator) Outgoing() chan<- Event {
 	return tc.outgoing
-}
-
-func (tc *testCoordinator) New(ev Event) {
-	tc.incoming <- ev
 }
 
 type testTransport struct {

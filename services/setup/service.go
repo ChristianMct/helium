@@ -26,7 +26,7 @@ type Service struct {
 
 	sessions session.SessionProvider
 
-	execuctor *protocol.Executor
+	executor  *protocol.Executor
 	transport Transport
 
 	// protocols.Coordinator
@@ -52,7 +52,7 @@ func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf
 
 	s.self = ownID
 	s.sessions = sessions
-	s.execuctor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
+	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (s *Service) Run(ctx context.Context, coord protocol.Coordinator) error {
 
 	executorRunReturned := make(chan struct{})
 	go func() {
-		err := s.execuctor.Run(ctx)
+		err := s.executor.Run(ctx)
 		if err != nil {
 			panic(err) // TODO: return in Run
 		}
@@ -164,7 +164,7 @@ func (s *Service) processEvent(ev protocol.Event) {
 // RunSignature queues the given signature for execution. This method is called by the helper.
 func (s *Service) RunSignature(ctx context.Context, sig protocol.Signature) error {
 
-	err := s.execuctor.RunSignature(ctx, sig, s.AggregationOutputHandler)
+	err := s.executor.RunSignature(ctx, sig, s.AggregationOutputHandler)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocol.Signature) (
 	}
 
 	out := protocol.AllocateOutput(sig, *sess.Params.GetRLWEParameters()) // TODO cache ?
-	err = s.execuctor.GetOutput(ctx, *aggOut, out)
+	err = s.executor.GetOutput(ctx, *aggOut, out)
 	if err != nil {
 		return nil, fmt.Errorf("error while getting output: %w", err)
 	}
@@ -275,7 +275,7 @@ func (s *Service) GetAggregationOutput(ctx context.Context, pd protocol.Descript
 	} else {
 		// TODO: prevent double run of protocol
 		aggOutC := make(chan protocol.AggregationOutput, 1)
-		err := s.execuctor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocol.AggregationOutput) error {
+		err := s.executor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocol.AggregationOutput) error {
 			aggOutC <- ao
 			return nil
 		})
@@ -331,13 +331,16 @@ func (s *Service) Outgoing() chan<- protocol.Event {
 }
 
 // Register registers a connected node to the service.
-func (s *Service) Register(nid helium.NodeID) error {
-	return s.execuctor.Register(nid)
+func (s *Service) Register(nid helium.NodeID) error { // TODO should be per session
+	if nid == s.self {
+		return nil // TODO specific to helper-assisted setting
+	}
+	return s.executor.Register(nid)
 }
 
 // Unregister unregisters a disconnected node from the service
 func (s *Service) Unregister(nid helium.NodeID) error {
-	return s.execuctor.Unregister(nid)
+	return s.executor.Unregister(nid)
 }
 
 // Logf prints a log message.

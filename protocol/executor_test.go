@@ -37,7 +37,7 @@ func TestExecutor(t *testing.T) {
 
 			executors := make(map[helium.NodeID]*Executor, len(nids))
 			testTrans := NewTestTransport()
-			testCoord := NewTestCoordinator()
+			testCoord := NewTestCoordinator(hid)
 
 			ct := testSess.Encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
 			rkg1Done := make(chan struct{})
@@ -117,7 +117,7 @@ func TestExecutor(t *testing.T) {
 			g.Go(func() error { return helper.Run(gctx) })
 			for nid := range nids {
 				nid := nid
-				executors[nid], err = NewExectutor(conf, nid, testSess.NodeSessions[nid], testCoord.NewNodeCoordinator(nid), pip, testTrans.TransportFor(nid))
+				executors[nid], err = NewExectutor(conf, nid, testSess.NodeSessions[nid], testCoord.Register(nid), pip, testTrans.TransportFor(nid))
 				require.Nil(t, err)
 				g.Go(func() error { return executors[nid].Run(gctx) })
 				err = helper.Register(nid)
