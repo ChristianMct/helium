@@ -452,12 +452,13 @@ func (s Signature) Equals(other Signature) bool {
 
 // ID returns the ID of the protocol, derived from the descriptor.
 func (pd Descriptor) ID() ID {
-	return ID(fmt.Sprintf("%s-%x", pd.Signature, partyListToString(pd.Participants)))
+	h := blake2b.Sum256(partyListToString(pd.Participants))
+	return ID(fmt.Sprintf("%s-%x", pd.Signature, h[:]))
 }
 
 // HID returns the human-readable (truncated) ID of the protocol, derived from the descriptor.
 func (pd Descriptor) HID() string {
-	h := partyListToString(pd.Participants)
+	h := blake2b.Sum256(partyListToString(pd.Participants))
 	return fmt.Sprintf("%s-%x", pd.Signature, h[:hidHashHexCharCount>>1])
 }
 

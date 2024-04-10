@@ -68,7 +68,7 @@ func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf
 
 // Init initializes the setup service from the current state of the protocols.
 // Completed protocols are marked as such, and running protocols are queued for execution.
-func (s *Service) Init(ctx context.Context, complPd, runPd []protocol.Descriptor) error {
+func (s *Service) Init(ctx context.Context, complPd, runPd []protocol.Descriptor) error { // TODO NEXT: integrate in Run by augmenting the coordinator interface
 
 	// mark completed protocols
 	for _, cpd := range complPd {
@@ -97,6 +97,8 @@ func (s *Service) Init(ctx context.Context, complPd, runPd []protocol.Descriptor
 // It returns when the upstream coordinator is done and the downstream executor is done.
 func (s *Service) Run(ctx context.Context, coord protocol.Coordinator) error {
 
+	runCtx, cancelFunc := context.WithCancel(ctx)
+
 	// processes incoming events from the coordinator
 	upstreamDone := make(chan struct{})
 	if coord.Incoming() != nil { // TODO need a better way
@@ -122,7 +124,7 @@ func (s *Service) Run(ctx context.Context, coord protocol.Coordinator) error {
 
 	executorRunReturned := make(chan struct{})
 	go func() {
-		err := s.executor.Run(ctx)
+		err := s.executor.Run(runCtx)
 		if err != nil {
 			panic(err) // TODO: return in Run
 		}
@@ -139,6 +141,8 @@ func (s *Service) Run(ctx context.Context, coord protocol.Coordinator) error {
 	<-downstreamDone
 	close(coord.Outgoing()) // closing upstream
 	s.Logf("downstream coordinator is done, service.Run return")
+
+	cancelFunc()
 	return nil
 }
 
@@ -164,9 +168,13 @@ func (s *Service) processEvent(ev protocol.Event) {
 // RunSignature queues the given signature for execution. This method is called by the helper.
 func (s *Service) RunSignature(ctx context.Context, sig protocol.Signature) error {
 
+	if !sig.Type.IsSetup() {
+		return fmt.Errorf("signature type %s is not a setup protocol", sig.Type)
+	}
+
 	err := s.executor.RunSignature(ctx, sig, s.AggregationOutputHandler)
 	if err != nil {
-		return err
+		panic(err)
 	}
 
 	return nil

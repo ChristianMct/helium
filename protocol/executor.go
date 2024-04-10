@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 
 	"github.com/ChristianMct/helium"
@@ -132,7 +133,7 @@ func (t EventType) String() string {
 
 // String returns the string representation of the event.
 func (ev Event) String() string {
-	return fmt.Sprintf("%s: %s", ev.EventType, ev.Signature)
+	return fmt.Sprintf("%s: %s", ev.EventType, ev.Descriptor.HID())
 }
 
 // IsSetupEvent returns true if the event is a setup-related event.
@@ -214,7 +215,9 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 				proto, protoExists := s.runningProtos[incShare.ProtocolID]
 				s.runningProtoMu.RUnlock()
 				if !protoExists {
-					return fmt.Errorf("invalide incoming share from sender %s: protocol %s is not running", incShare.From, incShare.ProtocolID)
+					err := fmt.Errorf("invalide incoming share from sender %s: protocol %s is not running", incShare.From, incShare.ProtocolID)
+					s.Logf("error recieving share: %s", err)
+					continue
 				}
 				proto.incoming <- incShare
 			case <-doneWithShareTransport:
@@ -242,7 +245,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 							return fmt.Errorf("error in signature queue processing: %w", err)
 						}
 					case <-prctx.Done():
-						s.Logf("context was cancelled")
+						s.Logf("context was cancelled, error: %s", prctx.Err())
 						return nil
 					}
 
@@ -265,7 +268,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 						return fmt.Errorf("error during protocol execution as participant: %w", err)
 					}
 				case <-prctx.Done():
-					s.Logf("context was cancelled")
+					s.Logf("context was cancelled, error: %s", prctx.Err())
 					return nil
 				}
 
@@ -346,12 +349,14 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 	//s.runningProtoWg.Add(1)
 
 	// runs the aggregation
-	aggregation = proto.Aggregate(ctx, incoming)
+	aggCtx, cancelAgg := context.WithCancel(ctx)
+	aggregation = proto.Aggregate(aggCtx, incoming)
 
 	s.Logf("started protocol %s", pd)
 
 	input, err := s.inputProvider(ctx, pd)
 	if err != nil {
+		cancelAgg()
 		return fmt.Errorf("cannot get input for protocol: %w", err)
 	}
 
@@ -361,6 +366,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 
 		sk, err := sess.GetSecretKeyForGroup(pd.Participants) // TODO: cache
 		if err != nil {
+			cancelAgg()
 			return err
 		}
 
@@ -368,6 +374,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 		share := proto.AllocateShare()
 		err = proto.GenShare(sk, input, &share)
 		if err != nil {
+			cancelAgg()
 			return err
 		}
 		s.transport.OutgoingShares() <- share
@@ -390,8 +397,10 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 
 			s.Logf("node %s disconnected before providing its share, aborting protocol %s", participantID, pd.HID())
 			done = true
+			agg.Error = fmt.Errorf("node %s disconnected before providing its share", participantID)
 		}
 	}
+	cancelAgg()
 
 	if agg.Error != nil {
 		s.coordinator.Outgoing() <- Event{EventType: Failed, Descriptor: pd}
@@ -409,11 +418,19 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 	s.runningProtoMu.Lock()
 	delete(s.runningProtos, pid)
 	s.runningProtoMu.Unlock()
-	//s.runningProtoWg.Done()
+
+	if agg.Error != nil {
+		// re-run the failing sig
+		sig := pd.Signature
+		if sig.Type == RKG {
+			sig.Type = RKG1
+		}
+		return s.runSignature(ctx, sig, aggOutRec)
+	}
 
 	err = aggOutRec(ctx, agg)
 	if err != nil {
-		return err
+		return fmt.Errorf("error calling aggregation output receiver: %w", err)
 	}
 	s.runningProtoMu.Lock()
 	s.completedProtos = append(s.completedProtos, pd)
@@ -594,6 +611,7 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *session.Session) D
 
 	selected.AddAll(utils.GetRandomSetOfSize(sess.Threshold-len(selected), available))
 	pd.Participants = selected.Elements()
+	slices.Sort(pd.Participants)
 	for nid := range selected {
 		nodeProto := s.connectedNodes[nid]
 		nodeProto.Add(pd.ID())

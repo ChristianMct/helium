@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
@@ -137,13 +136,13 @@ func TestSetup(t *testing.T) {
 				}()
 
 				// run all the nodes
-				g, ctx := errgroup.WithContext(ctx)
+				g, nodesRunCtx := errgroup.WithContext(ctx)
 				for nid, node := range all {
 					nid := nid
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(ctx, coord.Register(nid))
+						err := node.Run(nodesRunCtx, coord.Register(nid))
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -192,9 +191,9 @@ func TestSetupLateConnect(t *testing.T) {
 				}()
 
 				// run helper and t session nodes
-				g, ctx := errgroup.WithContext(ctx)
+				g, nodesRunCtx := errgroup.WithContext(ctx)
 				g.Go(func() error {
-					err := clou.Run(ctx, coord)
+					err := clou.Run(nodesRunCtx, coord)
 					return errors.WithMessagef(err, "error at node %s", hid)
 				})
 				for _, node := range clis[:ts.T] {
@@ -202,7 +201,7 @@ func TestSetupLateConnect(t *testing.T) {
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(ctx, coord.Register(nid))
+						err := node.Run(nodesRunCtx, coord.Register(nid))
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -225,8 +224,6 @@ func TestSetupLateConnect(t *testing.T) {
 
 func TestSetupRetries(t *testing.T) {
 
-	t.Skip("not yet implemented")
-
 	ts := testSetting{N: 3, T: 2}
 	literalParams := TestPN12QP109
 
@@ -238,60 +235,99 @@ func TestSetupRetries(t *testing.T) {
 	}
 
 	all, cli, clou := getNodes(t, ts, testSess)
-	clis := make([]*testnode, 0, ts.N)
-	for _, node := range cli {
-		clis = append(clis, node)
-	}
 	coord := protocol.NewTestCoordinator(hid)
 
 	ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
 
 	// runs the setup
 	go func() {
-		// sigList := DescriptionToSignatureList(sd)
-		// for _, sig := range sigList {
-		// 	clou.RunSignature(ctx, sig)
-		// }
 		err = clou.RunSignature(ctx, protocol.Signature{Type: protocol.CKG})
 		require.Nil(t, err)
 		coord.Close()
 	}()
 
 	// runs helper
-	g, ctx := errgroup.WithContext(ctx)
+	g, nodesRunCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		err := clou.Run(ctx, coord)
+		err := clou.Run(nodesRunCtx, coord)
 		return errors.WithMessagef(err, "error at node %s", hid)
 	})
 
+	p0, p1, p2 := cli["node-0"], cli["node-1"], cli["node-2"]
+
 	// register p0, p1
-	for _, cli := range clis[:2] {
-		clou.Service.Register(cli.self)
-	}
+	clou.Service.Register(p0.self)
+	clou.Service.Register(p1.self)
 
 	// runs only p0
 	g.Go(func() error {
-		err := clis[0].Run(ctx, coord.Register(clis[0].self))
-		return errors.WithMessagef(err, "error at node %s", clis[0].self)
+		err := p0.Run(nodesRunCtx, coord.Register(p0.self))
+		return errors.WithMessagef(err, "error at node %s", p0.self)
 	})
 
-	<-time.After(time.Second) // leaves some time for the helper to start the failing protocol
+	p1coord := coord.Register(p1.self)
+	ev := <-p1coord.Incoming()
+	require.Equal(t,
+		protocol.Event{
+			EventType: protocol.Started,
+			Descriptor: protocol.Descriptor{
+				Signature:    protocol.Signature{Type: protocol.CKG},
+				Participants: []helium.NodeID{"node-0", "node-1"},
+				Aggregator:   "helper",
+			},
+		},
+		ev)
 
 	// unregisters p1
-	err = clou.Service.Unregister(clis[1].self)
+	err = clou.Service.Unregister(p1.self)
 	require.Nil(t, err)
+
+	ev = <-p1coord.Incoming()
+	require.Equal(t,
+		protocol.Event{
+			EventType: protocol.Failed,
+			Descriptor: protocol.Descriptor{
+				Signature:    protocol.Signature{Type: protocol.CKG},
+				Participants: []helium.NodeID{"node-0", "node-1"},
+				Aggregator:   "helper",
+			},
+		},
+		ev)
 
 	// registers and run p2
 	g.Go(func() error {
-		clou.Register(clis[2].self)
-		err := clis[2].Run(ctx, coord.Register(clis[2].self))
-		return errors.WithMessagef(err, "error at node %s", clis[2].self)
+		clou.Register(p2.self)
+		err := p2.Run(nodesRunCtx, coord.Register(p2.self))
+		return errors.WithMessagef(err, "error at node %s", p2.self)
 	})
+	ev = <-p1coord.Incoming()
+	require.Equal(t,
+		protocol.Event{
+			EventType: protocol.Started,
+			Descriptor: protocol.Descriptor{
+				Signature:    protocol.Signature{Type: protocol.CKG},
+				Participants: []helium.NodeID{"node-0", "node-2"},
+				Aggregator:   "helper",
+			},
+		},
+		ev)
+
+	ev = <-p1coord.Incoming()
+	require.Equal(t,
+		protocol.Event{
+			EventType: protocol.Completed,
+			Descriptor: protocol.Descriptor{
+				Signature:    protocol.Signature{Type: protocol.CKG},
+				Participants: []helium.NodeID{"node-0", "node-2"},
+				Aggregator:   "helper",
+			},
+		},
+		ev)
 	err = g.Wait()
 	require.Nil(t, err)
 
 	// run p1
-	err = clis[1].Run(ctx, coord.Register(clis[1].self))
+	err = p1.Run(ctx, coord.Register(p1.self))
 	require.Nil(t, err)
 
 	for _, n := range all {
