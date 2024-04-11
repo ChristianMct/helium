@@ -60,6 +60,8 @@ func (nl NodesList) String() string {
 type ctxKey string
 
 var (
+	// CtxNodeID is the context key for the node ID.
+	CtxNodeID ctxKey = "node_id"
 	// CtxSessionID is the context key for the session ID.
 	// Helium contexts must always have a session id.
 	CtxSessionID ctxKey = "session_id"
@@ -87,6 +89,17 @@ func NewBackgroundContext(sessID SessionID, circID ...CircuitID) context.Context
 // ContextWithCircuitID returns a new context derived from ctx with the given session ID.
 func ContextWithCircuitID(ctx context.Context, circID CircuitID) context.Context {
 	return context.WithValue(ctx, CtxCircuitID, circID)
+}
+
+// ContextWithNodeID returns a new context derived from ctx with the given node ID.
+func ContextWithNodeID(ctx context.Context, nodeID NodeID) context.Context {
+	return context.WithValue(ctx, CtxNodeID, nodeID)
+}
+
+// NodeIDFromContext returns the node ID from the context.
+func NodeIDFromContext(ctx context.Context) (NodeID, bool) {
+	nid, ok := ctx.Value(CtxNodeID).(NodeID)
+	return nid, ok
 }
 
 // SessionIDFromContext returns the session ID from the context.

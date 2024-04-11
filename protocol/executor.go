@@ -32,7 +32,7 @@ type Executor struct {
 
 	sessions      session.SessionProvider
 	transport     Transport
-	coordinator   Coordinator
+	upstream      EventChannel
 	inputProvider InputProvider
 
 	// node tracking
@@ -91,6 +91,11 @@ type Coordinator interface {
 	Outgoing() chan<- Event
 }
 
+type EventChannel struct {
+	Incoming <-chan Event
+	Outgoing chan<- Event
+}
+
 // InputProvider is the interface the provision of protocol inputs. It is called
 // by the executor to get the CRP (CKG, RTG, RKG) and ciphertexts (DEC, CKS, PCKS)
 // for the  protocols.
@@ -147,7 +152,7 @@ func (ev Event) IsComputeEvent() bool {
 }
 
 // NewExectutor creates a new executor.
-func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, coord Coordinator, ip InputProvider, trans Transport) (*Executor, error) {
+func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, coord EventChannel, ip InputProvider, trans Transport) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
 	if s.config.SigQueueSize == 0 {
@@ -166,7 +171,7 @@ func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.S
 	s.self = ownID
 	s.sessions = sessions
 
-	s.coordinator = coord
+	s.upstream = coord
 	s.transport = trans
 	s.inputProvider = ip
 
@@ -278,7 +283,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 
 	go func() {
 		// processes incoming coordinator events
-		for ev := range s.coordinator.Incoming() {
+		for ev := range s.upstream.Incoming {
 
 			if ev.EventType != Started {
 				continue
@@ -313,7 +318,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 	close(doneWithShareTransport)
 	shareRoutines.Wait()
 
-	close(s.coordinator.Outgoing())
+	close(s.upstream.Outgoing)
 	s.Logf("all running protocol done, Run return")
 	return nil
 }
@@ -360,7 +365,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 		return fmt.Errorf("cannot get input for protocol: %w", err)
 	}
 
-	s.coordinator.Outgoing() <- Event{EventType: Started, Descriptor: pd}
+	s.upstream.Outgoing <- Event{EventType: Started, Descriptor: pd}
 
 	if s.isParticipantFor(pd) {
 
@@ -403,9 +408,9 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 	cancelAgg()
 
 	if agg.Error != nil {
-		s.coordinator.Outgoing() <- Event{EventType: Failed, Descriptor: pd}
+		s.upstream.Outgoing <- Event{EventType: Failed, Descriptor: pd}
 	} else {
-		s.coordinator.Outgoing() <- Event{EventType: Completed, Descriptor: pd}
+		s.upstream.Outgoing <- Event{EventType: Completed, Descriptor: pd}
 	}
 
 	s.connectedNodesMu.Lock()
@@ -665,7 +670,7 @@ type testCoordinator struct {
 	log                []Event
 	closed             bool
 	incoming, outgoing chan Event
-	clients            map[helium.NodeID]*testCoordinator
+	clients            []chan Event
 
 	l sync.Mutex
 }
@@ -675,20 +680,20 @@ func NewTestCoordinator(hid helium.NodeID) *testCoordinator {
 		log:      make([]Event, 0),
 		incoming: make(chan Event),
 		outgoing: make(chan Event),
-		clients:  make(map[helium.NodeID]*testCoordinator)}
+		clients:  make([]chan Event, 0)}
 	go func() {
 		for ev := range tc.outgoing {
 			tc.l.Lock()
 			tc.log = append(tc.log, ev)
 			for _, cli := range tc.clients {
-				cli.incoming <- ev
+				cli <- ev
 			}
 			tc.l.Unlock()
 		}
 		tc.l.Lock()
 		tc.closed = true
 		for _, cli := range tc.clients {
-			close(cli.incoming)
+			close(cli)
 		}
 		tc.l.Unlock()
 	}()
@@ -699,31 +704,37 @@ func (tc *testCoordinator) Close() {
 	close(tc.incoming)
 }
 
-func (tc *testCoordinator) Register(nid helium.NodeID) *testCoordinator {
-	if nid == tc.hid {
-		return tc
+func (tc *testCoordinator) Register(ctx context.Context) (evChan *EventChannel, present int, err error) {
+
+	nid, has := helium.NodeIDFromContext(ctx)
+	if !has {
+		return nil, 0, fmt.Errorf("no node id found in context")
 	}
+
+	if nid == tc.hid {
+		return &EventChannel{Incoming: tc.incoming, Outgoing: tc.outgoing}, len(tc.log), nil
+	}
+
 	tc.l.Lock()
 	p := len(tc.log)
-	tcc := &testCoordinator{incoming: make(chan Event, p), outgoing: make(chan Event)}
+	cliInc, cliOut := make(chan Event, p), make(chan Event)
 	for _, ev := range tc.log {
-		tcc.incoming <- ev
+		cliInc <- ev
 	}
 	if tc.closed {
-		close(tcc.incoming)
+		close(cliInc)
 	} else {
-		tc.clients[nid] = tcc
+		tc.clients = append(tc.clients, cliInc)
 	}
 	tc.l.Unlock()
-	return tcc
-}
 
-func (tc *testCoordinator) Incoming() <-chan Event {
-	return tc.incoming
-}
+	go func() {
+		for ev := range cliOut {
+			tc.outgoing <- ev
+		}
+	}()
 
-func (tc *testCoordinator) Outgoing() chan<- Event {
-	return tc.outgoing
+	return &EventChannel{Incoming: cliInc, Outgoing: cliOut}, p, nil
 }
 
 type testTransport struct {

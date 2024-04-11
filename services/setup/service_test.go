@@ -142,7 +142,7 @@ func TestSetup(t *testing.T) {
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(nodesRunCtx, coord.Register(nid))
+						err := node.Run(nodesRunCtx, coord)
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -201,7 +201,7 @@ func TestSetupLateConnect(t *testing.T) {
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(nodesRunCtx, coord.Register(nid))
+						err := node.Run(nodesRunCtx, coord)
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -210,7 +210,7 @@ func TestSetupLateConnect(t *testing.T) {
 
 				// run the remaining nodes
 				for _, node := range clis[ts.T:] {
-					err := node.Run(ctx, coord.Register(node.self))
+					err := node.Run(ctx, coord)
 					require.Nil(t, err)
 				}
 
@@ -261,12 +261,13 @@ func TestSetupRetries(t *testing.T) {
 
 	// runs only p0
 	g.Go(func() error {
-		err := p0.Run(nodesRunCtx, coord.Register(p0.self))
+		err := p0.Run(nodesRunCtx, coord)
 		return errors.WithMessagef(err, "error at node %s", p0.self)
 	})
 
-	p1coord := coord.Register(p1.self)
-	ev := <-p1coord.Incoming()
+	p1Chan, _, err := coord.Register(helium.ContextWithNodeID(nodesRunCtx, p1.self))
+	require.Nil(t, err)
+	ev := <-p1Chan.Incoming
 	require.Equal(t,
 		protocol.Event{
 			EventType: protocol.Started,
@@ -282,7 +283,7 @@ func TestSetupRetries(t *testing.T) {
 	err = clou.Service.Unregister(p1.self)
 	require.Nil(t, err)
 
-	ev = <-p1coord.Incoming()
+	ev = <-p1Chan.Incoming
 	require.Equal(t,
 		protocol.Event{
 			EventType: protocol.Failed,
@@ -297,10 +298,10 @@ func TestSetupRetries(t *testing.T) {
 	// registers and run p2
 	g.Go(func() error {
 		clou.Register(p2.self)
-		err := p2.Run(nodesRunCtx, coord.Register(p2.self))
+		err := p2.Run(nodesRunCtx, coord)
 		return errors.WithMessagef(err, "error at node %s", p2.self)
 	})
-	ev = <-p1coord.Incoming()
+	ev = <-p1Chan.Incoming
 	require.Equal(t,
 		protocol.Event{
 			EventType: protocol.Started,
@@ -312,7 +313,7 @@ func TestSetupRetries(t *testing.T) {
 		},
 		ev)
 
-	ev = <-p1coord.Incoming()
+	ev = <-p1Chan.Incoming
 	require.Equal(t,
 		protocol.Event{
 			EventType: protocol.Completed,
@@ -327,7 +328,7 @@ func TestSetupRetries(t *testing.T) {
 	require.Nil(t, err)
 
 	// run p1
-	err = p1.Run(ctx, coord.Register(p1.self))
+	err = p1.Run(ctx, coord)
 	require.Nil(t, err)
 
 	for _, n := range all {

@@ -163,9 +163,13 @@ func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, co
 		s.config.MaxCircuitEvaluation = DefaultMaxCircuitEvaluation
 	}
 
+	// coordinator
+	s.incoming = make(chan protocol.Event)
+	s.outgoing = make(chan protocol.Event)
+
 	s.self = ownID
 	s.sessions = sessions
-	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, s, s.GetProtocolInput, trans)
+	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, protocol.EventChannel{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
@@ -175,10 +179,6 @@ func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, co
 	s.queuedCircuits = make(chan circuit.Descriptor, conf.CircQueueSize)
 
 	s.runningCircuits = make(map[helium.CircuitID]CircuitRuntime)
-
-	// coordinator
-	s.incoming = make(chan protocol.Event)
-	s.outgoing = make(chan protocol.Event)
 
 	//s.running = make(chan struct{})
 

@@ -207,17 +207,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 	// runs the setup phase
 	if node.IsHelperNode() {
 
-		setupCoord := &protocolCoordinator{make(chan protocol.Event), make(chan protocol.Event)}
-
-		downstreamDone := make(chan struct{})
-		go func() {
-			for ev := range setupCoord.outgoing {
-				pev := ev
-				node.srv.AppendEventToLog(coordinator.Event{ProtocolEvent: &pev})
-			}
-			close(downstreamDone)
-		}()
-
+		setupCoord := NewCentralizedCoordinator(node.srv)
 		go func() {
 			err := node.setup.Run(ctx, setupCoord)
 			if err != nil {
@@ -237,7 +227,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		node.Logf("all signatures run, closing setup downstream")
 		close(setupCoord.incoming)
 
-		<-downstreamDone
+		<-setupCoord.done
 		node.Logf("setup done Service done")
 		close(node.setupDone)
 
@@ -250,7 +240,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 			}
 		}()
 
-		downstreamDone = make(chan struct{})
+		downstreamDone := make(chan struct{})
 		go func() {
 			for ev := range computeCoord.outgoing {
 				cev := ev
@@ -281,23 +271,19 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		}
 
 		// read the past events from the log and establish a list of completed and running protocols and circuits.
-		complPd, runPd, complCd, runCd, err := recoverPresentState(events, present)
+		complPd, runPd, complCd, runCd, err := recoverPresentState(events, present) // TODO remove
 		if err != nil {
 			return nil, nil, err
 		}
 
 		// Service initialization
-		if err := node.setup.Init(ctx, complPd, runPd); err != nil {
-			return nil, nil, fmt.Errorf("error at setup service init: %w", err)
-		}
-
 		if err := node.compute.Init(ctx, complCd, runCd, complPd, runPd); err != nil {
 			return nil, nil, fmt.Errorf("error at compute service init: %w", err)
 		}
 
 		go node.sendShares(ctx)
 
-		setupCoord := &protocolCoordinator{make(chan protocol.Event), make(chan protocol.Event)}
+		setupCoord := NewCentralizedCoordinatorClient(node.cli)
 		go func() {
 			err := node.setup.Run(ctx, setupCoord)
 			if err != nil {
