@@ -13,7 +13,6 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coord"
-	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -143,7 +142,6 @@ type Service struct {
 	completedCircuits chan circuit.Descriptor
 
 	// upstream coordinator
-	coordinator coordinator.Coordinator
 
 	// downstream coordinator
 	incoming, outgoing chan protocol.Event
@@ -221,9 +219,78 @@ func (s *Service) RegisterCircuits(cs map[circuit.Name]circuit.Circuit) error {
 	return nil
 }
 
+func recoverPresentState(events <-chan Event, present int) (completedProto, runningProto []protocol.Descriptor, completedCirc, runningCirc []circuit.Descriptor, err error) {
+
+	if present == 0 {
+		return
+	}
+
+	var current int
+	runProto := make(map[protocol.ID]protocol.Descriptor)
+	runCircuit := make(map[helium.CircuitID]circuit.Descriptor)
+	for ev := range events {
+
+		if ev.CircuitEvent != nil {
+			cid := ev.CircuitEvent.CircuitID
+			switch ev.CircuitEvent.EventType {
+			case circuit.Started:
+				runCircuit[cid] = ev.CircuitEvent.Descriptor
+			case circuit.Executing:
+				if _, has := runCircuit[cid]; !has {
+					err = fmt.Errorf("inconsisted state, circuit %s execution event before start", cid)
+					return
+				}
+			case circuit.Completed, circuit.Failed:
+				if _, has := runCircuit[cid]; !has {
+					err = fmt.Errorf("inconsisted state, circuit %s termination event before start", cid)
+					return
+				}
+				delete(runCircuit, cid)
+				if ev.CircuitEvent.EventType == circuit.Completed {
+					completedCirc = append(completedCirc, ev.CircuitEvent.Descriptor)
+				}
+			}
+		}
+
+		if ev.ProtocolEvent != nil {
+			pid := ev.ProtocolEvent.ID()
+			switch ev.ProtocolEvent.EventType {
+			case protocol.Started:
+				runProto[pid] = ev.ProtocolEvent.Descriptor
+			case protocol.Executing:
+				if _, has := runProto[pid]; !has {
+					err = fmt.Errorf("inconsisted state, protocol %s execution event before start", ev.ProtocolEvent.HID())
+					return
+				}
+			case protocol.Completed, protocol.Failed:
+				if _, has := runProto[pid]; !has {
+					err = fmt.Errorf("inconsisted state, protocol %s termination event before start", ev.ProtocolEvent.HID())
+					return
+				}
+				delete(runProto, pid)
+				if ev.ProtocolEvent.EventType == protocol.Completed {
+					completedProto = append(completedProto, ev.ProtocolEvent.Descriptor)
+				}
+			}
+		}
+
+		current++
+		if current == present {
+			break
+		}
+	}
+
+	return
+}
+
 // Init initializes the compute service with the currently completed and running circuits and protocols.
 // It queues running circuits and protocols for execution.
-func (s *Service) Init(ctx context.Context, complCd, runCd []circuit.Descriptor, complPd, runPd []protocol.Descriptor) error {
+func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present int) error { // TODO make private
+
+	complPd, runPd, complCd, runCd, err := recoverPresentState(upstreamInc, present)
+	if err != nil {
+		return err
+	}
 
 	// stacks the completed circuit in a queue for processing by Run
 	s.completedCircuits = make(chan circuit.Descriptor, len(complCd))
@@ -266,9 +333,24 @@ func (s *Service) Init(ctx context.Context, complCd, runCd []circuit.Descriptor,
 // coordinator for the protocol executor. It also processes the circuit execution queue and fetches the output for
 // completed circuits.
 // The method returns when the upstream coordinator is done and all circuits are completed.
-func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, coord coordinator.Coordinator) error {
+func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, upstream Coordinator) error {
 
-	s.coordinator = coord
+	s.Logf("starting service.Run")
+
+	runCtx, cancelRunCtx := context.WithCancel(helium.ContextWithNodeID(ctx, s.self))
+	defer cancelRunCtx()
+
+	// registers to the upstream coordinator
+	upstreamChan, present, err := upstream.Register(runCtx)
+	if err != nil {
+		return fmt.Errorf("error registering to upstream coordinator: %w", err)
+	}
+
+	// initializes the service from the current state of the protocols
+	if err = s.Init(runCtx, upstreamChan.Incoming, present); err != nil {
+		return fmt.Errorf("error while initializing service: %w", err)
+	}
+
 	s.inputProvider = ip
 	go func() {
 		if err := s.Executor.Run(ctx); err != nil {
@@ -278,9 +360,9 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 	// process incoming upstream Events
 	go func() {
-		for ev := range coord.Incoming() {
+		for ev := range upstreamChan.Incoming {
 
-			if ev.IsProtocolEvent() {
+			if ev.ProtocolEvent != nil {
 				pev := *ev.ProtocolEvent
 
 				s.Logf("new coordination event: PROTOCOL %s", pev)
@@ -321,7 +403,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	go func() {
 		for pev := range s.outgoing {
 			pev := pev
-			s.coordinator.Outgoing() <- coordinator.Event{ProtocolEvent: &pev}
+			upstreamChan.Outgoing <- Event{ProtocolEvent: &pev}
 
 			if pev.EventType == protocol.Completed {
 				opls, has := pev.Signature.Args["op"]
@@ -351,7 +433,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	for i := 0; i < s.config.MaxCircuitEvaluation; i++ {
 		evalRoutines.Go(func() error {
 			for cd := range s.queuedCircuits {
-				if err := s.runCircuit(erctx, cd); err != nil {
+				if err := s.runCircuit(erctx, cd, *upstreamChan); err != nil {
 					s.Logf("error during circuit execution %s: %v", cd.CircuitID, err)
 					return err
 				}
@@ -409,7 +491,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		}
 	}()
 
-	err := evalRoutines.Wait()
+	err = evalRoutines.Wait()
 	if err != nil {
 		return err
 	}
@@ -419,7 +501,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	<-downstreamDone  // waiting for downstream to close its outgoing channel
 
 	s.Logf("downstream coordinator done, Run returns")
-	close(s.coordinator.Outgoing()) // close own outgoing channel
+	close(upstreamChan.Outgoing) // close own outgoing channel
 	close(s.localOutputs)
 	return nil
 }
@@ -508,7 +590,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuit.Descriptor) (err
 	return
 }
 
-func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor) (err error) {
+func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor, upstreamChan coord.Channel[Event]) (err error) {
 
 	s.runningCircuitsMu.RLock()
 	cinst, has := s.runningCircuits[cd.CircuitID]
@@ -541,7 +623,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor) (err er
 	//<-s.running // waits for the Run function to be called
 
 	if s.isEvaluator(cd) {
-		err = s.runCircuitAsEvaluator(ctx, c, cinst, *cinf)
+		err = s.runCircuitAsEvaluator(ctx, c, cinst, *cinf, upstreamChan)
 	} else {
 		err = s.runCircuitAsParticipant(ctx, c, cinst, *cinf)
 	}
@@ -549,11 +631,11 @@ func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor) (err er
 	return err
 }
 
-func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, ev CircuitRuntime, md circuit.Metadata) (err error) {
+func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, ev CircuitRuntime, md circuit.Metadata, upstreamChan coord.Channel[Event]) (err error) {
 	cd := md.Descriptor
 	s.Logf("started circuit %s as evaluator", cd.CircuitID)
 
-	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
+	upstreamChan.Outgoing <- Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
 
 	err = ev.Eval(ctx, c)
 	if err != nil {
@@ -578,7 +660,7 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, 
 		s.localOutputs <- circuit.Output{CircuitID: cd.CircuitID, Operand: *fop}
 	}
 
-	s.coordinator.Outgoing() <- coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Completed, Descriptor: cd}}
+	upstreamChan.Outgoing <- Event{CircuitEvent: &circuit.Event{EventType: circuit.Completed, Descriptor: cd}}
 
 	s.runningCircuitsMu.Lock()
 	delete(s.runningCircuits, cd.CircuitID)
@@ -602,6 +684,15 @@ func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuit.Circuit
 	//s.runningCircuitWg.Done() // TODO: get the circuit complete message in this function to so that all runningcircuit management takes place here
 	s.Logf("completed circuit %s as participant", md.Descriptor.CircuitID)
 
+	return nil
+}
+
+func (s *Service) EvalCircuit(ctx context.Context, cd circuit.Descriptor) error {
+	err := s.createCircuit(ctx, cd)
+	if err != nil {
+		return err
+	}
+	s.queuedCircuits <- cd
 	return nil
 }
 

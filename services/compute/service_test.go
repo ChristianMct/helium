@@ -9,7 +9,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
-	"github.com/ChristianMct/helium/coordinator"
+	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
@@ -45,7 +45,6 @@ var testSettings = []testSetting{
 
 type testnode struct {
 	*Service
-	coordinator.Coordinator
 	InputProvider
 	*session.Session
 
@@ -112,7 +111,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 
 			nids := utils.NewSet(sessParams.Nodes)
 
-			coord := coordinator.NewTestCoordinator()
+			coord := coord.NewTestCoordinator[Event](hid)
 			protoTrans := protocol.NewTestTransport()
 
 			all := make(map[helium.NodeID]*testnode, ts.N+1)
@@ -131,7 +130,6 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			}
 
 			srvTrans := &testNodeTrans{Transport: protoTrans}
-			clou.Coordinator = coord
 			clou.Service, err = NewComputeService(hid, testSess.HelperSession, conf, testSess, srvTrans)
 			if err != nil {
 				t.Fatal(err)
@@ -149,7 +147,6 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cli.Coordinator = coord.NewPeerCoordinator(nid)
 
 				require.Nil(t, err)
 				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
@@ -180,7 +177,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				})
 				g.Go(func() error {
 					return errors.WithMessage(
-						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, cli.Coordinator),
+						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, coord),
 						fmt.Sprintf("at node %s", nid))
 				})
 			}
@@ -203,7 +200,8 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			}
 
 			for _, cd := range cds {
-				coord.LogEvent(coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}})
+				err = clou.EvalCircuit(ctx, cd)
+				require.Nil(t, err)
 			}
 			coord.Close()
 
@@ -283,7 +281,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 
 			nids := utils.NewSet(sessParams.Nodes)
 
-			coord := coordinator.NewTestCoordinator()
+			tc := coord.NewTestCoordinator[Event](hid)
 			protoTrans := protocol.NewTestTransport()
 
 			all := make(map[helium.NodeID]*testnode, ts.N+1)
@@ -302,7 +300,6 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			}
 
 			srvTrans := &testNodeTrans{Transport: protoTrans}
-			clou.Coordinator = coord
 			clou.Service, err = NewComputeService(hid, testSess.HelperSession, conf, testSess, srvTrans)
 			if err != nil {
 				t.Fatal(err)
@@ -320,7 +317,6 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				cli.Coordinator = coord.NewPeerCoordinator(nid)
 
 				require.Nil(t, err)
 				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
@@ -351,7 +347,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				})
 				g.Go(func() error {
 					return errors.WithMessage(
-						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, cli.Coordinator),
+						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, tc),
 						fmt.Sprintf("at node %s", nid))
 				})
 			}
@@ -374,9 +370,10 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			}
 
 			for _, cd := range cds {
-				coord.LogEvent(coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}})
+				err = clou.EvalCircuit(ctx, cd)
+				require.Nil(t, err)
 			}
-			coord.Close()
+			tc.Close()
 
 			err = g.Wait() // waits for all parties to terminate
 			require.Nil(t, err)
