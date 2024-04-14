@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
@@ -37,7 +38,7 @@ func TestExecutor(t *testing.T) {
 
 			executors := make(map[helium.NodeID]*Executor, len(nids))
 			testTrans := NewTestTransport()
-			testCoord := NewTestCoordinator(hid)
+			testCoord := coord.NewTestCoordinator[Event](hid)
 
 			ct := testSess.Encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
 			rkg1Done := make(chan struct{})
@@ -112,7 +113,7 @@ func TestExecutor(t *testing.T) {
 
 			evChan, _, err := testCoord.Register(helium.ContextWithNodeID(ctx, hid))
 			require.Nil(t, err)
-			helper, err = NewExectutor(conf, hid, testSess.HelperSession, *evChan, hip, testTrans)
+			helper, err = NewExectutor(conf, hid, testSess.HelperSession, evChan, hip, testTrans)
 			require.Nil(t, err)
 
 			g, gctx := errgroup.WithContext(ctx)
@@ -121,7 +122,7 @@ func TestExecutor(t *testing.T) {
 				nid := nid
 				evChan, _, err := testCoord.Register(helium.ContextWithNodeID(ctx, nid))
 				require.Nil(t, err)
-				executors[nid], err = NewExectutor(conf, nid, testSess.NodeSessions[nid], *evChan, pip, testTrans.TransportFor(nid))
+				executors[nid], err = NewExectutor(conf, nid, testSess.NodeSessions[nid], evChan, pip, testTrans.TransportFor(nid))
 				require.Nil(t, err)
 				g.Go(func() error { return executors[nid].Run(gctx) })
 				err = helper.Register(nid)

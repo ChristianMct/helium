@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"golang.org/x/sync/errgroup"
@@ -32,7 +33,7 @@ type Executor struct {
 
 	sessions      session.SessionProvider
 	transport     Transport
-	upstream      EventChannel
+	upstream      *coord.Channel[Event]
 	inputProvider InputProvider
 
 	// node tracking
@@ -83,17 +84,6 @@ type ExecutorConfig struct {
 type Transport interface {
 	OutgoingShares() chan<- Share
 	IncomingShares() <-chan Share
-}
-
-// Coordinator is the interface for protocol coordination.
-type Coordinator interface {
-	Incoming() <-chan Event
-	Outgoing() chan<- Event
-}
-
-type EventChannel struct {
-	Incoming <-chan Event
-	Outgoing chan<- Event
 }
 
 // InputProvider is the interface the provision of protocol inputs. It is called
@@ -152,7 +142,7 @@ func (ev Event) IsComputeEvent() bool {
 }
 
 // NewExectutor creates a new executor.
-func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, coord EventChannel, ip InputProvider, trans Transport) (*Executor, error) {
+func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, upstream *coord.Channel[Event], ip InputProvider, trans Transport) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
 	if s.config.SigQueueSize == 0 {
@@ -171,7 +161,9 @@ func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.S
 	s.self = ownID
 	s.sessions = sessions
 
-	s.upstream = coord
+	// TODO Register in Run
+	s.upstream = upstream
+
 	s.transport = trans
 	s.inputProvider = ip
 
@@ -205,6 +197,7 @@ func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is ca
 	doneWithShareTransport := make(chan struct{})
 
 	shareRoutines := errgroup.Group{}
+
 	// processes incoming shares from the transport
 	shareRoutines.Go(func() error {
 		for {
@@ -665,77 +658,77 @@ func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {
 	return false
 }
 
-type testCoordinator struct {
-	hid                helium.NodeID
-	log                []Event
-	closed             bool
-	incoming, outgoing chan Event
-	clients            []chan Event
+// type testCoordinator struct {
+// 	hid                helium.NodeID
+// 	log                []Event
+// 	closed             bool
+// 	incoming, outgoing chan Event
+// 	clients            []chan Event
 
-	l sync.Mutex
-}
+// 	l sync.Mutex
+// }
 
-func NewTestCoordinator(hid helium.NodeID) *testCoordinator {
-	tc := &testCoordinator{hid: hid,
-		log:      make([]Event, 0),
-		incoming: make(chan Event),
-		outgoing: make(chan Event),
-		clients:  make([]chan Event, 0)}
-	go func() {
-		for ev := range tc.outgoing {
-			tc.l.Lock()
-			tc.log = append(tc.log, ev)
-			for _, cli := range tc.clients {
-				cli <- ev
-			}
-			tc.l.Unlock()
-		}
-		tc.l.Lock()
-		tc.closed = true
-		for _, cli := range tc.clients {
-			close(cli)
-		}
-		tc.l.Unlock()
-	}()
-	return tc
-}
+// func NewTestCoordinator(hid helium.NodeID) *testCoordinator {
+// 	tc := &testCoordinator{hid: hid,
+// 		log:      make([]Event, 0),
+// 		incoming: make(chan Event),
+// 		outgoing: make(chan Event),
+// 		clients:  make([]chan Event, 0)}
+// 	go func() {
+// 		for ev := range tc.outgoing {
+// 			tc.l.Lock()
+// 			tc.log = append(tc.log, ev)
+// 			for _, cli := range tc.clients {
+// 				cli <- ev
+// 			}
+// 			tc.l.Unlock()
+// 		}
+// 		tc.l.Lock()
+// 		tc.closed = true
+// 		for _, cli := range tc.clients {
+// 			close(cli)
+// 		}
+// 		tc.l.Unlock()
+// 	}()
+// 	return tc
+// }
 
-func (tc *testCoordinator) Close() {
-	close(tc.incoming)
-}
+// func (tc *testCoordinator) Close() {
+// 	close(tc.incoming)
+// }
 
-func (tc *testCoordinator) Register(ctx context.Context) (evChan *EventChannel, present int, err error) {
+// func (tc *testCoordinator) Register(ctx context.Context) (evChan *EventChannel, present int, err error) {
 
-	nid, has := helium.NodeIDFromContext(ctx)
-	if !has {
-		return nil, 0, fmt.Errorf("no node id found in context")
-	}
+// 	nid, has := helium.NodeIDFromContext(ctx)
+// 	if !has {
+// 		return nil, 0, fmt.Errorf("no node id found in context")
+// 	}
 
-	if nid == tc.hid {
-		return &EventChannel{Incoming: tc.incoming, Outgoing: tc.outgoing}, len(tc.log), nil
-	}
+// 	if nid == tc.hid {
+// 		return &EventChannel{Incoming: tc.incoming, Outgoing: tc.outgoing}, len(tc.log), nil
+// 	}
 
-	tc.l.Lock()
-	p := len(tc.log)
-	cliInc, cliOut := make(chan Event, p), make(chan Event)
-	for _, ev := range tc.log {
-		cliInc <- ev
-	}
-	if tc.closed {
-		close(cliInc)
-	} else {
-		tc.clients = append(tc.clients, cliInc)
-	}
-	tc.l.Unlock()
+// 	tc.l.Lock()
+// 	p := len(tc.log)
+// 	cliInc, cliOut := make(chan Event, p), make(chan Event)
+// 	for _, ev := range tc.log {
+// 		cliInc <- ev
+// 	}
+// 	if tc.closed {
+// 		close(cliInc)
+// 	} else {
+// 		tc.clients = append(tc.clients, cliInc)
+// 	}
+// 	tc.l.Unlock()
 
-	go func() {
-		for ev := range cliOut {
-			tc.outgoing <- ev
-		}
-	}()
+// 	go func() {
+// 		for ev := range cliOut {
+// 			tc.outgoing <- ev
+// 		}
+// 	}()
 
-	return &EventChannel{Incoming: cliInc, Outgoing: cliOut}, p, nil
-}
+// 	return &EventChannel{Incoming: cliInc, Outgoing: cliOut}, p, nil
+// }
 
 type testTransport struct {
 	incoming, outgoing chan Share

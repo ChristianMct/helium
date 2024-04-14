@@ -9,6 +9,7 @@ import (
 	"log"
 
 	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
@@ -38,16 +39,18 @@ type Service struct {
 	completed *protocol.CompleteMap
 }
 
+type Event struct {
+	protocol.Event
+}
+
+type Coordinator coord.Coordinator[Event]
+
 // Transport defines the transport interface needed by the setup service.
 // In the current implementation, this corresponds to the helper interface.
 type Transport interface {
 	protocol.Transport
 	// GetAggregationOutput returns the aggregation output for the given protocol.
 	GetAggregationOutput(context.Context, protocol.Descriptor) (*protocol.AggregationOutput, error)
-}
-
-type Coordinator interface {
-	Register(ctx context.Context) (evChan *protocol.EventChannel, present int, err error)
 }
 
 // NewSetupService creates a new setup service.
@@ -60,7 +63,7 @@ func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf
 	s.incoming = make(chan protocol.Event)
 	s.outgoing = make(chan protocol.Event)
 
-	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, protocol.EventChannel{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput, trans)
+	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +74,7 @@ func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf
 	return s, nil
 }
 
-func recoverPresentState(events <-chan protocol.Event, present int) (completePd, runningPd []protocol.Descriptor, err error) {
+func recoverPresentState(events <-chan Event, present int) (completePd, runningPd []protocol.Descriptor, err error) {
 
 	if present == 0 {
 		return
@@ -114,7 +117,7 @@ func recoverPresentState(events <-chan protocol.Event, present int) (completePd,
 
 // Init initializes the setup service from the current state of the protocols.
 // Completed protocols are marked as such, and running protocols are queued for execution.
-func (s *Service) Init(ctx context.Context, upstreamInc <-chan protocol.Event, present int) error { // TODO: make private
+func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present int) error { // TODO: make private
 
 	var complPd, runPd, err = recoverPresentState(upstreamInc, present)
 	if err != nil {
@@ -164,8 +167,8 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator) error {
 	go func() {
 		for ev := range upstreamChan.Incoming {
 			s.Logf("new coordination event: %s", ev)
-			s.processEvent(ev) // update local state
-			s.incoming <- ev   // pass the event downstream
+			s.processEvent(ev)     // update local state
+			s.incoming <- ev.Event // pass the event downstream
 		}
 		close(upstreamDone)
 	}()
@@ -174,8 +177,8 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator) error {
 	downstreamDone := make(chan struct{})
 	go func() {
 		for ev := range s.outgoing {
-			s.processEvent(ev)          // update local state
-			upstreamChan.Outgoing <- ev // pass the event upstream
+			s.processEvent(Event{ev})          // update local state
+			upstreamChan.Outgoing <- Event{ev} // pass the event upstream
 		}
 		close(downstreamDone)
 	}()
@@ -203,7 +206,7 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator) error {
 	return nil
 }
 
-func (s *Service) processEvent(ev protocol.Event) {
+func (s *Service) processEvent(ev Event) {
 
 	if !ev.IsSetupEvent() {
 		panic("non-setup event sent to setup service")

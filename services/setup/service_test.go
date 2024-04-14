@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/utils"
@@ -123,7 +124,7 @@ func TestSetup(t *testing.T) {
 				}
 
 				all, _, clou := getNodes(t, ts, testSess)
-				coord := protocol.NewTestCoordinator(hid)
+				tc := coord.NewTestCoordinator[Event](hid)
 
 				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
@@ -132,7 +133,7 @@ func TestSetup(t *testing.T) {
 					for _, sig := range sigList {
 						clou.RunSignature(ctx, sig)
 					}
-					coord.Close()
+					tc.Close()
 				}()
 
 				// run all the nodes
@@ -142,7 +143,7 @@ func TestSetup(t *testing.T) {
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(nodesRunCtx, coord)
+						err := node.Run(nodesRunCtx, tc)
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -178,7 +179,7 @@ func TestSetupLateConnect(t *testing.T) {
 				for _, node := range cli {
 					clis = append(clis, node)
 				}
-				coord := protocol.NewTestCoordinator(hid)
+				tc := coord.NewTestCoordinator[Event](hid)
 
 				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
@@ -187,13 +188,13 @@ func TestSetupLateConnect(t *testing.T) {
 					for _, sig := range sigList {
 						clou.RunSignature(ctx, sig)
 					}
-					coord.Close()
+					tc.Close()
 				}()
 
 				// run helper and t session nodes
 				g, nodesRunCtx := errgroup.WithContext(ctx)
 				g.Go(func() error {
-					err := clou.Run(nodesRunCtx, coord)
+					err := clou.Run(nodesRunCtx, tc)
 					return errors.WithMessagef(err, "error at node %s", hid)
 				})
 				for _, node := range clis[:ts.T] {
@@ -201,7 +202,7 @@ func TestSetupLateConnect(t *testing.T) {
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(nodesRunCtx, coord)
+						err := node.Run(nodesRunCtx, tc)
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -210,7 +211,7 @@ func TestSetupLateConnect(t *testing.T) {
 
 				// run the remaining nodes
 				for _, node := range clis[ts.T:] {
-					err := node.Run(ctx, coord)
+					err := node.Run(ctx, tc)
 					require.Nil(t, err)
 				}
 
@@ -235,7 +236,7 @@ func TestSetupRetries(t *testing.T) {
 	}
 
 	all, cli, clou := getNodes(t, ts, testSess)
-	coord := protocol.NewTestCoordinator(hid)
+	tc := coord.NewTestCoordinator[Event](hid)
 
 	ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
 
@@ -243,13 +244,13 @@ func TestSetupRetries(t *testing.T) {
 	go func() {
 		err = clou.RunSignature(ctx, protocol.Signature{Type: protocol.CKG})
 		require.Nil(t, err)
-		coord.Close()
+		tc.Close()
 	}()
 
 	// runs helper
 	g, nodesRunCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		err := clou.Run(nodesRunCtx, coord)
+		err := clou.Run(nodesRunCtx, tc)
 		return errors.WithMessagef(err, "error at node %s", hid)
 	})
 
@@ -261,20 +262,22 @@ func TestSetupRetries(t *testing.T) {
 
 	// runs only p0
 	g.Go(func() error {
-		err := p0.Run(nodesRunCtx, coord)
+		err := p0.Run(nodesRunCtx, tc)
 		return errors.WithMessagef(err, "error at node %s", p0.self)
 	})
 
-	p1Chan, _, err := coord.Register(helium.ContextWithNodeID(nodesRunCtx, p1.self))
+	p1Chan, _, err := tc.Register(helium.ContextWithNodeID(nodesRunCtx, p1.self))
 	require.Nil(t, err)
 	ev := <-p1Chan.Incoming
 	require.Equal(t,
-		protocol.Event{
-			EventType: protocol.Started,
-			Descriptor: protocol.Descriptor{
-				Signature:    protocol.Signature{Type: protocol.CKG},
-				Participants: []helium.NodeID{"node-0", "node-1"},
-				Aggregator:   "helper",
+		Event{
+			Event: protocol.Event{
+				EventType: protocol.Started,
+				Descriptor: protocol.Descriptor{
+					Signature:    protocol.Signature{Type: protocol.CKG},
+					Participants: []helium.NodeID{"node-0", "node-1"},
+					Aggregator:   "helper",
+				},
 			},
 		},
 		ev)
@@ -285,12 +288,14 @@ func TestSetupRetries(t *testing.T) {
 
 	ev = <-p1Chan.Incoming
 	require.Equal(t,
-		protocol.Event{
-			EventType: protocol.Failed,
-			Descriptor: protocol.Descriptor{
-				Signature:    protocol.Signature{Type: protocol.CKG},
-				Participants: []helium.NodeID{"node-0", "node-1"},
-				Aggregator:   "helper",
+		Event{
+			protocol.Event{
+				EventType: protocol.Failed,
+				Descriptor: protocol.Descriptor{
+					Signature:    protocol.Signature{Type: protocol.CKG},
+					Participants: []helium.NodeID{"node-0", "node-1"},
+					Aggregator:   "helper",
+				},
 			},
 		},
 		ev)
@@ -298,29 +303,33 @@ func TestSetupRetries(t *testing.T) {
 	// registers and run p2
 	g.Go(func() error {
 		clou.Register(p2.self)
-		err := p2.Run(nodesRunCtx, coord)
+		err := p2.Run(nodesRunCtx, tc)
 		return errors.WithMessagef(err, "error at node %s", p2.self)
 	})
 	ev = <-p1Chan.Incoming
 	require.Equal(t,
-		protocol.Event{
-			EventType: protocol.Started,
-			Descriptor: protocol.Descriptor{
-				Signature:    protocol.Signature{Type: protocol.CKG},
-				Participants: []helium.NodeID{"node-0", "node-2"},
-				Aggregator:   "helper",
+		Event{
+			protocol.Event{
+				EventType: protocol.Started,
+				Descriptor: protocol.Descriptor{
+					Signature:    protocol.Signature{Type: protocol.CKG},
+					Participants: []helium.NodeID{"node-0", "node-2"},
+					Aggregator:   "helper",
+				},
 			},
 		},
 		ev)
 
 	ev = <-p1Chan.Incoming
 	require.Equal(t,
-		protocol.Event{
-			EventType: protocol.Completed,
-			Descriptor: protocol.Descriptor{
-				Signature:    protocol.Signature{Type: protocol.CKG},
-				Participants: []helium.NodeID{"node-0", "node-2"},
-				Aggregator:   "helper",
+		Event{
+			protocol.Event{
+				EventType: protocol.Completed,
+				Descriptor: protocol.Descriptor{
+					Signature:    protocol.Signature{Type: protocol.CKG},
+					Participants: []helium.NodeID{"node-0", "node-2"},
+					Aggregator:   "helper",
+				},
 			},
 		},
 		ev)
@@ -328,7 +337,7 @@ func TestSetupRetries(t *testing.T) {
 	require.Nil(t, err)
 
 	// run p1
-	err = p1.Run(ctx, coord)
+	err = p1.Run(ctx, tc)
 	require.Nil(t, err)
 
 	for _, n := range all {

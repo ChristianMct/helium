@@ -12,6 +12,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
@@ -110,6 +111,13 @@ type ServiceConfig struct {
 	Protocols protocol.ExecutorConfig
 }
 
+type Event struct {
+	CircuitEvent  *circuit.Event
+	ProtocolEvent *protocol.Event
+}
+
+type Coordinator coord.Coordinator[Event]
+
 // Service represents a compute service instance.
 type Service struct {
 	config ServiceConfig
@@ -169,10 +177,11 @@ func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, co
 
 	s.self = ownID
 	s.sessions = sessions
-	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, protocol.EventChannel{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput, trans)
+	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput, trans)
 	if err != nil {
 		return nil, err
 	}
+
 	s.transport = trans
 	s.pubkeyBackend = helium.NewCachedPublicKeyBackend(pkbk)
 
