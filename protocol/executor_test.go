@@ -113,18 +113,19 @@ func TestExecutor(t *testing.T) {
 
 			evChan, _, err := testCoord.Register(helium.ContextWithNodeID(ctx, hid))
 			require.Nil(t, err)
-			helper, err = NewExectutor(conf, hid, testSess.HelperSession, evChan, hip, testTrans)
+			helper, err = NewExectutor(conf, hid, testSess.HelperSession, evChan, hip)
 			require.Nil(t, err)
 
 			g, gctx := errgroup.WithContext(ctx)
-			g.Go(func() error { return helper.Run(gctx) })
+			g.Go(func() error { return helper.Run(gctx, testTrans) })
 			for nid := range nids {
 				nid := nid
 				evChan, _, err := testCoord.Register(helium.ContextWithNodeID(ctx, nid))
 				require.Nil(t, err)
-				executors[nid], err = NewExectutor(conf, nid, testSess.NodeSessions[nid], evChan, pip, testTrans.TransportFor(nid))
+				nexec, err := NewExectutor(conf, nid, testSess.NodeSessions[nid], evChan, pip)
+				executors[nid] = nexec
 				require.Nil(t, err)
-				g.Go(func() error { return executors[nid].Run(gctx) })
+				g.Go(func() error { return nexec.Run(gctx, testTrans.TransportFor(nid)) })
 				err = helper.Register(nid)
 				if err != nil {
 					t.Fatal(err)

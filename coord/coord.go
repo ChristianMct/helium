@@ -70,16 +70,18 @@ func (tc *TestCoordinator[T]) Close() {
 
 func (tc *TestCoordinator[T]) Register(ctx context.Context) (evChan *Channel[T], present int, err error) {
 
+	tc.l.Lock()
+	defer tc.l.Unlock()
+
 	nid, has := helium.NodeIDFromContext(ctx)
 	if !has {
 		return nil, 0, fmt.Errorf("no node id found in context")
 	}
 
 	if nid == tc.hid {
-		return tc.c.Channel(), len(tc.log), nil
+		return tc.c.Channel(), 0, nil
 	}
 
-	tc.l.Lock()
 	p := len(tc.log)
 	cliC := channel[T]{incoming: make(chan T, p), outgoing: make(chan T)}
 	for _, ev := range tc.log {
@@ -90,13 +92,6 @@ func (tc *TestCoordinator[T]) Register(ctx context.Context) (evChan *Channel[T],
 	} else {
 		tc.clients = append(tc.clients, cliC.incoming)
 	}
-	tc.l.Unlock()
-
-	go func() {
-		for ev := range cliC.outgoing {
-			tc.c.outgoing <- ev
-		}
-	}()
 
 	return cliC.Channel(), p, nil
 }

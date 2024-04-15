@@ -52,19 +52,6 @@ type testnode struct {
 	Outputs        map[helium.CircuitID]circuit.Output
 }
 
-type testNodeTrans struct {
-	protocol.Transport
-	helperSrv *Service
-}
-
-func (tnt *testNodeTrans) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
-	return tnt.helperSrv.PutCiphertext(ctx, ct)
-}
-
-func (tnt *testNodeTrans) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
-	return tnt.helperSrv.GetCiphertext(ctx, ctID)
-}
-
 func TestCloudAssistedComputeBGV(t *testing.T) {
 
 	bgvParamsLiteral := bgv.ParametersLiteral{
@@ -111,9 +98,6 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 
 			nids := utils.NewSet(sessParams.Nodes)
 
-			coord := coord.NewTestCoordinator[Event](hid)
-			protoTrans := protocol.NewTestTransport()
-
 			all := make(map[helium.NodeID]*testnode, ts.N+1)
 			clou := new(testnode)
 			all["helper"] = clou
@@ -129,8 +113,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				},
 			}
 
-			srvTrans := &testNodeTrans{Transport: protoTrans}
-			clou.Service, err = NewComputeService(hid, testSess.HelperSession, conf, testSess, srvTrans)
+			clou.Service, err = NewComputeService(hid, testSess.HelperSession, conf, testSess)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -142,8 +125,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				nid := nid
 				cli := new(testnode)
 				cli.Session = testSess.NodeSessions[nid]
-				srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-				cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], conf, testSess, srvTrans)
+				cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], conf, testSess)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -164,6 +146,9 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				require.Nil(t, err)
 			}
 
+			tc := coord.NewTestCoordinator[Event](hid)
+			tt := newTestTransport(clou.Service)
+
 			g, ctx := errgroup.WithContext(ctx)
 			// run the nodes
 			for nid, node := range all {
@@ -177,7 +162,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				})
 				g.Go(func() error {
 					return errors.WithMessage(
-						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, coord),
+						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, tc, tt.TransportFor(nid)),
 						fmt.Sprintf("at node %s", nid))
 				})
 			}
@@ -203,7 +188,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				err = clou.EvalCircuit(ctx, cd)
 				require.Nil(t, err)
 			}
-			coord.Close()
+			tc.Close()
 
 			err = g.Wait() // waits for all parties to terminate
 			require.Nil(t, err)
@@ -281,9 +266,6 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 
 			nids := utils.NewSet(sessParams.Nodes)
 
-			tc := coord.NewTestCoordinator[Event](hid)
-			protoTrans := protocol.NewTestTransport()
-
 			all := make(map[helium.NodeID]*testnode, ts.N+1)
 			clou := new(testnode)
 			all["helper"] = clou
@@ -299,8 +281,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				},
 			}
 
-			srvTrans := &testNodeTrans{Transport: protoTrans}
-			clou.Service, err = NewComputeService(hid, testSess.HelperSession, conf, testSess, srvTrans)
+			clou.Service, err = NewComputeService(hid, testSess.HelperSession, conf, testSess)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -312,8 +293,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				nid := nid
 				cli := new(testnode)
 				cli.Session = testSess.NodeSessions[nid]
-				srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-				cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], conf, testSess, srvTrans)
+				cli.Service, err = NewComputeService(nid, testSess.NodeSessions[nid], conf, testSess)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -334,6 +314,9 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				require.Nil(t, err)
 			}
 
+			tc := coord.NewTestCoordinator[Event](hid)
+			tt := newTestTransport(clou.Service)
+
 			g, ctx := errgroup.WithContext(ctx)
 			// run the nodes
 			for nid, node := range all {
@@ -347,7 +330,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				})
 				g.Go(func() error {
 					return errors.WithMessage(
-						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, tc),
+						cli.Service.Run(ctx, cli.InputProvider, cli.OutputReceiver, tc, tt.TransportFor(nid)),
 						fmt.Sprintf("at node %s", nid))
 				})
 			}

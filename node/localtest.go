@@ -14,7 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/objectstore"
+	"github.com/ChristianMct/helium/protocol"
 	cryptoUtil "github.com/ChristianMct/helium/utils/certs"
 
 	"github.com/ChristianMct/helium"
@@ -83,15 +85,18 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 		}
 	}
 
+	testCoord := coord.NewTestCoordinator[Event](helperID)
+	testTrans := protocol.NewTestTransport()
+
 	test.Nodes = make([]*Node, 1+config.PeerNodes)
-	test.HelperNode, err = New(test.HelperConfig, test.NodesList)
+	test.HelperNode, err = New(test.HelperConfig, test.NodesList, testCoord, testTrans)
 	if err != nil {
 		return nil, err
 	}
 	test.Nodes[0] = test.HelperNode
 	for i, nc := range test.SessNodeConfigs {
 		var err error
-		test.Nodes[i+1], err = New(nc, test.NodesList)
+		test.Nodes[i+1], err = New(nc, test.NodesList, testCoord, testTrans)
 		if err != nil {
 			return nil, err
 		}

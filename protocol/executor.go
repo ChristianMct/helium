@@ -142,7 +142,7 @@ func (ev Event) IsComputeEvent() bool {
 }
 
 // NewExectutor creates a new executor.
-func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, upstream *coord.Channel[Event], ip InputProvider, trans Transport) (*Executor, error) {
+func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, upstream *coord.Channel[Event], ip InputProvider) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
 	if s.config.SigQueueSize == 0 {
@@ -164,7 +164,6 @@ func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.S
 	// TODO Register in Run
 	s.upstream = upstream
 
-	s.transport = trans
 	s.inputProvider = ip
 
 	s.queuedSig = make(chan struct {
@@ -192,7 +191,9 @@ func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.S
 	return s, nil
 }
 
-func (s *Executor) Run(ctx context.Context) error { // TODO: cancel if ctx is cancelled
+func (s *Executor) Run(ctx context.Context, trans Transport) error { // TODO: cancel if ctx is cancelled
+
+	s.transport = trans
 
 	doneWithShareTransport := make(chan struct{})
 
@@ -730,34 +731,24 @@ func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {
 // 	return &EventChannel{Incoming: cliInc, Outgoing: cliOut}, p, nil
 // }
 
-type testTransport struct {
+type TestTransport struct {
 	incoming, outgoing chan Share
 }
 
-func NewTestTransport() *testTransport {
-	return &testTransport{incoming: make(chan Share), outgoing: make(chan Share)}
+func NewTestTransport() *TestTransport {
+	return &TestTransport{incoming: make(chan Share), outgoing: nil}
 }
 
-func (tt *testTransport) TransportFor(nid helium.NodeID) *testTransport {
-	tnt := new(testTransport)
-	tnt.incoming = make(chan Share)
-	tnt.outgoing = make(chan Share)
-
-	go func() {
-		close(tnt.incoming)
-		for share := range tnt.outgoing {
-			tt.incoming <- share
-			//log.Printf("trans | share from %s for %s sent to aggregator\n", nid, share.ProtocolID[:25])
-		}
-	}()
-
+func (tt *TestTransport) TransportFor(nid helium.NodeID) *TestTransport {
+	tnt := new(TestTransport)
+	tnt.outgoing = tt.incoming
 	return tnt
 }
 
-func (tt *testTransport) IncomingShares() <-chan Share {
+func (tt *TestTransport) IncomingShares() <-chan Share {
 	return tt.incoming
 }
 
-func (tt *testTransport) OutgoingShares() chan<- Share {
+func (tt *TestTransport) OutgoingShares() chan<- Share {
 	return tt.outgoing
 }

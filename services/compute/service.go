@@ -25,18 +25,6 @@ func init() {
 	close(NoOutput)
 }
 
-// Transport defines the transport interface necessary for the compute service.
-// In the current implementation (helper-assisted setting), this corresponds to the helper interface.
-type Transport interface {
-	protocol.Transport
-
-	// PutCiphertext registers a ciphertext within the transport
-	PutCiphertext(ctx context.Context, ct helium.Ciphertext) error
-
-	// GetCiphertext requests a ciphertext from the transport.
-	GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error)
-}
-
 type Encoder interface {
 	//Encode(any, *rlwe.Plaintext) error // TODO: Lattigo should have a more generic interface
 }
@@ -47,7 +35,7 @@ type FHEProvider interface {
 	GetParameters(ctx context.Context) (session.FHEParameters, error)
 	GetEncoder(ctx context.Context) (Encoder, error)
 	GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error)
-	//GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
+	// GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
 	GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error)
 }
 
@@ -158,7 +146,7 @@ const (
 )
 
 // NewComputeService creates a new compute service instance.
-func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk circuit.PublicKeyProvider, trans Transport) (s *Service, err error) {
+func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk circuit.PublicKeyProvider) (s *Service, err error) {
 	s = new(Service)
 
 	s.config = conf
@@ -175,12 +163,11 @@ func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, co
 
 	s.self = ownID
 	s.sessions = sessions
-	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput, trans)
+	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
 	if err != nil {
 		return nil, err
 	}
 
-	s.transport = trans
 	s.pubkeyBackend = helium.NewCachedPublicKeyBackend(pkbk)
 
 	s.queuedCircuits = make(chan circuit.Descriptor, conf.CircQueueSize)
@@ -219,7 +206,7 @@ func (s *Service) RegisterCircuits(cs map[circuit.Name]circuit.Circuit) error {
 	return nil
 }
 
-func recoverPresentState(events <-chan Event, present int) (completedProto, runningProto []protocol.Descriptor, completedCirc, runningCirc []circuit.Descriptor, err error) {
+func recoverPresentState(events <-chan Event, present int) (completedProto, failedProto, runningProto []protocol.Descriptor, completedCirc, failedCirc, runningCirc []circuit.Descriptor, err error) {
 
 	if present == 0 {
 		return
@@ -248,6 +235,8 @@ func recoverPresentState(events <-chan Event, present int) (completedProto, runn
 				delete(runCircuit, cid)
 				if ev.CircuitEvent.EventType == circuit.Completed {
 					completedCirc = append(completedCirc, ev.CircuitEvent.Descriptor)
+				} else {
+					failedCirc = append(failedCirc, ev.CircuitEvent.Descriptor)
 				}
 			}
 		}
@@ -270,6 +259,8 @@ func recoverPresentState(events <-chan Event, present int) (completedProto, runn
 				delete(runProto, pid)
 				if ev.ProtocolEvent.EventType == protocol.Completed {
 					completedProto = append(completedProto, ev.ProtocolEvent.Descriptor)
+				} else {
+					failedProto = append(failedProto, ev.ProtocolEvent.Descriptor)
 				}
 			}
 		}
@@ -280,14 +271,22 @@ func recoverPresentState(events <-chan Event, present int) (completedProto, runn
 		}
 	}
 
+	for _, rp := range runProto {
+		runningProto = append(runningProto, rp)
+	}
+
+	for _, rc := range runCircuit {
+		runningCirc = append(runningCirc, rc)
+	}
+
 	return
 }
 
 // Init initializes the compute service with the currently completed and running circuits and protocols.
 // It queues running circuits and protocols for execution.
-func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present int) error { // TODO make private
+func (s *Service) init(ctx context.Context, upstreamInc <-chan Event, present int) error { // TODO make private
 
-	complPd, runPd, complCd, runCd, err := recoverPresentState(upstreamInc, present)
+	complPd, failPd, runPd, complCd, failCd, runCd, err := recoverPresentState(upstreamInc, present)
 	if err != nil {
 		return err
 	}
@@ -326,6 +325,9 @@ func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present in
 		s.incoming <- protocol.Event{EventType: protocol.Started, Descriptor: rpd}
 	}
 
+	s.Logf("service initialized protocols with %d completed, %d failed and %d running (present=%d)", len(complPd), len(failPd), len(runPd), present)
+	s.Logf("service initialized circuits with %d completed, %d failed and %d running (present=%d)", len(complCd), len(failCd), len(runCd), present)
+
 	return nil
 }
 
@@ -333,9 +335,12 @@ func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present in
 // coordinator for the protocol executor. It also processes the circuit execution queue and fetches the output for
 // completed circuits.
 // The method returns when the upstream coordinator is done and all circuits are completed.
-func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, upstream Coordinator) error {
+func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, upstream Coordinator, trans Transport) error {
 
 	s.Logf("starting service.Run")
+
+	s.transport = trans
+	s.inputProvider = ip
 
 	runCtx, cancelRunCtx := context.WithCancel(helium.ContextWithNodeID(ctx, s.self))
 	defer cancelRunCtx()
@@ -346,17 +351,67 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 		return fmt.Errorf("error registering to upstream coordinator: %w", err)
 	}
 
-	// initializes the service from the current state of the protocols
-	if err = s.Init(runCtx, upstreamChan.Incoming, present); err != nil {
-		return fmt.Errorf("error while initializing service: %w", err)
-	}
-
-	s.inputProvider = ip
+	// starts the protocol executor (init sends running protocols to its queue)
 	go func() {
-		if err := s.Executor.Run(ctx); err != nil {
+		if err := s.Executor.Run(ctx, s.transport); err != nil {
 			panic(err) // TODO: return in Run
 		}
 	}()
+
+	// fetches the output for completed circuits (peer nodes only, init sends compl circuit to this queue)
+	go func() {
+		if or != nil {
+			for cd := range s.completedCircuits {
+				c, has := s.library[cd.Name]
+				if !has {
+					panic(fmt.Errorf("no registered circuit for name \"%s\"", cd.Name))
+				}
+
+				sess, has := s.sessions.GetSessionFromContext(ctx)
+				if !has {
+					panic(fmt.Errorf("could not retrieve session from the context"))
+				}
+
+				params := sess.Params
+
+				cinf, err := circuit.Parse(c, cd, params)
+				if err != nil {
+					panic(err)
+				}
+
+				for opl := range cinf.OutputsFor[s.self] {
+					ct, err := s.transport.GetCiphertext(ctx, helium.CiphertextID(opl))
+					if err != nil {
+						panic(err)
+					}
+
+					or <- circuit.Output{CircuitID: cd.CircuitID, Operand: circuit.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}}
+				}
+			}
+		} else {
+			for range s.completedCircuits {
+			}
+		}
+	}()
+
+	// processes the circuit execution queue (init sends running circuits to this queue)
+	evalRoutines, erctx := errgroup.WithContext(ctx)
+	for i := 0; i < s.config.MaxCircuitEvaluation; i++ {
+		evalRoutines.Go(func() error {
+			for cd := range s.queuedCircuits {
+				if err := s.runCircuit(erctx, cd, *upstreamChan); err != nil {
+					s.Logf("error during circuit execution %s: %v", cd.CircuitID, err)
+					return err
+				}
+			}
+			return nil
+		})
+	}
+
+	// initializes the service from the current state of the protocols
+	if err = s.init(runCtx, upstreamChan.Incoming, present); err != nil {
+		return fmt.Errorf("error while initializing service: %w", err)
+	}
 
 	// process incoming upstream Events
 	go func() {
@@ -426,56 +481,6 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 		}
 		close(downstreamDone)
-	}()
-
-	// process the circuit execution queue
-	evalRoutines, erctx := errgroup.WithContext(ctx)
-	for i := 0; i < s.config.MaxCircuitEvaluation; i++ {
-		evalRoutines.Go(func() error {
-			for cd := range s.queuedCircuits {
-				if err := s.runCircuit(erctx, cd, *upstreamChan); err != nil {
-					s.Logf("error during circuit execution %s: %v", cd.CircuitID, err)
-					return err
-				}
-			}
-			return nil
-		})
-	}
-
-	// fetches the output for completed circuits (peer nodes only)
-	go func() {
-		if or != nil {
-			for cd := range s.completedCircuits {
-				c, has := s.library[cd.Name]
-				if !has {
-					panic(fmt.Errorf("no registered circuit for name \"%s\"", cd.Name))
-				}
-
-				sess, has := s.sessions.GetSessionFromContext(ctx)
-				if !has {
-					panic(fmt.Errorf("could not retrieve session from the context"))
-				}
-
-				params := sess.Params
-
-				cinf, err := circuit.Parse(c, cd, params)
-				if err != nil {
-					panic(err)
-				}
-
-				for opl := range cinf.OutputsFor[s.self] {
-					ct, err := s.transport.GetCiphertext(ctx, helium.CiphertextID(opl))
-					if err != nil {
-						panic(err)
-					}
-
-					or <- circuit.Output{CircuitID: cd.CircuitID, Operand: circuit.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}}
-				}
-			}
-		} else {
-			for range s.completedCircuits {
-			}
-		}
 	}()
 
 	// sends the local outputs to the output receiver if any

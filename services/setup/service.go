@@ -45,16 +45,8 @@ type Event struct {
 
 type Coordinator coord.Coordinator[Event]
 
-// Transport defines the transport interface needed by the setup service.
-// In the current implementation, this corresponds to the helper interface.
-type Transport interface {
-	protocol.Transport
-	// GetAggregationOutput returns the aggregation output for the given protocol.
-	GetAggregationOutput(context.Context, protocol.Descriptor) (*protocol.AggregationOutput, error)
-}
-
 // NewSetupService creates a new setup service.
-func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, trans Transport, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownID
@@ -63,18 +55,18 @@ func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf
 	s.incoming = make(chan protocol.Event)
 	s.outgoing = make(chan protocol.Event)
 
-	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput, trans)
+	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
 	if err != nil {
 		return nil, err
 	}
-	s.transport = trans
+
 	s.resBackend = newObjStoreResultBackend(backend)
 	s.completed = protocol.NewCompletedProt(nil)
 
 	return s, nil
 }
 
-func recoverPresentState(events <-chan Event, present int) (completePd, runningPd []protocol.Descriptor, err error) {
+func recoverPresentState(events <-chan Event, present int) (completePd, failPd, runningPd []protocol.Descriptor, err error) {
 
 	if present == 0 {
 		return
@@ -85,7 +77,7 @@ func recoverPresentState(events <-chan Event, present int) (completePd, runningP
 	for ev := range events {
 		pid := ev.ID()
 		if !ev.Signature.Type.IsSetup() {
-			return nil, nil, fmt.Errorf("non-setup event %s", ev.HID())
+			return nil, nil, nil, fmt.Errorf("non-setup event %s", ev.HID())
 		}
 
 		switch ev.EventType {
@@ -104,12 +96,20 @@ func recoverPresentState(events <-chan Event, present int) (completePd, runningP
 			delete(runProto, pid)
 			if ev.EventType == protocol.Completed {
 				completePd = append(completePd, ev.Descriptor)
+			} else {
+				failPd = append(failPd, ev.Descriptor)
 			}
 		}
+		//log.Println("LOG", ev)
+
 		current++
 		if current == present {
 			break
 		}
+	}
+
+	for _, rp := range runProto {
+		runningPd = append(runningPd, rp)
 	}
 
 	return
@@ -117,9 +117,9 @@ func recoverPresentState(events <-chan Event, present int) (completePd, runningP
 
 // Init initializes the setup service from the current state of the protocols.
 // Completed protocols are marked as such, and running protocols are queued for execution.
-func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present int) error { // TODO: make private
+func (s *Service) init(upstreamInc <-chan Event, present int) error { // TODO: make private
 
-	var complPd, runPd, err = recoverPresentState(upstreamInc, present)
+	var complPd, failPd, runPd, err = recoverPresentState(upstreamInc, present)
 	if err != nil {
 		return err
 	}
@@ -133,10 +133,10 @@ func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present in
 
 	// queue running protocols
 	for _, rpd := range runPd {
-		s.incoming <- protocol.Event{EventType: protocol.Executing, Descriptor: rpd} // sends a protocol started event downstream
+		s.incoming <- protocol.Event{EventType: protocol.Started, Descriptor: rpd} // sends a protocol started event downstream
 	}
 
-	s.Logf("service initialized with %d completed and %d running protocols", len(complPd), len(runPd))
+	s.Logf("service initialized with %d completed, %d failed and %d running protocols (present=%d)", len(complPd), len(failPd), len(runPd), present)
 
 	return nil
 }
@@ -144,9 +144,11 @@ func (s *Service) Init(ctx context.Context, upstreamInc <-chan Event, present in
 // Run runs the setup service as coordinated by the given coordinator.
 // It processes and forwards incoming events from upstream (coordinator) and downstream (executor).
 // It returns when the upstream coordinator is done and the downstream executor is done.
-func (s *Service) Run(ctx context.Context, upstream Coordinator) error {
+func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport) error {
 
 	s.Logf("starting service.Run")
+
+	s.transport = trans
 
 	runCtx, cancelRunCtx := context.WithCancel(helium.ContextWithNodeID(ctx, s.self))
 	defer cancelRunCtx()
@@ -157,8 +159,18 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator) error {
 		return err
 	}
 
+	// starts the executor (init sends events to its queue)
+	executorRunReturned := make(chan struct{})
+	go func() {
+		err := s.executor.Run(runCtx, s.transport)
+		if err != nil {
+			panic(err) // TODO: return in Run
+		}
+		close(executorRunReturned)
+	}()
+
 	// initializes the service from the current state of the protocols
-	if err = s.Init(runCtx, upstreamChan.Incoming, present); err != nil {
+	if err = s.init(upstreamChan.Incoming, present); err != nil {
 		return fmt.Errorf("error while initializing service: %w", err)
 	}
 
@@ -181,15 +193,6 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator) error {
 			upstreamChan.Outgoing <- Event{ev} // pass the event upstream
 		}
 		close(downstreamDone)
-	}()
-
-	executorRunReturned := make(chan struct{})
-	go func() {
-		err := s.executor.Run(runCtx)
-		if err != nil {
-			panic(err) // TODO: return in Run
-		}
-		close(executorRunReturned)
 	}()
 
 	<-upstreamDone

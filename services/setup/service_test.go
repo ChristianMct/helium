@@ -1,8 +1,8 @@
 package setup
 
 import (
-	"context"
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/ChristianMct/helium/coord"
@@ -60,15 +60,6 @@ type testnode struct {
 	//protocol.Coordinator
 }
 
-type testNodeTrans struct {
-	protocol.Transport
-	helperSrv *Service
-}
-
-func (tt *testNodeTrans) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
-	return tt.helperSrv.GetAggregationOutput(ctx, pd)
-}
-
 func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all, sessNodes map[helium.NodeID]*testnode, helperNode *testnode) {
 	hid := helium.NodeID("helper")
 
@@ -76,27 +67,24 @@ func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all,
 
 	nids := utils.NewSet(sessParams.Nodes)
 
-	protoTrans := protocol.NewTestTransport()
+	//protoTrans := protocol.NewTestTransport()
 
 	all = make(map[helium.NodeID]*testnode, ts.N+1)
 	clou := new(testnode)
 	all["helper"] = clou
 
-	srvTrans := &testNodeTrans{Transport: protoTrans}
 	os := objectstore.NewMemObjectStore()
 	var err error
-	clou.Service, err = NewSetupService(hid, testSess.HelperSession, conf, srvTrans, os)
+	clou.Service, err = NewSetupService(hid, testSess.HelperSession, conf, os)
 	if err != nil {
 		t.Fatal(err)
 	}
-	//clou.Coordinator = coord
 
 	clients := make(map[helium.NodeID]*testnode, ts.N)
 	for nid := range nids {
 		cli := &testnode{}
 		cli.Session = testSess.NodeSessions[nid]
-		srvTrans := &testNodeTrans{Transport: protoTrans.TransportFor(nid), helperSrv: clou.Service}
-		cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], conf, srvTrans, objectstore.NewNullObjectStore())
+		cli.Service, err = NewSetupService(nid, testSess.NodeSessions[nid], conf, objectstore.NewNullObjectStore())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,6 +113,7 @@ func TestSetup(t *testing.T) {
 
 				all, _, clou := getNodes(t, ts, testSess)
 				tc := coord.NewTestCoordinator[Event](hid)
+				tt := newTestTransport(clou.Service)
 
 				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
@@ -143,7 +132,7 @@ func TestSetup(t *testing.T) {
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(nodesRunCtx, tc)
+						err := node.Run(nodesRunCtx, tc, tt.TransportFor(nid))
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -180,6 +169,7 @@ func TestSetupLateConnect(t *testing.T) {
 					clis = append(clis, node)
 				}
 				tc := coord.NewTestCoordinator[Event](hid)
+				tt := newTestTransport(clou.Service)
 
 				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
@@ -194,7 +184,7 @@ func TestSetupLateConnect(t *testing.T) {
 				// run helper and t session nodes
 				g, nodesRunCtx := errgroup.WithContext(ctx)
 				g.Go(func() error {
-					err := clou.Run(nodesRunCtx, tc)
+					err := clou.Run(nodesRunCtx, tc, tt.TransportFor(hid))
 					return errors.WithMessagef(err, "error at node %s", hid)
 				})
 				for _, node := range clis[:ts.T] {
@@ -202,7 +192,7 @@ func TestSetupLateConnect(t *testing.T) {
 					node := node
 					g.Go(func() error {
 						clou.Service.Register(nid)
-						err := node.Run(nodesRunCtx, tc)
+						err := node.Run(nodesRunCtx, tc, tt.TransportFor(nid))
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})
 				}
@@ -211,7 +201,7 @@ func TestSetupLateConnect(t *testing.T) {
 
 				// run the remaining nodes
 				for _, node := range clis[ts.T:] {
-					err := node.Run(ctx, tc)
+					err := node.Run(ctx, tc, tt.TransportFor(node.self))
 					require.Nil(t, err)
 				}
 
@@ -237,6 +227,7 @@ func TestSetupRetries(t *testing.T) {
 
 	all, cli, clou := getNodes(t, ts, testSess)
 	tc := coord.NewTestCoordinator[Event](hid)
+	tt := newTestTransport(clou.Service)
 
 	ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
 
@@ -250,7 +241,7 @@ func TestSetupRetries(t *testing.T) {
 	// runs helper
 	g, nodesRunCtx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		err := clou.Run(nodesRunCtx, tc)
+		err := clou.Run(nodesRunCtx, tc, tt)
 		return errors.WithMessagef(err, "error at node %s", hid)
 	})
 
@@ -262,7 +253,7 @@ func TestSetupRetries(t *testing.T) {
 
 	// runs only p0
 	g.Go(func() error {
-		err := p0.Run(nodesRunCtx, tc)
+		err := p0.Run(nodesRunCtx, tc, tt.TransportFor(p0.self))
 		return errors.WithMessagef(err, "error at node %s", p0.self)
 	})
 
@@ -303,7 +294,7 @@ func TestSetupRetries(t *testing.T) {
 	// registers and run p2
 	g.Go(func() error {
 		clou.Register(p2.self)
-		err := p2.Run(nodesRunCtx, tc)
+		err := p2.Run(nodesRunCtx, tc, tt.TransportFor(p2.self))
 		return errors.WithMessagef(err, "error at node %s", p2.self)
 	})
 	ev = <-p1Chan.Incoming
@@ -319,6 +310,7 @@ func TestSetupRetries(t *testing.T) {
 			},
 		},
 		ev)
+	log.Println("[test] got started on p1")
 
 	ev = <-p1Chan.Incoming
 	require.Equal(t,
@@ -337,7 +329,7 @@ func TestSetupRetries(t *testing.T) {
 	require.Nil(t, err)
 
 	// run p1
-	err = p1.Run(ctx, tc)
+	err = p1.Run(ctx, tc, tt.TransportFor(p1.self))
 	require.Nil(t, err)
 
 	for _, n := range all {

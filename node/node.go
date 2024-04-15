@@ -11,18 +11,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"slices"
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
-	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
-	"github.com/ChristianMct/helium/transport/centralized"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"golang.org/x/net/context"
 )
@@ -45,12 +42,15 @@ type Node struct {
 	sessions *session.SessionStore
 	objectstore.ObjectStore
 
+	upstream Coordinator
+
 	// transport
-	srv              *centralized.HeliumServer
-	cli              *centralized.HeliumClient
-	outgoingShares   chan protocol.Share
-	setupTransport   *protocolTransport
-	computeTransport *computeTransport
+	// srv              *centralized.HeliumServer
+	// cli              *centralized.HeliumClient
+	transport      Transport
+	outgoingShares chan protocol.Share
+	// setupTransport   *protocolTransport
+	// computeTransport *computeTransport
 
 	// services
 	setup   *setup.Service
@@ -64,7 +64,7 @@ type Node struct {
 
 // New creates a new Helium node from the provided config and node list.
 // The method returns an error if the config is invalid or if the node list is empty.
-func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
+func New(config Config, nodeList helium.NodesList, upstream Coordinator, trans Transport) (node *Node, err error) {
 	node = new(Node)
 
 	if err := ValidateConfig(config, nodeList); err != nil {
@@ -75,6 +75,8 @@ func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 	node.addr = config.Address
 	node.helperID = config.HelperID
 	node.nodeList = nodeList
+	node.upstream = upstream
+	node.transport = trans
 
 	// object store
 	node.ObjectStore, err = objectstore.NewObjectStoreFromConfig(config.ObjectStoreConfig)
@@ -92,33 +94,22 @@ func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 	}
 
 	// transport
-	if node.IsHelperNode() {
-		node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node, node)
-		node.srv.RegisterWatcher(node)
-	} else {
-		node.cli = centralized.NewHeliumClient(node.id, node.helperID, node.nodeList.AddressOf(node.helperID))
-	}
+	// if node.IsHelperNode() {
+	// 	node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node, node)
+	// 	node.srv.RegisterWatcher(node)
+	// } else {
+	// 	node.cli = centralized.NewHeliumClient(node.id, node.helperID, node.nodeList.AddressOf(node.helperID))
+	// }
 
-	node.outgoingShares = make(chan protocol.Share)
-	node.setupTransport = &protocolTransport{
-		outshares:            node.outgoingShares,
-		inshares:             make(chan protocol.Share),
-		getAggregationOutput: node.GetAggregationOutput}
-	node.computeTransport = &computeTransport{
-		protocolTransport: protocolTransport{
-			outshares:            node.outgoingShares,
-			inshares:             make(chan protocol.Share),
-			getAggregationOutput: node.GetAggregationOutput},
-		putCiphertext: node.PutCiphertext,
-		getCiphertext: node.GetCiphertext}
+	nodeTrans := newServicesTransport(trans)
 
 	// services
-	node.setup, err = setup.NewSetupService(node.id, node, config.SetupConfig, node.setupTransport, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id, node, config.SetupConfig, &nodeTrans.setupTransport, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
 
-	node.compute, err = compute.NewComputeService(node.id, node, config.ComputeConfig, node.setup, node.computeTransport)
+	node.compute, err = compute.NewComputeService(node.id, node, config.ComputeConfig, node.setup, &nodeTrans.computeTransport)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}
@@ -132,16 +123,16 @@ func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 }
 
 // RunNew creates a new Helium node from the provided config and node list, and runs the node with the provided app under the given context.
-func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app App, ip compute.InputProvider) (node *Node, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
-	node, err = New(config, nodeList)
+func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (node *Node, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+	node, err = New(config, nodeList, upstream, trans)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	err = node.Connect(ctx)
-	if err != nil {
-		return nil, nil, nil, err
-	}
+	// err = node.Connect(ctx)
+	// if err != nil {
+	// 	return nil, nil, nil, err
+	// }
 
 	cdescs, outs, err = node.Run(ctx, app, ip)
 	return
@@ -150,27 +141,27 @@ func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app A
 // Connect connects the node's transport layer to the network.
 // If the node has an address, it starts a server at the address.
 // If the node does not have an address, it connects to the helper node.
-func (node *Node) Connect(ctx context.Context) error {
-	if node.HasAddress() {
-		listener, err := net.Listen("tcp", string(node.addr))
-		if err != nil {
-			return err
-		}
-		node.Logf("starting server at %s", node.addr)
-		go func() {
-			if err := node.srv.Server.Serve(listener); err != nil {
-				log.Fatalf("error in grpc serve: %v", err)
-			}
-		}()
-	} else {
-		node.Logf("connecting to %s at %s", node.helperID, node.nodeList.AddressOf(node.helperID))
-		err := node.cli.Connect()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
+// func (node *Node) Connect(ctx context.Context) error {
+// 	if node.HasAddress() {
+// 		listener, err := net.Listen("tcp", string(node.addr))
+// 		if err != nil {
+// 			return err
+// 		}
+// 		node.Logf("starting server at %s", node.addr)
+// 		go func() {
+// 			if err := node.srv.Server.Serve(listener); err != nil {
+// 				log.Fatalf("error in grpc serve: %v", err)
+// 			}
+// 		}()
+// 	} else {
+// 		node.Logf("connecting to %s at %s", node.helperID, node.nodeList.AddressOf(node.helperID))
+// 		err := node.cli.Connect()
+// 		if err != nil {
+// 			return err
+// 		}
+// 	}
+// 	return nil
+// }
 
 // Run runs the node with the provided app under the given context.
 // The method returns channels to send circuit descriptors and receive circuit outputs.
@@ -186,6 +177,8 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 	if !exists {
 		return nil, nil, fmt.Errorf("session `%s` does not exist", sess.ID)
 	}
+
+	ctx = helium.ContextWithNodeID(ctx, node.id)
 
 	// App loading
 
@@ -204,17 +197,22 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 	cds := make(chan circuit.Descriptor)
 	or := make(chan circuit.Output)
 
+	sc, err := NewServicesCoordinator(ctx, node.upstream)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error creating a service coordinator: %w", err)
+	}
+
+	// go node.sendShares(ctx)
+
+	go func() {
+		err := node.setup.Run(ctx, sc.setupCoordinator)
+		if err != nil {
+			panic(err)
+		}
+	}()
+
 	// runs the setup phase
 	if node.IsHelperNode() {
-
-		setupCoord := NewCentralizedCoordinator(node.srv)
-		go func() {
-			err := node.setup.Run(ctx, setupCoord)
-			if err != nil {
-				panic(err)
-			}
-		}()
-
 		// TODO: load and verify state from persistent storage
 		for _, sig := range sigList {
 			sig := sig
@@ -225,99 +223,26 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		}
 
 		node.Logf("all signatures run, closing setup downstream")
-		close(setupCoord.incoming)
+		close(sc.setupCoordinator.incoming)
+	}
 
-		<-setupCoord.done
-		node.Logf("setup done Service done")
-		close(node.setupDone)
+	<-sc.setupDone
 
-		computeCoord := &coordinatorT{make(chan coordinator.Event), make(chan coordinator.Event)}
-
-		go func() {
-			err := node.compute.Run(ctx, ip, or, computeCoord)
-			if err != nil {
-				panic(err)
-			}
-		}()
-
-		downstreamDone := make(chan struct{})
-		go func() {
-			for ev := range computeCoord.outgoing {
-				cev := ev
-				node.srv.AppendEventToLog(cev)
-			}
-			close(downstreamDone)
-		}()
-
-		go func() {
-			<-node.setupDone
-			for cd := range cds {
-				node.Logf("new circuit descriptor: %s", cd)
-				cev := coordinator.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
-				computeCoord.incoming <- cev
-			}
-			node.Logf("user closed circuit discription channel, closing downstream")
-			close(computeCoord.incoming)
-			<-downstreamDone
-			node.Logf("compute service done, closing event channel")
-			//close(or) already closed by service
-			node.srv.CloseEventLog()
-		}()
-
-	} else {
-		events, present, err := node.cli.Register(ctx)
+	go func() {
+		err := node.compute.Run(ctx, ip, or, sc.computeCoordinator)
 		if err != nil {
-			return nil, nil, err
+			panic(err)
 		}
+	}()
 
-		// read the past events from the log and establish a list of completed and running protocols and circuits.
-		complPd, runPd, complCd, runCd, err := recoverPresentState(events, present) // TODO remove
-		if err != nil {
-			return nil, nil, err
+	if node.IsHelperNode() {
+		for cd := range cds {
+			node.Logf("new circuit descriptor: %s", cd)
+			cev := compute.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
+			sc.computeCoordinator.incoming <- cev
 		}
-
-		// Service initialization
-		if err := node.compute.Init(ctx, complCd, runCd, complPd, runPd); err != nil {
-			return nil, nil, fmt.Errorf("error at compute service init: %w", err)
-		}
-
-		go node.sendShares(ctx)
-
-		setupCoord := NewCentralizedCoordinatorClient(node.cli)
-		go func() {
-			err := node.setup.Run(ctx, setupCoord)
-			if err != nil {
-				panic(err)
-			}
-		}()
-
-		computeCoord := &coordinatorT{make(chan coordinator.Event), make(chan coordinator.Event)}
-		go func() {
-			err := node.compute.Run(ctx, ip, or, computeCoord)
-			if err != nil {
-				panic(err)
-			}
-		}()
-
-		go func() {
-			for ev := range events {
-				node.Logf("new coordinator event: %s", ev)
-				if ev.IsSetupEvent() {
-					pev := *ev.ProtocolEvent
-					setupCoord.incoming <- pev
-				}
-				if ev.IsComputeEvent() {
-					cev := ev
-					computeCoord.incoming <- cev
-				}
-			}
-
-			node.Logf("upstream done, closing downstream")
-			close(setupCoord.incoming)
-			close(computeCoord.incoming)
-			close(node.setupDone)
-		}()
-
+		node.Logf("user closed circuit discription channel, closing downstream")
+		close(sc.computeCoordinator.incoming)
 	}
 
 	return cds, or, nil
@@ -326,26 +251,18 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 // Close releases all the resources allocated by the node.
 // If the node is the helper node, it stops the server and
 // waits for the peers to disconnect.
-func (node *Node) Close() error {
-	if node.IsHelperNode() {
-		node.srv.Server.GracefulStop()
-	}
-	return nil
-}
+// func (node *Node) Close() error {
+// 	if node.IsHelperNode() {
+// 		node.srv.Server.GracefulStop()
+// 	}
+// 	return nil
+// }
 
 // Transport interface implementation
 
 // PutShare is called by the transport upon receiving a new share.
 func (node *Node) PutShare(ctx context.Context, s protocol.Share) error {
-	switch {
-	case s.ProtocolType.IsSetup():
-		node.setupTransport.inshares <- s
-	case s.ProtocolType.IsCompute():
-		node.computeTransport.inshares <- s
-	default:
-		return fmt.Errorf("unknown protocol type")
-	}
-	return nil
+	panic("not implemented")
 }
 
 // GetAggregationOutput returns the aggregation output for a given protocol descriptor.
@@ -356,13 +273,11 @@ func (node *Node) GetAggregationOutput(ctx context.Context, pd protocol.Descript
 		switch {
 		case pd.Signature.Type.IsSetup():
 			return node.setup.GetAggregationOutput(ctx, pd)
-		// case pd.Signature.Type.IsCompute():
-		// 	return n.compute.GetProtocolOutput(ctx, pd)
 		default:
 			return nil, fmt.Errorf("unknown protocol type")
 		}
 	}
-	return node.cli.GetAggregationOutput(ctx, pd)
+	return nil, fmt.Errorf("get aggregation output not implemented for ligh nodes")
 }
 
 // PutCiphertext registers a new ciphertext for the compute service.
@@ -372,7 +287,7 @@ func (node *Node) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error
 	if node.id == node.helperID {
 		return node.compute.PutCiphertext(ctx, ct)
 	}
-	return node.cli.PutCiphertext(ctx, ct)
+	return fmt.Errorf("put ciphertext not implemented for ligh nodes")
 }
 
 // GetCiphertext returns a ciphertext from the compute service.
@@ -382,7 +297,7 @@ func (node *Node) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (
 	if node.id == node.helperID {
 		return node.compute.GetCiphertext(ctx, ctID)
 	}
-	return node.cli.GetCiphertext(ctx, ctID)
+	return nil, fmt.Errorf("get ciphertext not implemented for ligh nodes")
 }
 
 // WaitForSetupDone blocks until the setup phase is done.
@@ -432,20 +347,20 @@ func (node *Node) Logf(msg string, v ...any) {
 	log.Printf("%s | [node] %s\n", node.id, fmt.Sprintf(msg, v...))
 }
 
-func (node *Node) GetNetworkStats() centralized.NetStats {
-	var stats, srvStats, cliStats centralized.NetStats
-	if node.srv != nil {
-		srvStats = node.srv.GetStats()
-		stats.DataRecv += srvStats.DataRecv
-		stats.DataSent += srvStats.DataSent
-	}
-	if node.cli != nil {
-		cliStats = node.cli.GetStats()
-		stats.DataRecv += cliStats.DataRecv
-		stats.DataSent += cliStats.DataSent
-	}
-	return stats
-}
+// func (node *Node) GetNetworkStats() centralized.NetStats {
+// 	var stats, srvStats, cliStats centralized.NetStats
+// 	if node.srv != nil {
+// 		srvStats = node.srv.GetStats()
+// 		stats.DataRecv += srvStats.DataRecv
+// 		stats.DataSent += srvStats.DataSent
+// 	}
+// 	if node.cli != nil {
+// 		cliStats = node.cli.GetStats()
+// 		stats.DataRecv += cliStats.DataRecv
+// 		stats.DataSent += cliStats.DataSent
+// 	}
+// 	return stats
+// }
 
 // // outputStats outputs the total network usage and time take to execute a protocol phase.
 // func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
@@ -557,74 +472,10 @@ func (node *Node) createNewSession(sessParams session.Parameters) (sess *session
 	return sess, nil
 }
 
-func (node *Node) sendShares(ctx context.Context) {
-	for share := range node.outgoingShares {
-		if err := node.cli.PutShare(ctx, share); err != nil {
-			node.Logf("error while sending share: %s", err)
-		}
-	}
-}
-
-func recoverPresentState(events <-chan coordinator.Event, present int) (completedProto, runningProto []protocol.Descriptor, completedCirc, runningCirc []circuit.Descriptor, err error) {
-
-	if present == 0 {
-		return
-	}
-
-	var current int
-	runProto := make(map[protocol.ID]protocol.Descriptor)
-	runCircuit := make(map[helium.CircuitID]circuit.Descriptor)
-	for ev := range events {
-
-		if ev.IsComputeEvent() {
-			cid := ev.CircuitEvent.CircuitID
-			switch ev.CircuitEvent.EventType {
-			case circuit.Started:
-				runCircuit[cid] = ev.CircuitEvent.Descriptor
-			case circuit.Executing:
-				if _, has := runCircuit[cid]; !has {
-					err = fmt.Errorf("inconsisted state, circuit %s execution event before start", cid)
-					return
-				}
-			case circuit.Completed, circuit.Failed:
-				if _, has := runCircuit[cid]; !has {
-					err = fmt.Errorf("inconsisted state, circuit %s termination event before start", cid)
-					return
-				}
-				delete(runCircuit, cid)
-				if ev.CircuitEvent.EventType == circuit.Completed {
-					completedCirc = append(completedCirc, ev.CircuitEvent.Descriptor)
-				}
-			}
-		}
-
-		if ev.IsProtocolEvent() {
-			pid := ev.ProtocolEvent.ID()
-			switch ev.ProtocolEvent.EventType {
-			case protocol.Started:
-				runProto[pid] = ev.ProtocolEvent.Descriptor
-			case protocol.Executing:
-				if _, has := runProto[pid]; !has {
-					err = fmt.Errorf("inconsisted state, protocol %s execution event before start", ev.ProtocolEvent.HID())
-					return
-				}
-			case protocol.Completed, protocol.Failed:
-				if _, has := runProto[pid]; !has {
-					err = fmt.Errorf("inconsisted state, protocol %s termination event before start", ev.ProtocolEvent.HID())
-					return
-				}
-				delete(runProto, pid)
-				if ev.ProtocolEvent.EventType == protocol.Completed {
-					completedProto = append(completedProto, ev.ProtocolEvent.Descriptor)
-				}
-			}
-		}
-
-		current++
-		if current == present {
-			break
-		}
-	}
-
-	return
-}
+// func (node *Node) sendShares(ctx context.Context) {
+// 	for share := range node.outgoingShares {
+// 		if err := node.transport.PutShare(ctx, share); err != nil {
+// 			node.Logf("error while sending share: %s", err)
+// 		}
+// 	}
+// }
