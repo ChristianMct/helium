@@ -5,14 +5,42 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
-	"github.com/ChristianMct/helium/coordinator"
+	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services/compute"
+	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/transport/pb"
 	"github.com/ChristianMct/helium/utils"
 )
 
-func getAPIEvent(event coordinator.Event) *pb.Event {
-	apiEvent := &pb.Event{}
+func getAPIProtocolEvent(event protocol.Event) *pb.ProtocolEvent {
+	return &pb.ProtocolEvent{
+		Type:        pb.EventType(event.EventType),
+		Descriptor_: getAPIProtocolDesc(&event.Descriptor),
+	}
+}
+
+func getProtocolEventFromAPI(apiEvent *pb.ProtocolEvent) protocol.Event {
+	return protocol.Event{
+		EventType:  protocol.EventType(apiEvent.Type),
+		Descriptor: *getProtocolDescFromAPI(apiEvent.Descriptor_),
+	}
+}
+
+func getAPISetupEvent(event setup.Event) *pb.SetupEvent {
+	return &pb.SetupEvent{
+		ProtocolEvent: getAPIProtocolEvent(event.Event),
+	}
+}
+
+func getSetupEventFromAPI(apiEvent *pb.SetupEvent) setup.Event {
+	return setup.Event{
+		Event: getProtocolEventFromAPI(apiEvent.ProtocolEvent),
+	}
+}
+
+func getAPIComputeEvent(event compute.Event) *pb.ComputeEvent {
+	apiEvent := &pb.ComputeEvent{}
 	if event.CircuitEvent != nil {
 		apiEvent.CircuitEvent = &pb.CircuitEvent{
 			Type:        pb.EventType(event.CircuitEvent.EventType),
@@ -20,14 +48,16 @@ func getAPIEvent(event coordinator.Event) *pb.Event {
 		}
 	}
 	if event.ProtocolEvent != nil {
-		apiDesc := getAPIProtocolDesc(&event.ProtocolEvent.Descriptor)
-		apiEvent.ProtocolEvent = &pb.ProtocolEvent{Type: pb.EventType(event.ProtocolEvent.EventType), Descriptor_: apiDesc}
+		apiEvent.ProtocolEvent = &pb.ProtocolEvent{
+			Type:        pb.EventType(event.ProtocolEvent.EventType),
+			Descriptor_: getAPIProtocolDesc(&event.ProtocolEvent.Descriptor),
+		}
 	}
 	return apiEvent
 }
 
-func getEventFromAPI(apiEvent *pb.Event) coordinator.Event {
-	event := coordinator.Event{}
+func getComputeEventFromAPI(apiEvent *pb.ComputeEvent) compute.Event {
+	event := compute.Event{}
 	if apiEvent.CircuitEvent != nil {
 		event.CircuitEvent = &circuit.Event{
 			EventType:  circuit.EventType(apiEvent.CircuitEvent.Type),
@@ -39,6 +69,30 @@ func getEventFromAPI(apiEvent *pb.Event) coordinator.Event {
 			EventType:  protocol.EventType(apiEvent.ProtocolEvent.Type),
 			Descriptor: *getProtocolDescFromAPI(apiEvent.ProtocolEvent.Descriptor_),
 		}
+	}
+	return event
+}
+
+func getAPINodeEvent(event node.Event) *pb.NodeEvent {
+	apiEvent := &pb.NodeEvent{}
+	if event.IsSetup() {
+		apiEvent.Event = &pb.NodeEvent_SetupEvent{SetupEvent: getAPISetupEvent(*event.SetupEvent)}
+	}
+	if event.IsCompute() {
+		apiEvent.Event = &pb.NodeEvent_ComputeEvent{ComputeEvent: getAPIComputeEvent(*event.ComputeEvent)}
+	}
+	return apiEvent
+}
+
+func getNodeEventFromAPI(apiEvent *pb.NodeEvent) node.Event {
+	event := node.Event{}
+	switch e := apiEvent.Event.(type) {
+	case *pb.NodeEvent_SetupEvent:
+		ev := getSetupEventFromAPI(e.SetupEvent)
+		event.SetupEvent = &ev
+	case *pb.NodeEvent_ComputeEvent:
+		ev := getComputeEventFromAPI(e.ComputeEvent)
+		event.ComputeEvent = &ev
 	}
 	return event
 }

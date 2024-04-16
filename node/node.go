@@ -45,12 +45,7 @@ type Node struct {
 	upstream Coordinator
 
 	// transport
-	// srv              *centralized.HeliumServer
-	// cli              *centralized.HeliumClient
-	transport      Transport
-	outgoingShares chan protocol.Share
-	// setupTransport   *protocolTransport
-	// computeTransport *computeTransport
+	transport Transport
 
 	// services
 	setup   *setup.Service
@@ -90,14 +85,6 @@ func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 			return nil, err
 		}
 	}
-
-	// transport
-	// if node.IsHelperNode() {
-	// 	node.srv = centralized.NewHeliumServer(node.id, node.addr, node.nodeList, node, node)
-	// 	node.srv.RegisterWatcher(node)
-	// } else {
-	// 	node.cli = centralized.NewHeliumClient(node.id, node.helperID, node.nodeList.AddressOf(node.helperID))
-	// }
 
 	// services
 	node.setup, err = setup.NewSetupService(node.id, node, config.SetupConfig, node.ObjectStore)
@@ -266,11 +253,6 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 
 // Transport interface implementation
 
-// PutShare is called by the transport upon receiving a new share.
-func (node *Node) PutShare(ctx context.Context, s protocol.Share) error {
-	panic("not implemented")
-}
-
 // GetAggregationOutput returns the aggregation output for a given protocol descriptor.
 // If this node is the helper node, the method retrieves the output from the services.
 // If this node is a peer node, the method retrieves the output from the helper node.
@@ -324,6 +306,11 @@ func (node *Node) NodeList() helium.NodesList {
 // ID returns the node's ID.
 func (node *Node) ID() helium.NodeID {
 	return node.id
+}
+
+// Address returns the node's address.
+func (node *Node) Address() helium.NodeAddress {
+	return node.addr
 }
 
 // HasAddress returns true if the node has an address.

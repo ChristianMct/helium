@@ -20,7 +20,6 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/session"
-	"github.com/ChristianMct/helium/transport/centralized"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
@@ -137,6 +136,7 @@ func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[hel
 			SetupConfig: setup.ServiceConfig{
 				Protocols: protocol.ExecutorConfig{
 					MaxParticipation: 1,
+					MaxAggregation:   0,
 				},
 			},
 		}
@@ -152,8 +152,9 @@ func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[hel
 		ObjectStoreConfig: objstoreconf,
 		SetupConfig: setup.ServiceConfig{
 			Protocols: protocol.ExecutorConfig{
-				MaxProtoPerNode: 1,
-				MaxAggregation:  1,
+				MaxProtoPerNode:  1,
+				MaxAggregation:   1,
+				MaxParticipation: 0,
 			},
 		},
 	}
@@ -167,13 +168,13 @@ type nodeCrypto struct {
 	cert   x509.Certificate
 }
 
-func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (map[helium.NodeID]centralized.TLSConfig, error) {
+func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (map[helium.NodeID]helium.TLSConfig, error) {
 
-	tlsConfigs := make(map[helium.NodeID]centralized.TLSConfig, len(nodeList))
+	tlsConfigs := make(map[helium.NodeID]helium.TLSConfig, len(nodeList))
 
 	if testConfig.InsecureChannels {
 		for _, n := range nodeList {
-			tlsConfigs[n.NodeID] = centralized.TLSConfig{InsecureChannels: true}
+			tlsConfigs[n.NodeID] = helium.TLSConfig{InsecureChannels: true}
 		}
 		return tlsConfigs, nil
 	}
@@ -293,7 +294,7 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (ma
 			peerCerts[otherNodeID] = string(peerCertPem)
 		}
 
-		tlsConfigs[nodeID] = centralized.TLSConfig{
+		tlsConfigs[nodeID] = helium.TLSConfig{
 			OwnSk:     string(skPem),
 			OwnPk:     string(pkPem),
 			OwnCert:   string(certPem),

@@ -2,7 +2,6 @@ package node
 
 import (
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"testing"
@@ -155,9 +154,8 @@ func TestNodeSetup(t *testing.T) {
 			}
 
 			for _, node := range all {
-				log.Println("checking setup for", node.id)
 				resCheckCtx, runCheckCancel := context.WithTimeout(ctx, time.Second)
-				setup.CheckTestSetup(resCheckCtx, t, node.id, testSess, *app.SetupDescription, node)
+				setup.CheckTestSetup(resCheckCtx, t, testSess, *app.SetupDescription, node)
 				runCheckCancel()
 			}
 		})

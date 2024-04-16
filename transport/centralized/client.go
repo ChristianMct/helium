@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/coordinator"
+	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -25,20 +28,58 @@ const (
 // HeliumClient is a client for the helium service. It is used by
 // peer nodes to communicate with the helium server.
 type HeliumClient struct {
-	ownID, helperID helium.NodeID
-	helperAddress   helium.NodeAddress
+	node          *node.Node
+	id, helperID  helium.NodeID
+	helperAddress helium.NodeAddress
 
+	outgoingShares chan protocol.Share
+
+	helium.PublicKeyProvider
+
+	*grpc.ClientConn
 	pb.HeliumClient
 	statsHandler
 }
 
 // NewHeliumClient creates a new helium client.
-func NewHeliumClient(ownID, helperID helium.NodeID, helperAddress helium.NodeAddress) *HeliumClient {
+func NewHeliumClient(node *node.Node, helperID helium.NodeID, helperAddress helium.NodeAddress) *HeliumClient {
 	hc := new(HeliumClient)
-	hc.ownID = ownID
+	hc.node = node
+	hc.PublicKeyProvider = node
+	hc.id = node.ID()
 	hc.helperID = helperID
 	hc.helperAddress = helperAddress
+
 	return hc
+}
+
+func (hc *HeliumClient) Run(ctx context.Context, app node.App, ip compute.InputProvider) (outs <-chan circuit.Output, err error) {
+
+	hc.outgoingShares = make(chan protocol.Share)
+
+	go func() {
+		for share := range hc.outgoingShares {
+			err := hc.PutShare(ctx, share)
+			if err != nil {
+				panic(fmt.Errorf("error sending share: %s", err))
+			}
+		}
+	}()
+
+	cdesc, outs, err := hc.node.Run(ctx, app, ip, hc, hc)
+	close(cdesc) // TODO: client submission of circuit descriptions is not yet supported
+	if err != nil {
+		return nil, err
+	}
+	return outs, nil
+}
+
+func (hc *HeliumClient) OutgoingShares() chan<- protocol.Share {
+	return hc.outgoingShares
+}
+
+func (hc *HeliumClient) IncomingShares() <-chan protocol.Share {
+	return nil
 }
 
 // Connect establishes a connection to the helium server.
@@ -46,6 +87,10 @@ func (hc *HeliumClient) Connect() error {
 	return hc.ConnectWithDialer(func(_ context.Context, _ string) (net.Conn, error) {
 		return net.Dial("tcp", hc.helperAddress.String())
 	})
+}
+
+func (hc *HeliumClient) Disconnect() error {
+	return hc.ClientConn.Close()
 }
 
 // ConnectWithDialer establishes a connection to the helium server using the provided dialer.
@@ -69,12 +114,13 @@ func (hc *HeliumClient) ConnectWithDialer(dialer Dialer) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), ClientConnectTimeout)
 	defer cancel()
-	cc, err := grpc.DialContext(ctx, string(hc.helperAddress), opts...)
+	var err error
+	hc.ClientConn, err = grpc.DialContext(ctx, string(hc.helperAddress), opts...)
 	if err != nil {
 		return fmt.Errorf("fail establish connection to the helper at tcp://%s: %w", hc.helperAddress, err)
 	}
 
-	hc.HeliumClient = pb.NewHeliumClient(cc)
+	hc.HeliumClient = pb.NewHeliumClient(hc.ClientConn)
 
 	return nil
 }
@@ -82,7 +128,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer Dialer) error {
 // Register registers the client with the helium server and returns a channel for receiving events.
 // It returns the current sequence number for the event log as present. Reading present+1 events
 // from the returned channel will not block for longer than network-introduced delays.
-func (hc *HeliumClient) Register(ctx context.Context) (events <-chan coordinator.Event, present int, err error) {
+func (hc *HeliumClient) Register(ctx context.Context) (upstream *coord.Channel[node.Event], present int, err error) {
 	stream, err := hc.HeliumClient.Register(hc.outgoingContext(ctx), &pb.Void{})
 	if err != nil {
 		return nil, 0, err
@@ -93,7 +139,7 @@ func (hc *HeliumClient) Register(ctx context.Context) (events <-chan coordinator
 		return nil, 0, err
 	}
 
-	eventsStream := make(chan coordinator.Event)
+	eventsStream := make(chan node.Event)
 	go func() {
 		for {
 			apiEvent, err := stream.Recv()
@@ -104,11 +150,11 @@ func (hc *HeliumClient) Register(ctx context.Context) (events <-chan coordinator
 				}
 				return
 			}
-			eventsStream <- getEventFromAPI(apiEvent)
+			eventsStream <- getNodeEventFromAPI(apiEvent)
 		}
 	}()
-	events = eventsStream
-	return
+
+	return &coord.Channel[node.Event]{Incoming: eventsStream}, present, nil
 }
 
 // PutShare sends a share to the helium server.
@@ -155,7 +201,7 @@ func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct helium.Ciphertext)
 }
 
 func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
-	return getOutgoingContext(ctx, hc.ownID)
+	return getOutgoingContext(ctx, hc.id)
 }
 
 func readPresentFromStream(stream grpc.ClientStream) (int, error) {

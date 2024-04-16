@@ -13,7 +13,7 @@ package helium_proto;
  aggregator and evaluator for its peer nodes. */
 service Helium {
     /* Register registers the caller as a peer node to the helium server */
-    rpc Register(Void) returns (stream Event);
+    rpc Register(Void) returns (stream NodeEvent);
 
     /* PutShare pushes the caller's share in the protocol described by the Share.ShareDescriptor
     field to the callee. */
@@ -71,9 +71,20 @@ message CircuitEvent {
     EventType Type = 2;
 }
 
-message Event {
-    optional ProtocolEvent ProtocolEvent = 1;
-    optional CircuitEvent CircuitEvent = 2;
+message SetupEvent {
+    ProtocolEvent ProtocolEvent = 1;
+}
+
+message ComputeEvent {
+    CircuitEvent CircuitEvent = 1;
+    optional ProtocolEvent ProtocolEvent = 2;
+}
+
+message NodeEvent {
+    oneof Event {
+        SetupEvent SetupEvent = 1;
+        ComputeEvent ComputeEvent = 2;
+    }
 }
 
 

@@ -142,7 +142,7 @@ func TestSetup(t *testing.T) {
 				require.Nil(t, err)
 
 				for _, n := range all {
-					CheckTestSetup(ctx, t, n.self, testSess, sd, n)
+					CheckTestSetup(ctx, t, testSess, sd, n)
 				}
 			})
 		}
@@ -208,7 +208,7 @@ func TestSetupLateConnect(t *testing.T) {
 				}
 
 				for _, n := range all {
-					CheckTestSetup(ctx, t, n.self, testSess, sd, n)
+					CheckTestSetup(ctx, t, testSess, sd, n)
 				}
 			})
 		}
@@ -335,6 +335,6 @@ func TestSetupRetries(t *testing.T) {
 	require.Nil(t, err)
 
 	for _, n := range all {
-		CheckTestSetup(ctx, t, n.self, testSess, Description{Cpk: true}, n)
+		CheckTestSetup(ctx, t, testSess, Description{Cpk: true}, n)
 	}
 }

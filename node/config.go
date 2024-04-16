@@ -10,7 +10,6 @@ import (
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
-	"github.com/ChristianMct/helium/transport/centralized"
 )
 
 // Config is the configuration of a node.
@@ -26,7 +25,7 @@ type Config struct {
 	SetupConfig       setup.ServiceConfig
 	ComputeConfig     compute.ServiceConfig
 	ObjectStoreConfig objectstore.Config
-	TLSConfig         centralized.TLSConfig
+	TLSConfig         helium.TLSConfig
 }
 
 // LoadConfigFromFile loads a node configuration from a JSON file.

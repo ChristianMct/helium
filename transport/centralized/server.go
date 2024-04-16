@@ -2,7 +2,6 @@ package centralized
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -10,8 +9,11 @@ import (
 	"time"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/coordinator"
+	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -25,52 +27,24 @@ const (
 	KeepaliveTimeout = time.Second
 )
 
-// NodeWatcher is an interface for the helium server to notify registered watchers
-// when a new peer is registered or unregistered. See HeliumServer.RegisterWatcher.
-type NodeWatcher interface {
-	// Register is called by the transport when a new peer register itself for the setup.
-	Register(helium.NodeID) error
-
-	// Unregister is called by the transport when a peer is unregistered from the setup.
-	Unregister(helium.NodeID) error
-}
-
-// ProtocolHandler is an interface for the helium server to handle protocol-related requests from
-// its peers. The interface implementation is provided by the NewHeliumServer method, and the
-// created server makes calls to the interface methods when handling requests from its peers.
-type ProtocolHandler interface {
-	PutShare(context.Context, protocol.Share) error
-	GetAggregationOutput(context.Context, protocol.Descriptor) (*protocol.AggregationOutput, error)
-}
-
-// CiphertextHandler is an interface for the helium server to handle ciphertext-related requests from
-// its peers. The interface implementation is provided by the NewHeliumServer method, and the
-// created server makes calls to the interface methods when handling requests from its peers.
-type CiphertextHandler interface {
-	GetCiphertext(context.Context, helium.CiphertextID) (*helium.Ciphertext, error)
-	PutCiphertext(context.Context, helium.Ciphertext) error
-}
-
 // HeliumServer is the server-side of the helium transport.
 // In the current implementation, the server is responsible for keeping the event log and
 // a server cannot be restarted after it is closed. // TODO
 type HeliumServer struct {
-	id helium.NodeID
+	helium.PublicKeyProvider
+	helperNode *node.Node
+	id         helium.NodeID
+
+	incomingShares chan protocol.Share
 
 	// event log
-	events       coordinator.Log
+	events       coord.Log[node.Event]
 	eventsClosed bool
 	eventsMu     sync.RWMutex
 
-	nodes      map[helium.NodeID]*peer
-	nodesMu    sync.RWMutex
-	closing    chan struct{}
-	watchersMu sync.RWMutex
-	watchers   []NodeWatcher
-
-	// service API
-	protocolHandler   ProtocolHandler
-	ciphertextHandler CiphertextHandler
+	nodes   map[helium.NodeID]*peer
+	nodesMu sync.RWMutex
+	closing chan struct{}
 
 	// grpc API
 	*grpc.Server
@@ -79,9 +53,12 @@ type HeliumServer struct {
 }
 
 // NewHeliumServer creates a new helium server with the provided node information and handlers.
-func NewHeliumServer(id helium.NodeID, na helium.NodeAddress, nl helium.NodesList, protoHandler ProtocolHandler, ctxtHandler CiphertextHandler) *HeliumServer {
+func NewHeliumServer(helperNode *node.Node) *HeliumServer {
 	hsv := new(HeliumServer)
-	hsv.id = id
+	hsv.helperNode = helperNode
+	hsv.id = helperNode.ID()
+
+	hsv.PublicKeyProvider = helperNode
 
 	interceptors := []grpc.UnaryServerInterceptor{
 		// t.serverSigChecker,
@@ -101,26 +78,70 @@ func NewHeliumServer(id helium.NodeID, na helium.NodeAddress, nl helium.NodesLis
 	hsv.Server = grpc.NewServer(serverOpts...)
 	hsv.Server.RegisterService(&pb.Helium_ServiceDesc, hsv)
 
-	hsv.protocolHandler = protoHandler
-	hsv.ciphertextHandler = ctxtHandler
-
-	hsv.watchers = make([]NodeWatcher, 0)
-
 	hsv.nodes = make(map[helium.NodeID]*peer)
-	for _, n := range nl {
+	for _, n := range helperNode.NodeList() {
 		hsv.nodes[n.NodeID] = &peer{}
 	}
+
+	hsv.incomingShares = make(chan protocol.Share)
 
 	return hsv
 }
 
 // peer is the internal representation of a connected peer.
 type peer struct {
-	sendQueue chan coordinator.Event // a queue of messages to be sent to this peer
+	sendQueue chan node.Event // a queue of messages to be sent to this peer
+}
+
+type nodeCoordinator struct {
+	*HeliumServer
+}
+
+func (nc *nodeCoordinator) Register(ctx context.Context) (evChan *coord.Channel[node.Event], present int, err error) {
+	outgoing := make(chan node.Event)
+
+	go func() {
+		for ev := range outgoing {
+			ev := ev
+			nc.AppendEventToLog(ev)
+		}
+		nc.CloseEventLog()
+	}()
+
+	return &coord.Channel[node.Event]{Outgoing: outgoing}, 0, nil
+}
+
+type nodeTransport struct {
+	s *HeliumServer
+}
+
+func (nt *nodeTransport) IncomingShares() <-chan protocol.Share {
+	return nt.s.incomingShares
+}
+
+func (nt *nodeTransport) OutgoingShares() chan<- protocol.Share {
+	return nil
+}
+
+func (nt *nodeTransport) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
+	panic("unimplemented")
+}
+
+func (nt *nodeTransport) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+	panic("unimplemented")
+}
+
+func (nt *nodeTransport) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+	panic("unimplemented")
+}
+
+func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+
+	return hsv.helperNode.Run(ctx, app, ip, &nodeCoordinator{hsv}, &nodeTransport{s: hsv})
 }
 
 // AppendEventToLog is called by the server side to append a new event to the log and send it to all connected peers.
-func (hsv *HeliumServer) AppendEventToLog(event coordinator.Event) error {
+func (hsv *HeliumServer) AppendEventToLog(event node.Event) error {
 	hsv.eventsMu.Lock()
 	hsv.events = append(hsv.events, event)
 
@@ -156,33 +177,6 @@ func (hsv *HeliumServer) CloseEventLog() {
 	hsv.eventsMu.Unlock()
 }
 
-// RegisterWatcher adds a new watcher to the server. The watcher will be notified when a new peer is registered
-func (hsv *HeliumServer) RegisterWatcher(nw NodeWatcher) {
-	hsv.watchersMu.Lock()
-	defer hsv.watchersMu.Unlock()
-	hsv.watchers = append(hsv.watchers, nw)
-}
-
-// NotifyRegister notifies all registered watchers that a new peer has registered.
-func (hsv *HeliumServer) NotifyRegister(node helium.NodeID) (err error) {
-	hsv.watchersMu.RLock()
-	defer hsv.watchersMu.RUnlock()
-	for _, w := range hsv.watchers {
-		err = errors.Join(w.Register(node))
-	}
-	return err
-}
-
-// NotifyUnregister notifies all registered watchers that a peer has unregistered.
-func (hsv *HeliumServer) NotifyUnregister(node helium.NodeID) (err error) {
-	hsv.watchersMu.RLock()
-	defer hsv.watchersMu.RUnlock()
-	for _, w := range hsv.watchers {
-		err = errors.Join(w.Unregister(node))
-	}
-	return err
-}
-
 // Register is a gRPC handler for the Register method of the Helium service.
 func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) error {
 	nodeID := senderIDFromIncomingContext(stream.Context())
@@ -195,18 +189,20 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 	hsv.eventsMu.RLock()
 	present := len(hsv.events)
 	pastEvents := hsv.events
-
 	hsv.nodesMu.Lock()
-	node, has := hsv.nodes[nodeID]
+	peer, has := hsv.nodes[nodeID]
 	if !has {
 		panic(fmt.Errorf("invalid node id: %s", nodeID))
 	}
-	sendQueue := make(chan coordinator.Event, 100)
-	node.sendQueue = sendQueue
+	sendQueue := make(chan node.Event, 100)
+	peer.sendQueue = sendQueue
+	if hsv.eventsClosed {
+		close(sendQueue)
+	}
 	hsv.nodesMu.Unlock()
 	hsv.eventsMu.RUnlock() // all events after pastEvents will go on the sendQueue
 
-	err := hsv.NotifyRegister(nodeID)
+	err := hsv.helperNode.Register(nodeID)
 	if err != nil {
 		panic(err)
 	}
@@ -219,7 +215,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 
 	var done bool
 	for _, ev := range pastEvents {
-		err := stream.Send(getAPIEvent(ev))
+		err := stream.Send(getAPINodeEvent(ev))
 		if err != nil {
 			done = true
 			hsv.Logf("error while sending past events to %s: %s", nodeID, err)
@@ -235,7 +231,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 		// received an event to send or closed the queue
 		case evt, more := <-sendQueue:
 			if more {
-				if err := stream.Send(getAPIEvent(evt)); err != nil {
+				if err := stream.Send(getAPINodeEvent(evt)); err != nil {
 					done = true
 					hsv.Logf("error on stream send for %s: %s", nodeID, err)
 				}
@@ -258,10 +254,10 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 	}
 
 	hsv.nodesMu.Lock()
-	node.sendQueue = nil
+	peer.sendQueue = nil
 	hsv.nodesMu.Unlock()
 
-	err = hsv.NotifyUnregister(nodeID)
+	err = hsv.helperNode.Unregister(nodeID)
 	if err != nil {
 		panic(err)
 	}
@@ -272,7 +268,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 // PutShare is a gRPC handler for the PutShare method of the Helium service.
 func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *pb.Share) (*pb.Void, error) {
 
-	ctx, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
+	_, err := getContextFromIncomingContext(inctx) // TODO: can be moved has handler ?
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +279,9 @@ func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *pb.Share) (*p
 		return nil, err
 	}
 
-	return &pb.Void{}, hsv.protocolHandler.PutShare(ctx, s)
+	hsv.incomingShares <- s
+
+	return &pb.Void{}, nil
 }
 
 // GetAggregationOutput is a gRPC handler for the GetAggregationOutput method of the Helium service.
@@ -295,7 +293,7 @@ func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *pb.P
 	}
 
 	pd := getProtocolDescFromAPI(apipd)
-	out, err := hsv.protocolHandler.GetAggregationOutput(ctx, *pd)
+	out, err := hsv.helperNode.GetAggregationOutput(ctx, *pd)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s: %s", pd.HID(), err)
 	}
@@ -320,7 +318,7 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.Ciphertex
 		return nil, err
 	}
 
-	ct, err := hsv.ciphertextHandler.GetCiphertext(ctx, helium.CiphertextID(ctid.CiphertextId))
+	ct, err := hsv.helperNode.GetCiphertext(ctx, helium.CiphertextID(ctid.CiphertextId))
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +343,7 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Cipherte
 		return nil, err
 	}
 
-	err = hsv.ciphertextHandler.PutCiphertext(ctx, *ct)
+	err = hsv.helperNode.PutCiphertext(ctx, *ct)
 	if err != nil {
 		return nil, err
 	}

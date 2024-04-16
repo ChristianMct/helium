@@ -14,6 +14,14 @@ type Event struct {
 	ComputeEvent *compute.Event
 }
 
+func (ev Event) IsCompute() bool {
+	return ev.ComputeEvent != nil
+}
+
+func (ev Event) IsSetup() bool {
+	return ev.SetupEvent != nil
+}
+
 type Coordinator coord.Coordinator[Event]
 
 type setupCoordinator struct {
@@ -103,7 +111,9 @@ func newServicesCoordinator(ctx context.Context, upstream Coordinator) (*Service
 	go func() {
 		<-sc.setupCoordDone
 		//<-sc.computeDone
-		close(upstreamChan.Outgoing)
+		if upstreamChan.Outgoing != nil {
+			close(upstreamChan.Outgoing)
+		}
 	}()
 
 	return sc, nil
