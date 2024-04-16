@@ -131,7 +131,9 @@ func TestSetup(t *testing.T) {
 					nid := nid
 					node := node
 					g.Go(func() error {
-						clou.Service.Register(nid)
+						if nid != hid {
+							clou.Service.Register(nid)
+						}
 						err := node.Run(nodesRunCtx, tc, tt.TransportFor(nid))
 						return errors.WithMessagef(err, "error at node %s", nid)
 					})

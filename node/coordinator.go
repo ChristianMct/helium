@@ -28,10 +28,10 @@ type ServicesCoordinator struct {
 	setupCoordinator
 	computeCoordinator
 
-	setupDone, computeDone chan struct{}
+	setupCoordDone, computeCoordDone chan struct{}
 }
 
-func NewServicesCoordinator(ctx context.Context, upstream Coordinator) (*ServicesCoordinator, error) {
+func newServicesCoordinator(ctx context.Context, upstream Coordinator) (*ServicesCoordinator, error) {
 	sc := &ServicesCoordinator{
 		setupCoordinator:   setupCoordinator{outgoing: make(chan setup.Event)},
 		computeCoordinator: computeCoordinator{outgoing: make(chan compute.Event)},
@@ -77,25 +77,32 @@ func NewServicesCoordinator(ctx context.Context, upstream Coordinator) (*Service
 				panic(fmt.Errorf("invalid node event: not a setup nor a compute event")) // TODO
 			}
 		}
+		close(sc.setupCoordinator.incoming)
+		close(sc.computeCoordinator.incoming)
 	}()
+
+	sc.setupCoordDone = make(chan struct{})
+	sc.computeCoordDone = make(chan struct{})
 
 	go func() {
 		for ev := range sc.setupCoordinator.outgoing {
+			ev := ev
 			upstreamChan.Outgoing <- Event{SetupEvent: &ev}
 		}
-		close(sc.setupDone)
+		close(sc.setupCoordDone)
 	}()
 
 	go func() {
 		for ev := range sc.computeCoordinator.outgoing {
+			ev := ev
 			upstreamChan.Outgoing <- Event{ComputeEvent: &ev}
 		}
-		close(sc.computeDone)
+		close(sc.computeCoordDone)
 	}()
 
 	go func() {
-		<-sc.computeDone
-		<-sc.computeDone
+		<-sc.setupCoordDone
+		//<-sc.computeDone
 		close(upstreamChan.Outgoing)
 	}()
 

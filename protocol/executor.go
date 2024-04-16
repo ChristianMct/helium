@@ -551,7 +551,7 @@ func (s *Executor) Register(peer helium.NodeID) error {
 
 	s.connectedNodes[peer] = make(utils.Set[ID])
 
-	s.Logf("[Node] registered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	s.Logf("registered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 

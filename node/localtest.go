@@ -9,14 +9,13 @@ import (
 	"encoding/pem"
 	"log"
 	"math/big"
-	"net"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services/setup"
 	cryptoUtil "github.com/ChristianMct/helium/utils/certs"
 
 	"github.com/ChristianMct/helium"
@@ -24,8 +23,6 @@ import (
 	"github.com/ChristianMct/helium/transport/centralized"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
-	"golang.org/x/net/context"
-	"google.golang.org/grpc/test/bufconn"
 )
 
 // LocalTestConfig is a configuration structure for LocalTest types.
@@ -48,6 +45,9 @@ type LocalTest struct {
 	HelperConfig    Config
 	SessNodeConfigs []Config
 	helium.NodesList
+
+	transport   testTransport
+	coordinator Coordinator
 }
 
 // NewLocalTest creates a new LocalTest from the configuration and returns it.
@@ -85,24 +85,24 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 		}
 	}
 
-	testCoord := coord.NewTestCoordinator[Event](helperID)
-	testTrans := protocol.NewTestTransport()
-
 	test.Nodes = make([]*Node, 1+config.PeerNodes)
-	test.HelperNode, err = New(test.HelperConfig, test.NodesList, testCoord, testTrans)
+	test.HelperNode, err = New(test.HelperConfig, test.NodesList)
 	if err != nil {
 		return nil, err
 	}
 	test.Nodes[0] = test.HelperNode
 	for i, nc := range test.SessNodeConfigs {
 		var err error
-		test.Nodes[i+1], err = New(nc, test.NodesList, testCoord, testTrans)
+		test.Nodes[i+1], err = New(nc, test.NodesList)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	test.PeerNodes = test.Nodes[1:]
+
+	test.coordinator = coord.NewTestCoordinator[Event](helperID)
+	test.transport = *NewTestTransport(test.HelperNode.id, test.HelperNode.setup, test.HelperNode.compute)
 
 	return test, nil
 }
@@ -134,6 +134,11 @@ func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[hel
 			SessionParameters: []session.Parameters{*sp},
 			TLSConfig:         tlsConfigs[nid],
 			ObjectStoreConfig: objstoreconf,
+			SetupConfig: setup.ServiceConfig{
+				Protocols: protocol.ExecutorConfig{
+					MaxParticipation: 1,
+				},
+			},
 		}
 		sessNodesConfig[i].SessionParameters[0].Secrets = secrets[nid]
 	}
@@ -145,6 +150,12 @@ func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[hel
 		SessionParameters: []session.Parameters{*sp},
 		TLSConfig:         tlsConfigs[hid],
 		ObjectStoreConfig: objstoreconf,
+		SetupConfig: setup.ServiceConfig{
+			Protocols: protocol.ExecutorConfig{
+				MaxProtoPerNode: 1,
+				MaxAggregation:  1,
+			},
+		},
 	}
 
 	return sessNodesConfig, helperNodeConfig
@@ -298,26 +309,26 @@ const buffConBufferSize = 65 * 1024 * 1024
 
 // Start creates some in-memory connections between the nodes and returns
 // when all nodes are connected.
-func (lc LocalTest) Start() {
-	lis := bufconn.Listen(buffConBufferSize)
+// func (lc LocalTest) Start() {
+// 	lis := bufconn.Listen(buffConBufferSize)
 
-	go lc.HelperNode.srv.Server.Serve(lis)
+// 	go lc.HelperNode.srv.Server.Serve(lis)
 
-	var wg sync.WaitGroup
-	for _, node := range lc.SessionNodes() {
-		node := node
-		wg.Add(1)
-		go func() {
-			err := node.cli.ConnectWithDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() })
-			if err != nil {
-				log.Printf("node %s failed to connect: %v", node.ID(), err)
-				return
-			}
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-}
+// 	var wg sync.WaitGroup
+// 	for _, node := range lc.SessionNodes() {
+// 		node := node
+// 		wg.Add(1)
+// 		go func() {
+// 			err := node.cli.ConnectWithDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() })
+// 			if err != nil {
+// 				log.Printf("node %s failed to connect: %v", node.ID(), err)
+// 				return
+// 			}
+// 			wg.Done()
+// 		}()
+// 	}
+// 	wg.Wait()
+// }
 
 // SessionNodes returns the set of nodes in the local test that are part of the
 // session.

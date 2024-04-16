@@ -403,9 +403,6 @@ func (s *Service) Outgoing() chan<- protocol.Event {
 
 // Register registers a connected node to the service.
 func (s *Service) Register(nid helium.NodeID) error { // TODO should be per session
-	if nid == s.self {
-		return nil // TODO specific to helper-assisted setting
-	}
 	return s.executor.Register(nid)
 }
 

@@ -64,7 +64,7 @@ type Node struct {
 
 // New creates a new Helium node from the provided config and node list.
 // The method returns an error if the config is invalid or if the node list is empty.
-func New(config Config, nodeList helium.NodesList, upstream Coordinator, trans Transport) (node *Node, err error) {
+func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 	node = new(Node)
 
 	if err := ValidateConfig(config, nodeList); err != nil {
@@ -75,8 +75,6 @@ func New(config Config, nodeList helium.NodesList, upstream Coordinator, trans T
 	node.addr = config.Address
 	node.helperID = config.HelperID
 	node.nodeList = nodeList
-	node.upstream = upstream
-	node.transport = trans
 
 	// object store
 	node.ObjectStore, err = objectstore.NewObjectStoreFromConfig(config.ObjectStoreConfig)
@@ -101,15 +99,13 @@ func New(config Config, nodeList helium.NodesList, upstream Coordinator, trans T
 	// 	node.cli = centralized.NewHeliumClient(node.id, node.helperID, node.nodeList.AddressOf(node.helperID))
 	// }
 
-	nodeTrans := newServicesTransport(trans)
-
 	// services
-	node.setup, err = setup.NewSetupService(node.id, node, config.SetupConfig, &nodeTrans.setupTransport, node.ObjectStore)
+	node.setup, err = setup.NewSetupService(node.id, node, config.SetupConfig, node.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the setup service: %w", err)
 	}
 
-	node.compute, err = compute.NewComputeService(node.id, node, config.ComputeConfig, node.setup, &nodeTrans.computeTransport)
+	node.compute, err = compute.NewComputeService(node.id, node, config.ComputeConfig, node.setup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load the compute service: %w", err)
 	}
@@ -124,7 +120,7 @@ func New(config Config, nodeList helium.NodesList, upstream Coordinator, trans T
 
 // RunNew creates a new Helium node from the provided config and node list, and runs the node with the provided app under the given context.
 func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (node *Node, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
-	node, err = New(config, nodeList, upstream, trans)
+	node, err = New(config, nodeList)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -134,7 +130,7 @@ func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app A
 	// 	return nil, nil, nil, err
 	// }
 
-	cdescs, outs, err = node.Run(ctx, app, ip)
+	cdescs, outs, err = node.Run(ctx, app, ip, upstream, trans)
 	return
 }
 
@@ -170,7 +166,10 @@ func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app A
 //   - the method runs the setup and compute phases sequentially.
 //   - only the helper node can issue circuit descriptors.
 //   - loading and verification of the state from persistent storage is not implemented.
-func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+
+	node.upstream = upstream
+	node.transport = trans
 
 	// recovers the session
 	sess, exists := node.GetSessionFromContext(ctx)
@@ -197,18 +196,21 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 	cds := make(chan circuit.Descriptor)
 	or := make(chan circuit.Output)
 
-	sc, err := NewServicesCoordinator(ctx, node.upstream)
+	sc, err := newServicesCoordinator(ctx, node.upstream)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error creating a service coordinator: %w", err)
 	}
 
+	st := newServicesTransport(trans)
+
 	// go node.sendShares(ctx)
 
 	go func() {
-		err := node.setup.Run(ctx, sc.setupCoordinator)
+		err := node.setup.Run(ctx, sc.setupCoordinator, &st.setupTransport)
 		if err != nil {
 			panic(err)
 		}
+		close(node.setupDone)
 	}()
 
 	// runs the setup phase
@@ -226,24 +228,28 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider) (c
 		close(sc.setupCoordinator.incoming)
 	}
 
-	<-sc.setupDone
+	<-node.setupDone
 
-	go func() {
-		err := node.compute.Run(ctx, ip, or, sc.computeCoordinator)
-		if err != nil {
-			panic(err)
-		}
-	}()
+	node.Logf("setup done, starting compute phase")
 
-	if node.IsHelperNode() {
-		for cd := range cds {
-			node.Logf("new circuit descriptor: %s", cd)
-			cev := compute.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
-			sc.computeCoordinator.incoming <- cev
-		}
-		node.Logf("user closed circuit discription channel, closing downstream")
-		close(sc.computeCoordinator.incoming)
-	}
+	// go func() {
+	// 	err := node.compute.Run(ctx, ip, or, sc.computeCoordinator, &st.computeTransport)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// }()
+
+	// if node.IsHelperNode() {
+	// 	for cd := range cds {
+	// 		node.Logf("new circuit descriptor: %s", cd)
+	// 		cev := compute.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
+	// 		sc.computeCoordinator.incoming <- cev
+	// 	}
+	// 	node.Logf("user closed circuit discription channel, closing downstream")
+	// 	close(sc.computeCoordinator.incoming)
+	// }
+
+	close(or)
 
 	return cds, or, nil
 }
@@ -301,8 +307,13 @@ func (node *Node) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (
 }
 
 // WaitForSetupDone blocks until the setup phase is done.
-func (node *Node) WaitForSetupDone() {
-	<-node.setupDone
+func (node *Node) WaitForSetupDone(ctx context.Context) error {
+	select {
+	case <-node.setupDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // NodeList returns the list of nodes known to the node.
@@ -411,19 +422,25 @@ func (node *Node) Logf(msg string, v ...any) {
 
 // GetCollectivePublicKey returns the collective public key.
 func (node *Node) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	node.WaitForSetupDone()
+	if err := node.WaitForSetupDone(ctx); err != nil {
+		return nil, fmt.Errorf("error waiting for setup completion: %w", err)
+	}
 	return node.setup.GetCollectivePublicKey(ctx)
 }
 
 // GetGaloisKey returns the Galois keys for galois element galEl.
 func (node *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	node.WaitForSetupDone()
+	if err := node.WaitForSetupDone(ctx); err != nil {
+		return nil, fmt.Errorf("error waiting for setup completion: %w", err)
+	}
 	return node.setup.GetGaloisKey(ctx, galEl)
 }
 
 // GetRelinearizationKey returns the relinearization key.
 func (node *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	node.WaitForSetupDone()
+	if err := node.WaitForSetupDone(ctx); err != nil {
+		return nil, fmt.Errorf("error waiting for setup completion: %w", err)
+	}
 	return node.setup.GetRelinearizationKey(ctx)
 }
 
@@ -431,6 +448,9 @@ func (node *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.Relinearizat
 
 // Register is called by the transport upon connection of a new peer node.
 func (node *Node) Register(peer helium.NodeID) error {
+	if peer == node.id {
+		return nil // TODO specific to helper-assisted setting
+	}
 	return errors.Join(node.setup.Register(peer), node.compute.Register(peer))
 }
 

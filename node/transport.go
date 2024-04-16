@@ -101,22 +101,29 @@ type testTransport struct {
 	hid            helium.NodeID
 	helperSetupSrv *setup.Service
 	helperCompSrv  *compute.Service
-	incoming       chan protocol.Share
-	outgoing       chan protocol.Share
+	*protocol.TestTransport
 
 	//clients []chan protocol.Share
 }
 
 func NewTestTransport(hid helium.NodeID, helperSetupSrv *setup.Service, helperCompSrv *compute.Service) *testTransport {
 	tt := &testTransport{
-		incoming: make(chan protocol.Share),
+		hid:            hid,
+		TestTransport:  protocol.NewTestTransport(),
+		helperSetupSrv: helperSetupSrv,
+		helperCompSrv:  helperCompSrv,
 	}
 	return tt
 }
 
 func (tt testTransport) TransportFor(nid helium.NodeID) Transport {
+	if nid == tt.hid {
+		return tt
+	}
 	ttc := &testTransport{
-		outgoing: tt.incoming,
+		TestTransport:  tt.TestTransport.TransportFor(nid),
+		helperSetupSrv: tt.helperSetupSrv,
+		helperCompSrv:  tt.helperCompSrv,
 	}
 	return ttc
 }
@@ -131,12 +138,4 @@ func (tt testTransport) PutCiphertext(ctx context.Context, ct helium.Ciphertext)
 
 func (tt testTransport) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
 	return tt.helperCompSrv.GetCiphertext(ctx, ctID)
-}
-
-func (tt testTransport) IncomingShares() <-chan protocol.Share {
-	return tt.incoming
-}
-
-func (tt testTransport) OutgoingShares() chan<- protocol.Share {
-	return tt.outgoing
 }
