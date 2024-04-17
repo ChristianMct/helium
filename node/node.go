@@ -325,14 +325,14 @@ func (node *Node) IsHelperNode() bool {
 // SessionProvider interface implementation
 
 // GetSessionFromID returns the session with the given ID.
-func (node *Node) GetSessionFromID(sessionID session.SessionID) (*session.Session, bool) {
+func (node *Node) GetSessionFromID(sessionID session.ID) (*session.Session, bool) {
 	return node.sessions.GetSessionFromID(sessionID)
 }
 
 // GetSessionFromContext returns the session by extracting the session id from the
 // provided context.
 func (node *Node) GetSessionFromContext(ctx context.Context) (*session.Session, bool) {
-	sessID, has := session.SessionIDFromContext(ctx)
+	sessID, has := session.IDFromContext(ctx)
 	if !has {
 		return nil, false
 	}

@@ -22,8 +22,8 @@ type FHEParameters interface { // TODO: Lattigo could have a common interface fo
 // NodeID is the unique identifier of a node.
 type NodeID string
 
-// SessionID is the unique identifier of a session.
-type SessionID string
+// ID is the unique identifier of a session.
+type ID string
 
 // CircuitID is the unique identifier of a running circuit.
 type CircuitID string
@@ -52,7 +52,7 @@ type FHEParamerersLiteralProvider interface {
 
 // Parameters contains data used to initialize a Session.
 type Parameters struct {
-	ID            SessionID
+	ID            ID
 	Nodes         []NodeID
 	FHEParameters FHEParamerersLiteralProvider
 	Threshold     int
@@ -249,7 +249,7 @@ func (sess *Session) Contains(nodeID NodeID) bool {
 	return utils.NewSet(sess.Nodes).Contains(nodeID)
 }
 
-func (sess *Session) GetSessionFromID(sessionID SessionID) (*Session, bool) {
+func (sess *Session) GetSessionFromID(sessionID ID) (*Session, bool) {
 	if sess.ID == sessionID {
 		return sess, true
 	}
@@ -257,7 +257,7 @@ func (sess *Session) GetSessionFromID(sessionID SessionID) (*Session, bool) {
 }
 
 func (sess *Session) GetSessionFromContext(ctx context.Context) (*Session, bool) {
-	sessID, has := SessionIDFromContext(ctx)
+	sessID, has := IDFromContext(ctx)
 	if !has {
 		return nil, false
 	}

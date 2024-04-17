@@ -17,7 +17,7 @@ var (
 )
 
 // NewContext returns a new context derived from ctx with the given session and circuit IDs.
-func NewContext(ctx context.Context, sessID SessionID, circID ...CircuitID) context.Context {
+func NewContext(ctx context.Context, sessID ID, circID ...CircuitID) context.Context {
 	ctx = context.WithValue(ctx, CtxSessionID, sessID)
 	if len(circID) != 0 {
 		ctx = ContextWithCircuitID(ctx, circID[0])
@@ -27,7 +27,7 @@ func NewContext(ctx context.Context, sessID SessionID, circID ...CircuitID) cont
 
 // NewBackgroundContext returns a new context derived from context.Background with
 // the given session and circuit IDs.
-func NewBackgroundContext(sessID SessionID, circID ...CircuitID) context.Context {
+func NewBackgroundContext(sessID ID, circID ...CircuitID) context.Context {
 	return NewContext(context.Background(), sessID, circID...)
 }
 
@@ -47,9 +47,9 @@ func NodeIDFromContext(ctx context.Context) (NodeID, bool) {
 	return nid, ok
 }
 
-// SessionIDFromContext returns the session ID from the context.
-func SessionIDFromContext(ctx context.Context) (SessionID, bool) {
-	sessID, ok := ctx.Value(CtxSessionID).(SessionID)
+// IDFromContext returns the session ID from the context.
+func IDFromContext(ctx context.Context) (ID, bool) {
+	sessID, ok := ctx.Value(CtxSessionID).(ID)
 	return sessID, ok
 }
 

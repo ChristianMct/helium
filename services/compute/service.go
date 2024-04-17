@@ -763,7 +763,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct session.Ciphertext) erro
 
 	_, exists := s.sessions.GetSessionFromContext(ctx)
 	if !exists {
-		sessid, _ := session.SessionIDFromContext(ctx)
+		sessid, _ := session.IDFromContext(ctx)
 		return fmt.Errorf("invalid session id \"%s\"", sessid)
 	}
 

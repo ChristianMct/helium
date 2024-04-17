@@ -18,7 +18,7 @@ var (
 func getOutgoingContext(ctx context.Context, senderID session.NodeID) context.Context {
 	md := metadata.New(nil)
 	md.Append("sender_id", string(senderID))
-	if sessID, hasSessID := session.SessionIDFromContext(ctx); hasSessID {
+	if sessID, hasSessID := session.IDFromContext(ctx); hasSessID {
 		md.Append(string(ctxSessionID), string(sessID))
 	}
 	if circID, hasCircID := session.CircuitIDFromContext(ctx); hasCircID {
@@ -58,8 +58,8 @@ func senderIDFromIncomingContext(ctx context.Context) session.NodeID {
 	return session.NodeID(valueFromIncomingContext(ctx, "sender_id"))
 }
 
-func sessionIDFromIncomingContext(ctx context.Context) session.SessionID {
-	return session.SessionID(valueFromIncomingContext(ctx, string(ctxSessionID)))
+func sessionIDFromIncomingContext(ctx context.Context) session.ID {
+	return session.ID(valueFromIncomingContext(ctx, string(ctxSessionID)))
 }
 
 func circuitIDFromIncomingContext(ctx context.Context) session.CircuitID {

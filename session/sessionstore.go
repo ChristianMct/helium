@@ -7,18 +7,18 @@ import (
 )
 
 type SessionProvider interface {
-	GetSessionFromID(sessionID SessionID) (*Session, bool)
+	GetSessionFromID(sessionID ID) (*Session, bool)
 	GetSessionFromContext(ctx context.Context) (*Session, bool)
 }
 
 type SessionStore struct {
 	lock     sync.RWMutex
-	sessions map[SessionID]*Session
+	sessions map[ID]*Session
 }
 
 func NewSessionStore() *SessionStore {
 	ss := new(SessionStore)
-	ss.sessions = make(map[SessionID]*Session)
+	ss.sessions = make(map[ID]*Session)
 	return ss
 }
 
@@ -38,7 +38,7 @@ func (s *SessionStore) NewRLWESession(sessParams Parameters, nodeID NodeID) (ses
 	return sess, err
 }
 
-func (s *SessionStore) GetSessionFromID(id SessionID) (*Session, bool) {
+func (s *SessionStore) GetSessionFromID(id ID) (*Session, bool) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	sess, ok := s.sessions[id]
