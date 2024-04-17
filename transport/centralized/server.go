@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
@@ -53,7 +52,7 @@ type HeliumServer struct {
 	statsHandler
 }
 
-func RunHeliumServer(ctx context.Context, config node.Config, nl helium.NodesList, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
 
 	helperNode, err := node.New(config, nl)
 	if err != nil {

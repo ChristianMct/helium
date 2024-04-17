@@ -2,53 +2,12 @@
 package helium
 
 import (
-	"fmt"
 	"net/url"
 	"path"
 	"strings"
 
 	"github.com/ChristianMct/helium/session"
 )
-
-// NodeAddress is the network address of a node.
-type NodeAddress string
-
-// NodeInfo contains the unique identifier and the network address of a node.
-type NodeInfo struct {
-	session.NodeID
-	NodeAddress
-}
-
-// NodesList is a list of known nodes in the network. It must contains all nodes
-// for a given application, including the current node. It does not need to contain
-// an address for all nodes, except for the helper node.
-type NodesList []NodeInfo
-
-// AddressOf returns the network address of the node with the given ID. Returns
-// an empty string if the node is not found in the list.
-func (nl NodesList) AddressOf(id session.NodeID) NodeAddress {
-	for _, node := range nl {
-		if node.NodeID == id {
-			return node.NodeAddress
-		}
-	}
-	return ""
-}
-
-// String returns a string representation of the list of nodes.
-func (nl NodesList) String() string {
-	str := "[ "
-	for _, node := range nl {
-		str += fmt.Sprintf(`{ID: %s, Address: %s} `,
-			node.NodeID, node.NodeAddress)
-	}
-	return str + "]"
-}
-
-// String returns a string representation of the node address.
-func (na NodeAddress) String() string {
-	return string(na)
-}
 
 // URL defines a URL format to serve as ciphertext identifier for
 // the Helium framwork.

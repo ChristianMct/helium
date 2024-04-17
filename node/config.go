@@ -19,13 +19,53 @@ import (
 // In the current implementation, only a single session per node is supported.
 type Config struct {
 	ID                session.NodeID
-	Address           helium.NodeAddress
+	Address           Address
 	HelperID          session.NodeID
 	SessionParameters []session.Parameters
 	SetupConfig       setup.ServiceConfig
 	ComputeConfig     compute.ServiceConfig
 	ObjectStoreConfig objectstore.Config
 	TLSConfig         helium.TLSConfig
+}
+
+// Address is the network address of a node.
+type Address string
+
+// Info contains the unique identifier and the network address of a node.
+type Info struct {
+	session.NodeID
+	Address
+}
+
+// List is a list of known nodes in the network. It must contains all nodes
+// for a given application, including the current node. It does not need to contain
+// an address for all nodes, except for the helper node.
+type List []Info
+
+// AddressOf returns the network address of the node with the given ID. Returns
+// an empty string if the node is not found in the list.
+func (nl List) AddressOf(id session.NodeID) Address {
+	for _, node := range nl {
+		if node.NodeID == id {
+			return node.Address
+		}
+	}
+	return ""
+}
+
+// String returns a string representation of the list of nodes.
+func (nl List) String() string {
+	str := "[ "
+	for _, node := range nl {
+		str += fmt.Sprintf(`{ID: %s, Address: %s} `,
+			node.NodeID, node.Address)
+	}
+	return str + "]"
+}
+
+// String returns a string representation of the node address.
+func (na Address) String() string {
+	return string(na)
 }
 
 // LoadConfigFromFile loads a node configuration from a JSON file.
@@ -49,7 +89,7 @@ func LoadConfigFromFile(filename string) (Config, error) {
 }
 
 // ValidateConfig checks that the configuration is valid.
-func ValidateConfig(config Config, nl helium.NodesList) error {
+func ValidateConfig(config Config, nl List) error {
 	if len(config.ID) == 0 {
 		return fmt.Errorf("config must specify a node ID")
 	}

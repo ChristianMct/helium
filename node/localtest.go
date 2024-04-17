@@ -45,7 +45,7 @@ type LocalTest struct {
 	*session.TestSession
 	HelperConfig    Config
 	SessNodeConfigs []Config
-	helium.NodesList
+	List
 
 	transport   testTransport
 	coordinator Coordinator
@@ -58,14 +58,14 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	helperID := session.NodeID("helper")
 	sessNodesID := make([]session.NodeID, config.PeerNodes)
 	shamirPks := make(map[session.NodeID]drlwe.ShamirPublicPoint, config.PeerNodes)
-	test.NodesList = make(helium.NodesList, 1+config.PeerNodes)
+	test.List = make(List, 1+config.PeerNodes)
 	for i := range sessNodesID {
 		nid := session.NodeID("peer-" + strconv.Itoa(i))
 		sessNodesID[i] = nid
 		shamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
-		test.NodesList[i] = helium.NodeInfo{NodeID: nid}
+		test.List[i] = Info{NodeID: nid}
 	}
-	test.NodesList[len(sessNodesID)] = helium.NodeInfo{NodeID: helperID, NodeAddress: "local"}
+	test.List[len(sessNodesID)] = Info{NodeID: helperID, Address: "local"}
 
 	config.SessionParams.Nodes = sessNodesID
 	config.SessionParams.ShamirPks = shamirPks
@@ -77,7 +77,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 		return nil, err
 	}
 
-	test.SessNodeConfigs, test.HelperConfig = genNodeConfigs(config, test.NodesList, nodeSecrets)
+	test.SessNodeConfigs, test.HelperConfig = genNodeConfigs(config, test.List, nodeSecrets)
 
 	if config.SessionParams != nil {
 		test.TestSession, err = session.NewTestSessionFromParams(*config.SessionParams, test.HelperConfig.ID)
@@ -87,14 +87,14 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	}
 
 	test.Nodes = make([]*Node, 1+config.PeerNodes)
-	test.HelperNode, err = New(test.HelperConfig, test.NodesList)
+	test.HelperNode, err = New(test.HelperConfig, test.List)
 	if err != nil {
 		return nil, err
 	}
 	test.Nodes[0] = test.HelperNode
 	for i, nc := range test.SessNodeConfigs {
 		var err error
-		test.Nodes[i+1], err = New(nc, test.NodesList)
+		test.Nodes[i+1], err = New(nc, test.List)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +115,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
-func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[session.NodeID]*session.Secrets) (sessNodesConfig []Config, helperNodeConfig Config) {
+func genNodeConfigs(config LocalTestConfig, nl List, secrets map[session.NodeID]*session.Secrets) (sessNodesConfig []Config, helperNodeConfig Config) {
 
 	tlsConfigs, err := createTLSConfigs(config, nl)
 	if err != nil {
@@ -186,7 +186,7 @@ type nodeCrypto struct {
 	cert   x509.Certificate
 }
 
-func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (map[session.NodeID]helium.TLSConfig, error) {
+func createTLSConfigs(testConfig LocalTestConfig, nodeList List) (map[session.NodeID]helium.TLSConfig, error) {
 
 	tlsConfigs := make(map[session.NodeID]helium.TLSConfig, len(nodeList))
 

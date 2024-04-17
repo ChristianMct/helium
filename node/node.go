@@ -13,7 +13,6 @@ import (
 	"log"
 	"slices"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
@@ -34,9 +33,9 @@ import (
 //   - the peer nodes connect to the helper node and provide their protocol shares and
 //     encrypted inputs to the compuation. Peer nodes do not need to have an address.
 type Node struct {
-	addr         helium.NodeAddress
+	addr         Address
 	id, helperID session.NodeID
-	nodeList     helium.NodesList
+	nodeList     List
 
 	// sessions and state
 	sessions *session.SessionStore
@@ -59,7 +58,7 @@ type Node struct {
 
 // New creates a new Helium node from the provided config and node list.
 // The method returns an error if the config is invalid or if the node list is empty.
-func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
+func New(config Config, nodeList List) (node *Node, err error) {
 	node = new(Node)
 
 	if err := ValidateConfig(config, nodeList); err != nil {
@@ -106,7 +105,7 @@ func New(config Config, nodeList helium.NodesList) (node *Node, err error) {
 }
 
 // RunNew creates a new Helium node from the provided config and node list, and runs the node with the provided app under the given context.
-func RunNew(ctx context.Context, config Config, nodeList helium.NodesList, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (node *Node, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+func RunNew(ctx context.Context, config Config, nodeList List, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (node *Node, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
 	node, err = New(config, nodeList)
 	if err != nil {
 		return nil, nil, nil, err
@@ -299,7 +298,7 @@ func (node *Node) WaitForSetupDone(ctx context.Context) error {
 }
 
 // NodeList returns the list of nodes known to the node.
-func (node *Node) NodeList() helium.NodesList {
+func (node *Node) NodeList() List {
 	return slices.Clone(node.nodeList)
 }
 
@@ -309,7 +308,7 @@ func (node *Node) ID() session.NodeID {
 }
 
 // Address returns the node's address.
-func (node *Node) Address() helium.NodeAddress {
+func (node *Node) Address() Address {
 	return node.addr
 }
 

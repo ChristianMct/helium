@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
@@ -31,7 +30,7 @@ const (
 type HeliumClient struct {
 	node          *node.Node
 	id, helperID  session.NodeID
-	helperAddress helium.NodeAddress
+	helperAddress node.Address
 
 	outgoingShares chan protocol.Share
 
@@ -42,7 +41,7 @@ type HeliumClient struct {
 	statsHandler
 }
 
-func RunHeliumClient(ctx context.Context, config node.Config, nl helium.NodesList, app node.App, ip compute.InputProvider) (outs <-chan circuit.Output, err error) {
+func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (outs <-chan circuit.Output, err error) {
 
 	n, err := node.New(config, nl)
 	if err != nil {
@@ -58,7 +57,7 @@ func RunHeliumClient(ctx context.Context, config node.Config, nl helium.NodesLis
 }
 
 // NewHeliumClient creates a new helium client.
-func NewHeliumClient(node *node.Node, helperID session.NodeID, helperAddress helium.NodeAddress) *HeliumClient {
+func NewHeliumClient(node *node.Node, helperID session.NodeID, helperAddress node.Address) *HeliumClient {
 	hc := new(HeliumClient)
 	hc.node = node
 	hc.PublicKeyProvider = node
