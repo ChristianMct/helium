@@ -20,7 +20,6 @@ import (
 	"github.com/ChristianMct/helium/services/setup"
 	cryptoUtil "github.com/ChristianMct/helium/utils/certs"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/session"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -186,13 +185,13 @@ type nodeCrypto struct {
 	cert   x509.Certificate
 }
 
-func createTLSConfigs(testConfig LocalTestConfig, nodeList List) (map[session.NodeID]helium.TLSConfig, error) {
+func createTLSConfigs(testConfig LocalTestConfig, nodeList List) (map[session.NodeID]TLSConfig, error) {
 
-	tlsConfigs := make(map[session.NodeID]helium.TLSConfig, len(nodeList))
+	tlsConfigs := make(map[session.NodeID]TLSConfig, len(nodeList))
 
 	if testConfig.InsecureChannels {
 		for _, n := range nodeList {
-			tlsConfigs[n.NodeID] = helium.TLSConfig{InsecureChannels: true}
+			tlsConfigs[n.NodeID] = TLSConfig{InsecureChannels: true}
 		}
 		return tlsConfigs, nil
 	}
@@ -312,7 +311,7 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList List) (map[session.No
 			peerCerts[otherNodeID] = string(peerCertPem)
 		}
 
-		tlsConfigs[nodeID] = helium.TLSConfig{
+		tlsConfigs[nodeID] = TLSConfig{
 			OwnSk:     string(skPem),
 			OwnPk:     string(pkPem),
 			OwnCert:   string(certPem),

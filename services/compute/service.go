@@ -10,7 +10,6 @@ import (
 	"log"
 	"sync"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/protocol"
@@ -720,7 +719,7 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID session.CiphertextID) 
 		return nil, fmt.Errorf("invalid session id")
 	}
 
-	ctURL, err := helium.ParseURL(string(ctID))
+	ctURL, err := ParseURL(string(ctID))
 	if err != nil {
 		return nil, fmt.Errorf("invalid ciphertext id format")
 	}
@@ -768,7 +767,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct session.Ciphertext) erro
 		return fmt.Errorf("invalid session id \"%s\"", sessid)
 	}
 
-	ctURL, err := helium.ParseURL(string(ct.ID))
+	ctURL, err := ParseURL(string(ct.ID))
 	if err != nil {
 		return fmt.Errorf("invalid ciphertext id \"%s\": %w", ct.ID, err)
 	}

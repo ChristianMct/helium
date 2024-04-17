@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/objectstore"
@@ -49,8 +48,8 @@ var (
 		SetupConfig:   setup.ServiceConfig{Protocols: protocol.ExecutorConfig{MaxParticipation: 1}},
 		ComputeConfig: compute.ServiceConfig{MaxCircuitEvaluation: 1, Protocols: protocol.ExecutorConfig{MaxParticipation: 1}},
 
-		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},   // use a volatile in-memory store for state
-		TLSConfig:         helium.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
+		ObjectStoreConfig: objectstore.Config{BackendName: "mem"}, // use a volatile in-memory store for state
+		TLSConfig:         node.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
 	}
 
 	// the configuration of the helper node. Similar as for peer node, but enables multiple protocol and circuit evaluations at once.
@@ -64,7 +63,7 @@ var (
 		SetupConfig:       setup.ServiceConfig{Protocols: protocol.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
 		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16, Protocols: protocol.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
-		TLSConfig:         helium.TLSConfig{InsecureChannels: true},
+		TLSConfig:         node.TLSConfig{InsecureChannels: true},
 	}
 
 	// the node list for the example system
