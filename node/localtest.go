@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"log"
 	"math/big"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/ChristianMct/helium/coord"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	cryptoUtil "github.com/ChristianMct/helium/utils/certs"
 
@@ -103,6 +105,12 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test.coordinator = coord.NewTestCoordinator[Event](helperID)
 	test.transport = *NewTestTransport(test.HelperNode.id, test.HelperNode.setup, test.HelperNode.compute)
 
+	var ok bool
+	test.Params, ok = test.HelperSession.Params.(bgv.Parameters)
+	if !ok {
+		return nil, fmt.Errorf("local tests are currently supported for BGV parameters only, got %T", test.HelperSession.Params)
+	}
+
 	return test, nil
 }
 
@@ -125,6 +133,10 @@ func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[hel
 	sp := config.SessionParams
 	hid := nl[len(nl)-1].NodeID
 	sessNodesConfig = make([]Config, config.PeerNodes)
+	nodeExecConfig := protocol.ExecutorConfig{
+		MaxParticipation: 1,
+		MaxAggregation:   -1,
+	}
 	for i := range sessNodesConfig {
 		nid := nl[i].NodeID
 		sessNodesConfig[i] = Config{
@@ -134,15 +146,21 @@ func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[hel
 			TLSConfig:         tlsConfigs[nid],
 			ObjectStoreConfig: objstoreconf,
 			SetupConfig: setup.ServiceConfig{
-				Protocols: protocol.ExecutorConfig{
-					MaxParticipation: 1,
-					MaxAggregation:   0,
-				},
+				Protocols: nodeExecConfig,
+			},
+			ComputeConfig: compute.ServiceConfig{
+				Protocols:            nodeExecConfig,
+				MaxCircuitEvaluation: 1,
 			},
 		}
 		sessNodesConfig[i].SessionParameters[0].Secrets = secrets[nid]
 	}
 
+	helperExecConfig := protocol.ExecutorConfig{
+		MaxProtoPerNode:  1,
+		MaxAggregation:   1,
+		MaxParticipation: -1,
+	}
 	helperNodeConfig = Config{
 		ID:                hid,
 		Address:           "local",
@@ -151,11 +169,11 @@ func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[hel
 		TLSConfig:         tlsConfigs[hid],
 		ObjectStoreConfig: objstoreconf,
 		SetupConfig: setup.ServiceConfig{
-			Protocols: protocol.ExecutorConfig{
-				MaxProtoPerNode:  1,
-				MaxAggregation:   1,
-				MaxParticipation: 0,
-			},
+			Protocols: helperExecConfig,
+		},
+		ComputeConfig: compute.ServiceConfig{
+			Protocols:            helperExecConfig,
+			MaxCircuitEvaluation: 1,
 		},
 	}
 

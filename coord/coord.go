@@ -3,7 +3,6 @@ package coord
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 
 	"github.com/ChristianMct/helium"
@@ -48,7 +47,6 @@ func NewTestCoordinator[T EventType](hid helium.NodeID) *TestCoordinator[T] {
 		clients: make([]chan T, 0)}
 	go func() {
 		for ev := range tc.c.outgoing {
-			log.Printf("[COORD] got outgoing event: %v", ev)
 			tc.l.Lock()
 			tc.log = append(tc.log, ev)
 			for _, cli := range tc.clients {

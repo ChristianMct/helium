@@ -14,7 +14,6 @@ import (
 	"github.com/ChristianMct/helium/session"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/he/heint"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/net/context"
 	"golang.org/x/sync/errgroup"
@@ -31,6 +30,12 @@ type testSetting struct {
 	CircuitSigs []TestCircuitSig
 	Reciever    helium.NodeID
 	Rep         int // numer of repetition for each circuit
+}
+
+var testSessionParameters = session.Parameters{
+	ID:            "test-session",
+	FHEParameters: bgv.ParametersLiteral{LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}, PlaintextModulus: 79873},
+	// Threshold:     set by test
 }
 
 var testSetupDescription = setup.Description{
@@ -99,34 +104,21 @@ func TestNodeSetup(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
-
-			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
-
-			params, err := heint.NewParametersFromLiteral(heint.ParametersLiteral{LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}, PlaintextModulus: 79873}) // matmul
-			require.Nil(t, err)
-			sessParams := session.Parameters{
-				ID:            "test-session",
-				FHEParameters: params.ParametersLiteral(),
-				Threshold:     ts.T,
-			}
-
+			sessParams := testSessionParameters
+			sessParams.Threshold = ts.T
 			lt, err := NewLocalTest(LocalTestConfig{
 				PeerNodes:     ts.N,
 				SessionParams: &sessParams,
 			})
 			require.Nil(t, err)
 
-			testSess := lt.TestSession
-
-			all, clients, cloud := NewTestNodes(lt)
-			_, _ = clients, cloud
-
-			ctx := helium.NewBackgroundContext(sessParams.ID)
+			all, _, cloud := NewTestNodes(lt)
 
 			app := App{
 				SetupDescription: &testSetupDescription,
 			}
 
+			ctx := helium.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			for _, node := range all {
 				node := node
@@ -155,7 +147,7 @@ func TestNodeSetup(t *testing.T) {
 
 			for _, node := range all {
 				resCheckCtx, runCheckCancel := context.WithTimeout(ctx, time.Second)
-				setup.CheckTestSetup(resCheckCtx, t, testSess, *app.SetupDescription, node)
+				setup.CheckTestSetup(resCheckCtx, t, lt.TestSession, *app.SetupDescription, node)
 				runCheckCancel()
 			}
 		})
@@ -174,24 +166,16 @@ func TestNodeCompute(t *testing.T) {
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
-			paramLiteral := bgv.ParametersLiteral{PlaintextModulus: 79873, LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}}
-
-			//params, err := bgv.NewParametersFromLiteral(bgv.ParametersLiteral{T: 79873, LogN: 13, LogQ: []int{54, 54, 54}, LogP: []int{55}}) // vecmul
-			sessParams := session.Parameters{
-				ID:            "test-session",
-				FHEParameters: paramLiteral,
-				Threshold:     ts.T,
-			}
-
+			sessParams := testSessionParameters
+			sessParams.Threshold = ts.T
 			lt, err := NewLocalTest(LocalTestConfig{
 				PeerNodes:     ts.N,
 				SessionParams: &sessParams,
 			})
-			require.Nil(t, err)
-
-			testSess := lt.TestSession
+			require.NoError(t, err)
 
 			all, clients, cloud := NewTestNodes(lt)
+
 			for _, cli := range clients {
 				cid := cli.id
 				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
@@ -199,25 +183,26 @@ func TestNodeCompute(t *testing.T) {
 				}
 			}
 
-			ctx := helium.NewBackgroundContext(sessParams.ID)
-			hid := cloud.id
-
 			app := App{
 				SetupDescription: &testSetupDescription,
 				Circuits:         circuit.TestCircuits,
 			}
 
+			ctx := helium.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
-
 			var cdescs = make(chan chan<- circuit.Descriptor)
 			for _, node := range all {
 				node := node
 				g.Go(func() error {
+					err := cloud.Register(node.id)
+					if err != nil {
+						return err
+					}
 					cdescsn, outs, err := node.Run(runctx, app, node.InputProvider, lt.coordinator, lt.transport.TransportFor(node.id))
 					if err != nil {
 						return err
 					}
-					if node.id == hid {
+					if node.id == cloud.id {
 						cdescs <- cdescsn
 					}
 					for out := range outs {
@@ -233,26 +218,19 @@ func TestNodeCompute(t *testing.T) {
 			for _, tc := range ts.CircuitSigs {
 				for i := 0; i < ts.Rep; i++ {
 					cid := helium.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
-					cdesc <- circuit.Descriptor{Signature: circuit.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: hid}
+					cdesc <- circuit.Descriptor{Signature: circuit.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: cloud.id}
 					expResult[cid] = tc.ExpResult
 				}
 			}
-
 			close(cdesc)
+
 			err = g.Wait()
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			// for _, node := range all {
-			// 	netStats := node.GetNetworkStats()
-			// 	require.NotZero(t, netStats.DataRecv, "node %s should have received data", node.id)
-			// 	require.NotZero(t, netStats.DataSent, "node %s should have sent data", node.id)
-			// }
-
-			bgvParams, err := bgv.NewParameters(testSess.RlweParams, paramLiteral.PlaintextModulus)
 			require.Nil(t, err)
-			encoder := bgv.NewEncoder(bgvParams)
+			encoder := bgv.NewEncoder(lt.Params)
 
 			rec := all[ts.Reciever]
 			for cid, expRes := range expResult {
@@ -260,7 +238,7 @@ func TestNodeCompute(t *testing.T) {
 				require.True(t, has, "reciever should have an output")
 				delete(rec.Outputs, cid)
 				pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
-				res := make([]uint64, bgvParams.MaxSlots())
+				res := make([]uint64, lt.Params.MaxSlots())
 				encoder.Decode(pt, res)
 				//fmt.Println(out.OperandLabel, res[:10])
 				require.Equal(t, expRes, res[0])

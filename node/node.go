@@ -215,28 +215,28 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 		close(sc.setupCoordinator.incoming)
 	}
 
+	go func() {
+		err := node.compute.Run(ctx, ip, or, sc.computeCoordinator, &st.computeTransport)
+		if err != nil {
+			panic(err)
+		}
+	}()
+
 	<-node.setupDone
 
 	node.Logf("setup done, starting compute phase")
 
-	// go func() {
-	// 	err := node.compute.Run(ctx, ip, or, sc.computeCoordinator, &st.computeTransport)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// }()
-
-	// if node.IsHelperNode() {
-	// 	for cd := range cds {
-	// 		node.Logf("new circuit descriptor: %s", cd)
-	// 		cev := compute.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
-	// 		sc.computeCoordinator.incoming <- cev
-	// 	}
-	// 	node.Logf("user closed circuit discription channel, closing downstream")
-	// 	close(sc.computeCoordinator.incoming)
-	// }
-
-	close(or)
+	if node.IsHelperNode() {
+		go func() {
+			for cd := range cds {
+				node.Logf("new circuit descriptor: %s", cd)
+				cev := compute.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
+				sc.computeCoordinator.incoming <- cev
+			}
+			node.Logf("user closed circuit discription channel, closing downstream")
+			close(sc.computeCoordinator.incoming)
+		}()
+	}
 
 	return cds, or, nil
 }

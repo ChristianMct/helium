@@ -110,7 +110,7 @@ func newServicesCoordinator(ctx context.Context, upstream Coordinator) (*Service
 
 	go func() {
 		<-sc.setupCoordDone
-		//<-sc.computeDone
+		<-sc.computeCoordDone
 		if upstreamChan.Outgoing != nil {
 			close(upstreamChan.Outgoing)
 		}
