@@ -156,7 +156,6 @@ func (hsv *HeliumServer) AppendEventToLog(event node.Event) {
 	}
 	hsv.nodesMu.RUnlock()
 	hsv.eventsMu.Unlock()
-	return
 }
 
 // CloseEventLog is called by the server side to close the event log and stop sending events to connected peers.

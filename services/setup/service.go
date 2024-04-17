@@ -11,6 +11,7 @@ import (
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
@@ -149,7 +150,7 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 
 	s.transport = trans
 
-	runCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), "service", "setup"))
+	runCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), services.CtxKeyName, "setup"))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator

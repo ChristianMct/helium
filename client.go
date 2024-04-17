@@ -15,6 +15,7 @@ import (
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/session"
 	"google.golang.org/grpc"
@@ -74,7 +75,7 @@ func (hc *HeliumClient) Run(ctx context.Context, app node.App, ip compute.InputP
 			default:
 				panic(fmt.Errorf("unknown share type: %s", share.ProtocolType))
 			}
-			err := hc.PutShare(context.WithValue(ctx, "service", service), share)
+			err := hc.PutShare(context.WithValue(ctx, services.CtxKeyName, service), share)
 			if err != nil {
 				panic(fmt.Errorf("error sending share: %s", err))
 			}
@@ -217,7 +218,12 @@ func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct session.Ciphertext
 }
 
 func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
-	return getOutgoingContext(ctx, hc.id)
+	ctx = session.ContextWithNodeID(ctx, hc.id) // TODO would be better to ensure that a node always has its id in a context
+	ctx, err := getOutgoingContext(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return ctx
 }
 
 func readPresentFromStream(stream grpc.ClientStream) (int, error) {

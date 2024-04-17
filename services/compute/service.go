@@ -13,6 +13,7 @@ import (
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/services"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -341,7 +342,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	s.transport = trans
 	s.inputProvider = ip
 
-	serviceCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), "service", "compute"))
+	serviceCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), services.CtxKeyName, "compute"))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator

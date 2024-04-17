@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/ChristianMct/helium/services"
 	"github.com/ChristianMct/helium/utils"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/stats"
@@ -38,7 +39,7 @@ type statsHandler struct {
 func (s *statsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
 	service := valueFromIncomingContext(ctx, "service") // TODO: should do all incoming context tagging here...
 	if service != "" {
-		ctx = context.WithValue(ctx, "service", service)
+		ctx = context.WithValue(ctx, services.CtxKeyName, service)
 	}
 	return ctx
 }
@@ -47,7 +48,7 @@ func (s *statsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.
 func (s *statsHandler) HandleRPC(ctx context.Context, sta stats.RPCStats) {
 
 	var ns *ServiceStats
-	phase := ctx.Value("service")
+	phase := ctx.Value(services.CtxKeyName)
 	switch phase {
 	case "setup":
 		ns = &s.Setup
@@ -76,10 +77,6 @@ func (s *statsHandler) HandleRPC(ctx context.Context, sta stats.RPCStats) {
 //     connection will be derived from the context returned.
 //   - On client side, the context is not derived from the context returned.
 func (s *statsHandler) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
-	service := valueFromIncomingContext(ctx, "service")
-	if service != "" {
-		ctx = context.WithValue(ctx, "service", service)
-	}
 	return ctx
 }
 

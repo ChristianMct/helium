@@ -41,16 +41,16 @@ func ContextWithNodeID(ctx context.Context, nodeID NodeID) context.Context {
 	return context.WithValue(ctx, CtxNodeID, nodeID)
 }
 
-// NodeIDFromContext returns the node ID from the context.
-func NodeIDFromContext(ctx context.Context) (NodeID, bool) {
-	nid, ok := ctx.Value(CtxNodeID).(NodeID)
-	return nid, ok
-}
-
 // IDFromContext returns the session ID from the context.
 func IDFromContext(ctx context.Context) (ID, bool) {
 	sessID, ok := ctx.Value(CtxSessionID).(ID)
 	return sessID, ok
+}
+
+// NodeIDFromContext returns the node ID from the context.
+func NodeIDFromContext(ctx context.Context) (NodeID, bool) {
+	nid, ok := ctx.Value(CtxNodeID).(NodeID)
+	return nid, ok
 }
 
 // CircuitIDFromContext returns the circuit ID from the context, if present.
