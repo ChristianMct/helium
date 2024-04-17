@@ -1,4 +1,4 @@
-package centralized
+package helium
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ChristianMct/helium/api"
+	"github.com/ChristianMct/helium/api/pb"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/session"
-	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
@@ -41,20 +42,8 @@ type HeliumClient struct {
 	statsHandler
 }
 
-func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (outs <-chan circuit.Output, err error) {
-
-	n, err := node.New(config, nl)
-	if err != nil {
-		return nil, err
-	}
-
-	hc := NewHeliumClient(n, config.HelperID, nl.AddressOf(config.HelperID))
-	if err := hc.Connect(); err != nil {
-		return nil, err
-	}
-
-	return hc.Run(ctx, app, ip)
-}
+// Dialer is a function that returns a net.Conn to the provided address.
+type Dialer = func(c context.Context, addr string) (net.Conn, error)
 
 // NewHeliumClient creates a new helium client.
 func NewHeliumClient(node *node.Node, helperID session.NodeID, helperAddress node.Address) *HeliumClient {
@@ -165,7 +154,8 @@ func (hc *HeliumClient) Register(ctx context.Context) (upstream *coordinator.Cha
 				}
 				return
 			}
-			eventsStream <- getNodeEventFromAPI(apiEvent)
+			eventsStream <- api.ToNodeEvent(apiEvent)
+
 		}
 	}()
 
@@ -174,7 +164,7 @@ func (hc *HeliumClient) Register(ctx context.Context) (upstream *coordinator.Cha
 
 // PutShare sends a share to the helium server.
 func (hc *HeliumClient) PutShare(ctx context.Context, share protocol.Share) error {
-	apiShare, err := getAPIShare(&share)
+	apiShare, err := api.GetShare(&share)
 	if err != nil {
 		return err
 	}
@@ -184,12 +174,12 @@ func (hc *HeliumClient) PutShare(ctx context.Context, share protocol.Share) erro
 
 // GetAggregationOutput queries and returns the aggregation output for a given protocol descriptor.
 func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
-	apiOut, err := hc.HeliumClient.GetAggregationOutput(hc.outgoingContext(ctx), getAPIProtocolDesc(&pd))
+	apiOut, err := hc.HeliumClient.GetAggregationOutput(hc.outgoingContext(ctx), api.GetProtocolDesc(&pd))
 	if err != nil {
 		return nil, err
 	}
 
-	s, err := getShareFromAPI(apiOut.AggregatedShare)
+	s, err := api.ToShare(apiOut.AggregatedShare)
 	if err != nil {
 		return nil, err
 	}
@@ -202,12 +192,12 @@ func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID session.Cipherte
 	if err != nil {
 		return nil, err
 	}
-	return getCiphertextFromAPI(apiCt)
+	return api.ToCiphertext(apiCt)
 }
 
 // PutCiphertext sends a ciphertext to the helium server.
 func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
-	apiCt, err := getAPICiphertext(&ct)
+	apiCt, err := api.GetCiphertext(&ct)
 	if err != nil {
 		return err
 	}

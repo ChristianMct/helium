@@ -1,21 +1,21 @@
-package centralized
+package helium
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/ChristianMct/helium/api"
+	"github.com/ChristianMct/helium/api/pb"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/session"
-	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -50,25 +50,6 @@ type HeliumServer struct {
 	*grpc.Server
 	*pb.UnimplementedHeliumServer
 	statsHandler
-}
-
-func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
-
-	helperNode, err := node.New(config, nl)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	hsv := NewHeliumServer(helperNode)
-
-	lis, err := net.Listen("tcp", string(config.Address))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	go hsv.Serve(lis)
-
-	return hsv.Run(ctx, app, ip)
 }
 
 // NewHeliumServer creates a new helium server with the provided node information and handlers.
@@ -234,7 +215,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 
 	var done bool
 	for _, ev := range pastEvents {
-		err := stream.Send(getAPINodeEvent(ev))
+		err := stream.Send(api.GetNodeEvent(ev))
 		if err != nil {
 			done = true
 			hsv.Logf("error while sending past events to %s: %s", nodeID, err)
@@ -250,7 +231,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 		// received an event to send or closed the queue
 		case evt, more := <-sendQueue:
 			if more {
-				if err := stream.Send(getAPINodeEvent(evt)); err != nil {
+				if err := stream.Send(api.GetNodeEvent(evt)); err != nil {
 					done = true
 					hsv.Logf("error on stream send for %s: %s", nodeID, err)
 				}
@@ -292,7 +273,7 @@ func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *pb.Share) (*p
 		return nil, err
 	}
 
-	s, err := getShareFromAPI(apiShare)
+	s, err := api.ToShare(apiShare)
 	if err != nil {
 		hsv.Logf("got an invalid share: %s", err) // TODO add details
 		return nil, err
@@ -311,13 +292,13 @@ func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *pb.P
 		return nil, err
 	}
 
-	pd := getProtocolDescFromAPI(apipd)
+	pd := api.ToProtocolDesc(apipd)
 	out, err := hsv.helperNode.GetAggregationOutput(ctx, *pd)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "no output for protocol %s: %s", pd.HID(), err)
 	}
 
-	s, err := getAPIShare(&out.Share)
+	s, err := api.GetShare(&out.Share)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "error converting share to API: %s", err)
 	}
@@ -342,7 +323,7 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.Ciphertex
 		return nil, err
 	}
 
-	apiCt, err := getAPICiphertext(ct)
+	apiCt, err := api.GetCiphertext(ct)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "error converting ciphertext to API: %s", err)
 	}
@@ -352,7 +333,7 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.Ciphertex
 
 // PutCiphertext is a gRPC handler for the PutCiphertext method of the Helium service.
 func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Ciphertext) (*pb.CiphertextID, error) {
-	ct, err := getCiphertextFromAPI(apict)
+	ct, err := api.ToCiphertext(apict)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ciphertext: %w", err)
 	}

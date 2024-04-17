@@ -1,11 +1,23 @@
-package centralized
+package helium
 
 import (
+	"fmt"
 	"sync"
 
+	"github.com/ChristianMct/helium/utils"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/stats"
 )
+
+// NetStats contains the network statistics of a connection.
+type NetStats struct {
+	DataSent, DataRecv uint64
+}
+
+// String returns a string representation of the network statistics.
+func (s NetStats) String() string {
+	return fmt.Sprintf("Sent: %s, Received: %s", utils.ByteCountSI(s.DataSent), utils.ByteCountSI(s.DataRecv))
+}
 
 type statsHandler struct {
 	mu    sync.Mutex

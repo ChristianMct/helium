@@ -1,103 +1,103 @@
-package centralized
+package api
 
 import (
 	"fmt"
 
+	"github.com/ChristianMct/helium/api/pb"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
-	"github.com/ChristianMct/helium/transport/pb"
 	"github.com/ChristianMct/helium/utils"
 )
 
-func getAPIProtocolEvent(event protocol.Event) *pb.ProtocolEvent {
+func GetProtocolEvent(event protocol.Event) *pb.ProtocolEvent {
 	return &pb.ProtocolEvent{
 		Type:        pb.EventType(event.EventType),
-		Descriptor_: getAPIProtocolDesc(&event.Descriptor),
+		Descriptor_: GetProtocolDesc(&event.Descriptor),
 	}
 }
 
-func getProtocolEventFromAPI(apiEvent *pb.ProtocolEvent) protocol.Event {
+func ToProtocolEvent(apiEvent *pb.ProtocolEvent) protocol.Event {
 	return protocol.Event{
 		EventType:  protocol.EventType(apiEvent.Type),
-		Descriptor: *getProtocolDescFromAPI(apiEvent.Descriptor_),
+		Descriptor: *ToProtocolDesc(apiEvent.Descriptor_),
 	}
 }
 
-func getAPISetupEvent(event setup.Event) *pb.SetupEvent {
+func GetSetupEvent(event setup.Event) *pb.SetupEvent {
 	return &pb.SetupEvent{
-		ProtocolEvent: getAPIProtocolEvent(event.Event),
+		ProtocolEvent: GetProtocolEvent(event.Event),
 	}
 }
 
-func getSetupEventFromAPI(apiEvent *pb.SetupEvent) setup.Event {
+func ToSetupEvent(apiEvent *pb.SetupEvent) setup.Event {
 	return setup.Event{
-		Event: getProtocolEventFromAPI(apiEvent.ProtocolEvent),
+		Event: ToProtocolEvent(apiEvent.ProtocolEvent),
 	}
 }
 
-func getAPIComputeEvent(event compute.Event) *pb.ComputeEvent {
+func GetComputeEvent(event compute.Event) *pb.ComputeEvent {
 	apiEvent := &pb.ComputeEvent{}
 	if event.CircuitEvent != nil {
 		apiEvent.CircuitEvent = &pb.CircuitEvent{
 			Type:        pb.EventType(event.CircuitEvent.EventType),
-			Descriptor_: getAPICircuitDesc(event.CircuitEvent.Descriptor),
+			Descriptor_: GetCircuitDesc(event.CircuitEvent.Descriptor),
 		}
 	}
 	if event.ProtocolEvent != nil {
 		apiEvent.ProtocolEvent = &pb.ProtocolEvent{
 			Type:        pb.EventType(event.ProtocolEvent.EventType),
-			Descriptor_: getAPIProtocolDesc(&event.ProtocolEvent.Descriptor),
+			Descriptor_: GetProtocolDesc(&event.ProtocolEvent.Descriptor),
 		}
 	}
 	return apiEvent
 }
 
-func getComputeEventFromAPI(apiEvent *pb.ComputeEvent) compute.Event {
+func ToComputeEvent(apiEvent *pb.ComputeEvent) compute.Event {
 	event := compute.Event{}
 	if apiEvent.CircuitEvent != nil {
 		event.CircuitEvent = &circuit.Event{
 			EventType:  circuit.EventType(apiEvent.CircuitEvent.Type),
-			Descriptor: *getCircuitDescFromAPI(apiEvent.CircuitEvent.Descriptor_),
+			Descriptor: *ToCircuitDesc(apiEvent.CircuitEvent.Descriptor_),
 		}
 	}
 	if apiEvent.ProtocolEvent != nil {
 		event.ProtocolEvent = &protocol.Event{
 			EventType:  protocol.EventType(apiEvent.ProtocolEvent.Type),
-			Descriptor: *getProtocolDescFromAPI(apiEvent.ProtocolEvent.Descriptor_),
+			Descriptor: *ToProtocolDesc(apiEvent.ProtocolEvent.Descriptor_),
 		}
 	}
 	return event
 }
 
-func getAPINodeEvent(event node.Event) *pb.NodeEvent {
+func GetNodeEvent(event node.Event) *pb.NodeEvent {
 	apiEvent := &pb.NodeEvent{}
 	if event.IsSetup() {
-		apiEvent.Event = &pb.NodeEvent_SetupEvent{SetupEvent: getAPISetupEvent(*event.SetupEvent)}
+		apiEvent.Event = &pb.NodeEvent_SetupEvent{SetupEvent: GetSetupEvent(*event.SetupEvent)}
 	}
 	if event.IsCompute() {
-		apiEvent.Event = &pb.NodeEvent_ComputeEvent{ComputeEvent: getAPIComputeEvent(*event.ComputeEvent)}
+		apiEvent.Event = &pb.NodeEvent_ComputeEvent{ComputeEvent: GetComputeEvent(*event.ComputeEvent)}
 	}
 	return apiEvent
 }
 
-func getNodeEventFromAPI(apiEvent *pb.NodeEvent) node.Event {
+func ToNodeEvent(apiEvent *pb.NodeEvent) node.Event {
 	event := node.Event{}
 	switch e := apiEvent.Event.(type) {
 	case *pb.NodeEvent_SetupEvent:
-		ev := getSetupEventFromAPI(e.SetupEvent)
+		ev := ToSetupEvent(e.SetupEvent)
 		event.SetupEvent = &ev
 	case *pb.NodeEvent_ComputeEvent:
-		ev := getComputeEventFromAPI(e.ComputeEvent)
+		ev := ToComputeEvent(e.ComputeEvent)
 		event.ComputeEvent = &ev
 	}
 	return event
 }
 
-func getAPIProtocolDesc(pd *protocol.Descriptor) *pb.ProtocolDescriptor {
+func GetProtocolDesc(pd *protocol.Descriptor) *pb.ProtocolDescriptor {
 	apiDesc := &pb.ProtocolDescriptor{
 		ProtocolType: pb.ProtocolType(pd.Signature.Type),
 		Args:         make(map[string]string, len(pd.Signature.Args)),
@@ -113,7 +113,7 @@ func getAPIProtocolDesc(pd *protocol.Descriptor) *pb.ProtocolDescriptor {
 	return apiDesc
 }
 
-func getProtocolDescFromAPI(apiPD *pb.ProtocolDescriptor) *protocol.Descriptor {
+func ToProtocolDesc(apiPD *pb.ProtocolDescriptor) *protocol.Descriptor {
 	desc := &protocol.Descriptor{
 		Signature:    protocol.Signature{Type: protocol.Type(apiPD.ProtocolType), Args: make(map[string]string)},
 		Aggregator:   session.NodeID(apiPD.Aggregator.NodeId),
@@ -128,7 +128,7 @@ func getProtocolDescFromAPI(apiPD *pb.ProtocolDescriptor) *protocol.Descriptor {
 	return desc
 }
 
-func getAPICircuitDesc(cd circuit.Descriptor) *pb.CircuitDescriptor {
+func GetCircuitDesc(cd circuit.Descriptor) *pb.CircuitDescriptor {
 	apiDesc := &pb.CircuitDescriptor{
 		CircuitSignature: &pb.CircuitSignature{
 			Name: string(cd.Name),
@@ -150,7 +150,7 @@ func getAPICircuitDesc(cd circuit.Descriptor) *pb.CircuitDescriptor {
 	return apiDesc
 }
 
-func getCircuitDescFromAPI(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
+func ToCircuitDesc(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
 	cd := &circuit.Descriptor{
 		Signature: circuit.Signature{
 			Name: circuit.Name(apiCd.CircuitSignature.Name),
@@ -172,7 +172,7 @@ func getCircuitDescFromAPI(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
 	return cd
 }
 
-func getAPIShare(s *protocol.Share) (*pb.Share, error) {
+func GetShare(s *protocol.Share) (*pb.Share, error) {
 	outShareBytes, err := s.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func getAPIShare(s *protocol.Share) (*pb.Share, error) {
 	return apiShare, nil
 }
 
-func getShareFromAPI(s *pb.Share) (protocol.Share, error) {
+func ToShare(s *pb.Share) (protocol.Share, error) {
 	desc := s.GetMetadata()
 	pID := protocol.ID(desc.GetProtocolID().GetProtocolID())
 	pType := protocol.Type(desc.ProtocolType)
@@ -218,7 +218,7 @@ func getShareFromAPI(s *pb.Share) (protocol.Share, error) {
 	return ps, nil
 }
 
-func getAPICiphertext(ct *session.Ciphertext) (*pb.Ciphertext, error) {
+func GetCiphertext(ct *session.Ciphertext) (*pb.Ciphertext, error) {
 	ctBytes, err := ct.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -230,7 +230,7 @@ func getAPICiphertext(ct *session.Ciphertext) (*pb.Ciphertext, error) {
 	}, nil
 }
 
-func getCiphertextFromAPI(apiCt *pb.Ciphertext) (*session.Ciphertext, error) {
+func ToCiphertext(apiCt *pb.Ciphertext) (*session.Ciphertext, error) {
 	var ct session.Ciphertext
 	ct.CiphertextMetadata.ID = session.CiphertextID(apiCt.Metadata.GetId().CiphertextId)
 	ct.CiphertextMetadata.Type = session.CiphertextType(apiCt.Metadata.GetType())

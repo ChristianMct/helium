@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/objectstore"
@@ -13,7 +14,6 @@ import (
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/session"
-	"github.com/ChristianMct/helium/transport/centralized"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/mhe"
@@ -180,9 +180,9 @@ func main() {
 
 	// runs the app on a new node
 	if nodeID == helperID {
-		cdescs, outs, err = centralized.RunHeliumServer(ctx, config, nodelist, app, ip)
+		cdescs, outs, err = helium.RunHeliumServer(ctx, config, nodelist, app, ip)
 	} else {
-		outs, err = centralized.RunHeliumClient(ctx, config, nodelist, app, ip)
+		outs, err = helium.RunHeliumClient(ctx, config, nodelist, app, ip)
 	}
 	if err != nil {
 		log.Fatalf("could not run node: %s", err)
