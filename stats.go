@@ -64,3 +64,55 @@ func (s *statsHandler) GetStats() NetStats {
 	defer s.mu.Unlock()
 	return s.stats
 }
+
+// func (node *Node) GetNetworkStats() centralized.NetStats {
+// 	var stats, srvStats, cliStats centralized.NetStats
+// 	if node.srv != nil {
+// 		srvStats = node.srv.GetStats()
+// 		stats.DataRecv += srvStats.DataRecv
+// 		stats.DataSent += srvStats.DataSent
+// 	}
+// 	if node.cli != nil {
+// 		cliStats = node.cli.GetStats()
+// 		stats.DataRecv += cliStats.DataRecv
+// 		stats.DataSent += cliStats.DataSent
+// 	}
+// 	return stats
+// }
+
+// // outputStats outputs the total network usage and time take to execute a protocol phase.
+// func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
+
+// 	dataSent := node.GetTransport().GetNetworkStats().DataSent
+// 	dataRecv := node.GetTransport().GetNetworkStats().DataRecv
+// 	fmt.Printf("STATS: phase: %s time: %f sent: %f MB recv: %f MB\n", phase, elapsed.Seconds(), float64(dataSent)/float64(1e6), float64(dataRecv)/float64(1e6))
+// 	log.Println("==============", phase, "phase ==============")
+// 	log.Printf("%s | time %s", node.ID(), elapsed)
+// 	log.Printf("%s | network: %s\n", node.ID(), node.GetTransport().GetNetworkStats())
+// 	if write {
+// 		stats := map[string]string{
+// 			"Wall":  fmt.Sprint(elapsed),
+// 			"Sent":  fmt.Sprint(dataSent),
+// 			"Recvt": fmt.Sprint(dataRecv),
+// 			"ID":    fmt.Sprint(node.ID()),
+// 			"Phase": phase,
+// 		}
+// 		for _, md := range metadata {
+// 			for k, v := range md {
+// 				stats[k] = v
+// 			}
+// 		}
+// 		var statsJSON []byte
+// 		statsJSON, err := json.MarshalIndent(stats, "", "\t")
+// 		if err != nil {
+// 			panic(err)
+// 		}
+// 		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s-%s.json", phase, node.ID()), statsJSON, 0600); errWrite != nil {
+// 			log.Println(errWrite)
+// 		}
+// 	}
+// }
+
+// func (node *Node) ResetNetworkStats() {
+// 	node.transport.ResetNetworkStats()
+// }

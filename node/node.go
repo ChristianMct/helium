@@ -104,47 +104,6 @@ func New(config Config, nodeList List) (node *Node, err error) {
 	return node, err
 }
 
-// RunNew creates a new Helium node from the provided config and node list, and runs the node with the provided app under the given context.
-func RunNew(ctx context.Context, config Config, nodeList List, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (node *Node, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
-	node, err = New(config, nodeList)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	// err = node.Connect(ctx)
-	// if err != nil {
-	// 	return nil, nil, nil, err
-	// }
-
-	cdescs, outs, err = node.Run(ctx, app, ip, upstream, trans)
-	return
-}
-
-// Connect connects the node's transport layer to the network.
-// If the node has an address, it starts a server at the address.
-// If the node does not have an address, it connects to the helper node.
-// func (node *Node) Connect(ctx context.Context) error {
-// 	if node.HasAddress() {
-// 		listener, err := net.Listen("tcp", string(node.addr))
-// 		if err != nil {
-// 			return err
-// 		}
-// 		node.Logf("starting server at %s", node.addr)
-// 		go func() {
-// 			if err := node.srv.Server.Serve(listener); err != nil {
-// 				log.Fatalf("error in grpc serve: %v", err)
-// 			}
-// 		}()
-// 	} else {
-// 		node.Logf("connecting to %s at %s", node.helperID, node.nodeList.AddressOf(node.helperID))
-// 		err := node.cli.Connect()
-// 		if err != nil {
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
-
 // Run runs the node with the provided app under the given context.
 // The method returns channels to send circuit descriptors and receive circuit outputs.
 //
@@ -240,16 +199,6 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 	return cds, or, nil
 }
 
-// Close releases all the resources allocated by the node.
-// If the node is the helper node, it stops the server and
-// waits for the peers to disconnect.
-// func (node *Node) Close() error {
-// 	if node.IsHelperNode() {
-// 		node.srv.Server.GracefulStop()
-// 	}
-// 	return nil
-// }
-
 // Transport interface implementation
 
 // GetAggregationOutput returns the aggregation output for a given protocol descriptor.
@@ -343,58 +292,6 @@ func (node *Node) GetSessionFromContext(ctx context.Context) (*session.Session, 
 func (node *Node) Logf(msg string, v ...any) {
 	log.Printf("%s | [node] %s\n", node.id, fmt.Sprintf(msg, v...))
 }
-
-// func (node *Node) GetNetworkStats() centralized.NetStats {
-// 	var stats, srvStats, cliStats centralized.NetStats
-// 	if node.srv != nil {
-// 		srvStats = node.srv.GetStats()
-// 		stats.DataRecv += srvStats.DataRecv
-// 		stats.DataSent += srvStats.DataSent
-// 	}
-// 	if node.cli != nil {
-// 		cliStats = node.cli.GetStats()
-// 		stats.DataRecv += cliStats.DataRecv
-// 		stats.DataSent += cliStats.DataSent
-// 	}
-// 	return stats
-// }
-
-// // outputStats outputs the total network usage and time take to execute a protocol phase.
-// func (node *Node) OutputStats(phase string, elapsed time.Duration, write bool, metadata ...map[string]string) {
-
-// 	dataSent := node.GetTransport().GetNetworkStats().DataSent
-// 	dataRecv := node.GetTransport().GetNetworkStats().DataRecv
-// 	fmt.Printf("STATS: phase: %s time: %f sent: %f MB recv: %f MB\n", phase, elapsed.Seconds(), float64(dataSent)/float64(1e6), float64(dataRecv)/float64(1e6))
-// 	log.Println("==============", phase, "phase ==============")
-// 	log.Printf("%s | time %s", node.ID(), elapsed)
-// 	log.Printf("%s | network: %s\n", node.ID(), node.GetTransport().GetNetworkStats())
-// 	if write {
-// 		stats := map[string]string{
-// 			"Wall":  fmt.Sprint(elapsed),
-// 			"Sent":  fmt.Sprint(dataSent),
-// 			"Recvt": fmt.Sprint(dataRecv),
-// 			"ID":    fmt.Sprint(node.ID()),
-// 			"Phase": phase,
-// 		}
-// 		for _, md := range metadata {
-// 			for k, v := range md {
-// 				stats[k] = v
-// 			}
-// 		}
-// 		var statsJSON []byte
-// 		statsJSON, err := json.MarshalIndent(stats, "", "\t")
-// 		if err != nil {
-// 			panic(err)
-// 		}
-// 		if errWrite := os.WriteFile(fmt.Sprintf("/helium/stats/%s-%s.json", phase, node.ID()), statsJSON, 0600); errWrite != nil {
-// 			log.Println(errWrite)
-// 		}
-// 	}
-// }
-
-// func (node *Node) ResetNetworkStats() {
-// 	node.transport.ResetNetworkStats()
-// }
 
 // func (node *Node) RegisterPostsetupHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
 // 	node.postsetupHandler = h

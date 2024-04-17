@@ -323,31 +323,6 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList List) (map[session.No
 	return tlsConfigs, nil
 }
 
-const buffConBufferSize = 65 * 1024 * 1024
-
-// Start creates some in-memory connections between the nodes and returns
-// when all nodes are connected.
-// func (lc LocalTest) Start() {
-// 	lis := bufconn.Listen(buffConBufferSize)
-
-// 	go lc.HelperNode.srv.Server.Serve(lis)
-
-// 	var wg sync.WaitGroup
-// 	for _, node := range lc.SessionNodes() {
-// 		node := node
-// 		wg.Add(1)
-// 		go func() {
-// 			err := node.cli.ConnectWithDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() })
-// 			if err != nil {
-// 				log.Printf("node %s failed to connect: %v", node.ID(), err)
-// 				return
-// 			}
-// 			wg.Done()
-// 		}()
-// 	}
-// 	wg.Wait()
-// }
-
 // SessionNodes returns the set of nodes in the local test that are part of the
 // session.
 func (lc LocalTest) SessionNodes() []*Node {

@@ -1,3 +1,5 @@
+// Package helium is the main entrypoint to the Helium library.
+// It provides function to configure and run a Helium helper server and Helium clients.
 package helium
 
 import (

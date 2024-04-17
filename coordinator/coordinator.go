@@ -1,3 +1,6 @@
+// Package coordinator implements a generic coordinator functionality for helium nodes.
+// The coordinator orchestrates the execution of the MHE-based MPC protocol by executing
+// its sub-protocols and routines.
 package coordinator
 
 import (

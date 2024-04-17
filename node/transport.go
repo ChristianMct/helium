@@ -102,8 +102,6 @@ type testTransport struct {
 	helperSetupSrv *setup.Service
 	helperCompSrv  *compute.Service
 	*protocol.TestTransport
-
-	//clients []chan protocol.Share
 }
 
 func NewTestTransport(hid session.NodeID, helperSetupSrv *setup.Service, helperCompSrv *compute.Service) *testTransport {

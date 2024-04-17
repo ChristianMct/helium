@@ -1,3 +1,4 @@
+// Package api implements a translation layer between the protobuf and internal Helium types.
 package api
 
 import (
