@@ -11,36 +11,44 @@ import (
 	"github.com/ChristianMct/helium/services/compute"
 )
 
-func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hsv *HeliumServer, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
 
 	helperNode, err := node.New(config, nl)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	hsv := NewHeliumServer(helperNode)
+	hsv = NewHeliumServer(helperNode)
 
 	lis, err := net.Listen("tcp", string(config.Address))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	go hsv.Serve(lis)
+	go func() {
+		if err := hsv.Serve(lis); err != nil {
+			panic(err)
+		}
+	}()
 
-	return hsv.Run(ctx, app, ip)
+	cdescs, outs, err = hsv.Run(ctx, app, ip)
+
+	return
 }
 
-func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (outs <-chan circuit.Output, err error) {
+func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hc *HeliumClient, outs <-chan circuit.Output, err error) {
 
 	n, err := node.New(config, nl)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	hc := NewHeliumClient(n, config.HelperID, nl.AddressOf(config.HelperID))
+	hc = NewHeliumClient(n, config.HelperID, nl.AddressOf(config.HelperID))
 	if err := hc.Connect(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return hc.Run(ctx, app, ip)
+	outs, err = hc.Run(ctx, app, ip)
+
+	return
 }

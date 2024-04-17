@@ -9,37 +9,61 @@ import (
 	"google.golang.org/grpc/stats"
 )
 
-// NetStats contains the network statistics of a connection.
-type NetStats struct {
+// ServiceStats contains the network statistics of a connection.
+type ServiceStats struct {
 	DataSent, DataRecv uint64
 }
 
 // String returns a string representation of the network statistics.
-func (s NetStats) String() string {
+func (s ServiceStats) String() string {
 	return fmt.Sprintf("Sent: %s, Received: %s", utils.ByteCountSI(s.DataSent), utils.ByteCountSI(s.DataRecv))
 }
 
+type NetStats struct {
+	Setup, Compute, Others ServiceStats
+}
+
+func (ns NetStats) String() string {
+	return fmt.Sprintf("NetStats:\n\tSetup: %s\n\tCompute: %s\n\tOthers: %s", ns.Setup, ns.Compute, ns.Others)
+}
+
 type statsHandler struct {
-	mu    sync.Mutex
-	stats NetStats
+	mu sync.Mutex
+	NetStats
 }
 
 // TagRPC can attach some information to the given context.
 // The context used for the rest lifetime of the RPC will be derived from
 // the returned context.
 func (s *statsHandler) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context {
+	service := valueFromIncomingContext(ctx, "service") // TODO: should do all incoming context tagging here...
+	if service != "" {
+		ctx = context.WithValue(ctx, "service", service)
+	}
 	return ctx
 }
 
 // HandleRPC processes the RPC stats.
-func (s *statsHandler) HandleRPC(_ context.Context, sta stats.RPCStats) {
+func (s *statsHandler) HandleRPC(ctx context.Context, sta stats.RPCStats) {
+
+	var ns *ServiceStats
+	phase := ctx.Value("service")
+	switch phase {
+	case "setup":
+		ns = &s.Setup
+	case "compute":
+		ns = &s.Compute
+	default:
+		ns = &s.Others
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch sta := sta.(type) {
 	case *stats.InPayload:
-		s.stats.DataRecv += uint64(sta.WireLength)
+		ns.DataRecv += uint64(sta.WireLength)
 	case *stats.OutPayload:
-		s.stats.DataSent += uint64(sta.WireLength)
+		ns.DataSent += uint64(sta.WireLength)
 	}
 }
 
@@ -49,20 +73,23 @@ func (s *statsHandler) HandleRPC(_ context.Context, sta stats.RPCStats) {
 // connection will be derived from the context returned.
 // For RPC stats handling,
 //   - On server side, the context used in HandleRPC for all RPCs on this
-//
-// connection will be derived from the context returned.
+//     connection will be derived from the context returned.
 //   - On client side, the context is not derived from the context returned.
 func (s *statsHandler) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
+	service := valueFromIncomingContext(ctx, "service")
+	if service != "" {
+		ctx = context.WithValue(ctx, "service", service)
+	}
 	return ctx
 }
 
 // HandleConn processes the Conn stats.
-func (s *statsHandler) HandleConn(_ context.Context, _ stats.ConnStats) {}
+func (s *statsHandler) HandleConn(_ context.Context, sta stats.ConnStats) {}
 
 func (s *statsHandler) GetStats() NetStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stats
+	return s.NetStats
 }
 
 // func (node *Node) GetNetworkStats() centralized.NetStats {

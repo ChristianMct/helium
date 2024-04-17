@@ -24,6 +24,9 @@ func getOutgoingContext(ctx context.Context, senderID session.NodeID) context.Co
 	if circID, hasCircID := session.CircuitIDFromContext(ctx); hasCircID {
 		md.Append(string(ctxCircuitID), string(circID))
 	}
+	if ctx.Value("service") != nil {
+		md.Append("service", ctx.Value("service").(string))
+	}
 	return metadata.NewOutgoingContext(ctx, md)
 }
 

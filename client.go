@@ -63,7 +63,18 @@ func (hc *HeliumClient) Run(ctx context.Context, app node.App, ip compute.InputP
 
 	go func() {
 		for share := range hc.outgoingShares {
-			err := hc.PutShare(ctx, share)
+			// TODO: this is a temporary solution to distinguish between setup and compute shares.
+			// A PutShare/GetShare transport interface method  with context would be cleaner
+			var service string
+			switch {
+			case share.ProtocolType.IsSetup():
+				service = "setup"
+			case share.ProtocolType.IsCompute():
+				service = "compute"
+			default:
+				panic(fmt.Errorf("unknown share type: %s", share.ProtocolType))
+			}
+			err := hc.PutShare(context.WithValue(ctx, "service", service), share)
 			if err != nil {
 				panic(fmt.Errorf("error sending share: %s", err))
 			}

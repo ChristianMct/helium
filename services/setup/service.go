@@ -149,7 +149,7 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 
 	s.transport = trans
 
-	runCtx, cancelRunCtx := context.WithCancel(session.ContextWithNodeID(ctx, s.self))
+	runCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), "service", "setup"))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator

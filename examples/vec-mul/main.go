@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
@@ -177,12 +178,14 @@ func main() {
 	var cdescs chan<- circuit.Descriptor
 	var outs <-chan circuit.Output
 	var err error
+	var statsProvider interface{ GetStats() helium.NetStats }
 
 	// runs the app on a new node
+	start := time.Now()
 	if nodeID == helperID {
-		cdescs, outs, err = helium.RunHeliumServer(ctx, config, nodelist, app, ip)
+		statsProvider, cdescs, outs, err = helium.RunHeliumServer(ctx, config, nodelist, app, ip)
 	} else {
-		outs, err = helium.RunHeliumClient(ctx, config, nodelist, app, ip)
+		statsProvider, outs, err = helium.RunHeliumClient(ctx, config, nodelist, app, ip)
 	}
 	if err != nil {
 		log.Fatalf("could not run node: %s", err)
@@ -218,9 +221,16 @@ func main() {
 		pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
 		pt.IsNTT = true
 		res := make([]uint64, params.MaxSlots())
-		encoder.Decode(pt, res)
+		err = encoder.Decode(pt, res)
+		if err != nil {
+			log.Fatalf("%s | [main] error decoding output: %v\n", nodeID, err)
+		}
 		fmt.Printf("%v\n", res)
 	}
+
+	stats := statsProvider.GetStats()
+	fmt.Printf("TimeStats: %fs\n", time.Since(start).Seconds())
+	fmt.Println(stats)
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.

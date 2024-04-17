@@ -136,12 +136,11 @@ func (nt *nodeTransport) PutCiphertext(ctx context.Context, ct session.Ciphertex
 }
 
 func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
-
 	return hsv.helperNode.Run(ctx, app, ip, &nodeCoordinator{hsv}, &nodeTransport{s: hsv})
 }
 
 // AppendEventToLog is called by the server side to append a new event to the log and send it to all connected peers.
-func (hsv *HeliumServer) AppendEventToLog(event node.Event) error {
+func (hsv *HeliumServer) AppendEventToLog(event node.Event) {
 	hsv.eventsMu.Lock()
 	hsv.events = append(hsv.events, event)
 
@@ -157,7 +156,7 @@ func (hsv *HeliumServer) AppendEventToLog(event node.Event) error {
 	}
 	hsv.nodesMu.RUnlock()
 	hsv.eventsMu.Unlock()
-	return nil
+	return
 }
 
 // CloseEventLog is called by the server side to close the event log and stop sending events to connected peers.

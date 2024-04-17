@@ -341,18 +341,18 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	s.transport = trans
 	s.inputProvider = ip
 
-	runCtx, cancelRunCtx := context.WithCancel(session.ContextWithNodeID(ctx, s.self))
+	serviceCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), "service", "compute"))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator
-	upstreamChan, present, err := upstream.Register(runCtx)
+	upstreamChan, present, err := upstream.Register(serviceCtx)
 	if err != nil {
 		return fmt.Errorf("error registering to upstream coordinator: %w", err)
 	}
 
 	// starts the protocol executor (init sends running protocols to its queue)
 	go func() {
-		if err := s.Executor.Run(ctx, s.transport); err != nil {
+		if err := s.Executor.Run(serviceCtx, s.transport); err != nil {
 			panic(err) // TODO: return in Run
 		}
 	}()
@@ -366,7 +366,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					panic(fmt.Errorf("no registered circuit for name \"%s\"", cd.Name))
 				}
 
-				sess, has := s.sessions.GetSessionFromContext(ctx)
+				sess, has := s.sessions.GetSessionFromContext(serviceCtx)
 				if !has {
 					panic(fmt.Errorf("could not retrieve session from the context"))
 				}
@@ -379,7 +379,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 				}
 
 				for opl := range cinf.OutputsFor[s.self] {
-					ct, err := s.transport.GetCiphertext(ctx, session.CiphertextID(opl))
+					ct, err := s.transport.GetCiphertext(serviceCtx, session.CiphertextID(opl))
 					if err != nil {
 						panic(err)
 					}
@@ -394,7 +394,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	}()
 
 	// processes the circuit execution queue (init sends running circuits to this queue)
-	evalRoutines, erctx := errgroup.WithContext(ctx)
+	evalRoutines, erctx := errgroup.WithContext(serviceCtx)
 	for i := 0; i < s.config.MaxCircuitEvaluation; i++ {
 		evalRoutines.Go(func() error {
 			for cd := range s.queuedCircuits {
@@ -408,7 +408,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	}
 
 	// initializes the service from the current state of the protocols
-	if err = s.init(runCtx, upstreamChan.Incoming, present); err != nil {
+	if err = s.init(serviceCtx, upstreamChan.Incoming, present); err != nil {
 		return fmt.Errorf("error while initializing service: %w", err)
 	}
 
@@ -437,7 +437,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 			s.Logf("new coordination event: CIRCUIT %s", cev)
 			switch ev.CircuitEvent.EventType {
 			case circuit.Started:
-				err := s.createCircuit(ctx, cev.Descriptor)
+				err := s.createCircuit(serviceCtx, cev.Descriptor)
 				if err != nil {
 					panic(err)
 				}
