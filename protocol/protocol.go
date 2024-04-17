@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -66,8 +65,8 @@ type Signature struct {
 // However, a protocol is uniquely identified by its descriptor.
 type Descriptor struct {
 	Signature
-	Participants []helium.NodeID
-	Aggregator   helium.NodeID
+	Participants []session.NodeID
+	Aggregator   session.NodeID
 }
 
 // ID is a type for protocol IDs. Protocol IDs are unique identifiers for
@@ -117,7 +116,7 @@ type Share struct {
 type ShareMetadata struct {
 	ProtocolID   ID
 	ProtocolType Type
-	From         utils.Set[helium.NodeID]
+	From         utils.Set[session.NodeID]
 }
 
 // ReceiverKey is a type for the output keys in the key switching
@@ -140,7 +139,7 @@ type Protocol struct {
 	pd   Descriptor
 	id   ID
 	hid  string
-	self helium.NodeID
+	self session.NodeID
 
 	pubrand, privrand blake2b.XOF
 
@@ -313,7 +312,7 @@ func (p *Protocol) Descriptor() Descriptor {
 }
 
 // HasShareFrom returns whether the protocol has already recieved a share from the specified node.
-func (p *Protocol) HasShareFrom(nid helium.NodeID) bool {
+func (p *Protocol) HasShareFrom(nid session.NodeID) bool {
 	return !p.agg.missing().Contains(nid)
 }
 
@@ -352,7 +351,7 @@ func checkProtocolDescriptor(pd Descriptor, sess *session.Session) error {
 		}
 	}
 
-	target := helium.NodeID(pd.Signature.Args["target"])
+	target := session.NodeID(pd.Signature.Args["target"])
 
 	switch pd.Signature.Type {
 	case CKS:
@@ -501,16 +500,16 @@ func (s Share) UnmarshalBinary(data []byte) error {
 // GetParticipants returns a set of protocol participants, given the online nodes and the threshold.
 // This function handle the case of the DEC protocol, where the target must be considered a participant.
 // It returns an error if there are not enough online nodes.
-func GetParticipants(sig Signature, onlineNodes utils.Set[helium.NodeID], threshold int) ([]helium.NodeID, error) {
+func GetParticipants(sig Signature, onlineNodes utils.Set[session.NodeID], threshold int) ([]session.NodeID, error) {
 	if len(onlineNodes) < threshold {
 		return nil, fmt.Errorf("not enough online node")
 	}
 
 	available := onlineNodes.Copy()
-	selected := utils.NewEmptySet[helium.NodeID]()
+	selected := utils.NewEmptySet[session.NodeID]()
 	needed := threshold
 	if sig.Type == DEC {
-		target := helium.NodeID(sig.Args["target"])
+		target := session.NodeID(sig.Args["target"])
 		selected.Add(target)
 		available.Remove(target)
 		needed--
@@ -553,7 +552,7 @@ func GetProtocolPrivateRandomness(pd Descriptor, sess *session.Session) blake2b.
 	return xof
 }
 
-func partyListToString(partList []helium.NodeID) []byte {
+func partyListToString(partList []session.NodeID) []byte {
 	partListSorted := make(sort.StringSlice, len(partList))
 	for i, nid := range partList {
 		partListSorted[i] = string(nid)

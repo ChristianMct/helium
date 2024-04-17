@@ -18,9 +18,9 @@ import (
 //
 // In the current implementation, only a single session per node is supported.
 type Config struct {
-	ID                helium.NodeID
+	ID                session.NodeID
 	Address           helium.NodeAddress
-	HelperID          helium.NodeID
+	HelperID          session.NodeID
 	SessionParameters []session.Parameters
 	SetupConfig       setup.ServiceConfig
 	ComputeConfig     compute.ServiceConfig

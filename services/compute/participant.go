@@ -7,7 +7,6 @@ import (
 
 	"golang.org/x/exp/maps"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
@@ -100,7 +99,7 @@ func (p *participantRuntime) IncomingOperand(_ circuit.Operand) error {
 }
 
 func (p *participantRuntime) GetOperand(ctx context.Context, opl circuit.OperandLabel) (*circuit.Operand, bool) {
-	pkgct, err := p.trans.GetCiphertext(ctx, helium.CiphertextID(opl))
+	pkgct, err := p.trans.GetCiphertext(ctx, session.CiphertextID(opl))
 	if err != nil {
 		return nil, false
 	}
@@ -165,7 +164,7 @@ func (p *participantRuntime) Input(opl circuit.OperandLabel) *circuit.FutureOper
 		panic(fmt.Errorf("could not get inputs from input provider: %w", err)) // TODO return error
 	}
 
-	var inct helium.Ciphertext
+	var inct session.Ciphertext
 	switch {
 	case isValidPlaintext(in):
 		var inpt *rlwe.Plaintext
@@ -191,9 +190,9 @@ func (p *participantRuntime) Input(opl circuit.OperandLabel) *circuit.FutureOper
 		in = inct
 		fallthrough
 	case isRLWECiphertext(in):
-		inct = helium.Ciphertext{
+		inct = session.Ciphertext{
 			Ciphertext:         *in.(*rlwe.Ciphertext),
-			CiphertextMetadata: helium.CiphertextMetadata{ID: helium.CiphertextID(opl)},
+			CiphertextMetadata: session.CiphertextMetadata{ID: session.CiphertextID(opl)},
 		}
 	default:
 		panic(fmt.Errorf("invalid input type %T for session parameters of type %T", in, p.sess.Parameters))
@@ -222,7 +221,7 @@ func (p *participantRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(_ 
 }
 
 // DEC runs a DEC protocol over the provided operand within the context.
-func (p *participantRuntime) DEC(in circuit.Operand, rec helium.NodeID, params map[string]string) error {
+func (p *participantRuntime) DEC(in circuit.Operand, rec session.NodeID, params map[string]string) error {
 
 	rec = p.cd.NodeMapping[string(rec)]
 	if rec != p.sess.NodeID {
@@ -241,7 +240,7 @@ func (p *participantRuntime) DEC(in circuit.Operand, rec helium.NodeID, params m
 
 	// queries the ct
 	outLabel := keyOpOutputLabel(in.OperandLabel, sig)
-	ct, err := p.trans.GetCiphertext(p.ctx, helium.CiphertextID(outLabel))
+	ct, err := p.trans.GetCiphertext(p.ctx, session.CiphertextID(outLabel))
 	if err != nil {
 		panic(err)
 	}
@@ -262,7 +261,7 @@ func (p *participantRuntime) DEC(in circuit.Operand, rec helium.NodeID, params m
 }
 
 // PCKS runs a PCKS protocol over the provided operand within the context.
-func (p *participantRuntime) PCKS(in circuit.Operand, rec helium.NodeID, params map[string]string) error {
+func (p *participantRuntime) PCKS(in circuit.Operand, rec session.NodeID, params map[string]string) error {
 	panic("not implemented") // TODO: Implement
 }
 

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
@@ -23,7 +22,7 @@ type ServiceConfig struct {
 
 // Service represents an instance of the setup service.
 type Service struct {
-	self helium.NodeID
+	self session.NodeID
 
 	sessions session.SessionProvider
 
@@ -46,7 +45,7 @@ type Event struct {
 type Coordinator coordinator.Coordinator[Event]
 
 // NewSetupService creates a new setup service.
-func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownID session.NodeID, sessions session.SessionProvider, conf ServiceConfig, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownID
@@ -150,7 +149,7 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 
 	s.transport = trans
 
-	runCtx, cancelRunCtx := context.WithCancel(helium.ContextWithNodeID(ctx, s.self))
+	runCtx, cancelRunCtx := context.WithCancel(session.ContextWithNodeID(ctx, s.self))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator
@@ -385,7 +384,7 @@ func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocol.
 }
 
 // NodeID returns the node ID associated with this service.
-func (s *Service) NodeID() helium.NodeID {
+func (s *Service) NodeID() session.NodeID {
 	return s.self
 }
 
@@ -402,12 +401,12 @@ func (s *Service) Outgoing() chan<- protocol.Event {
 }
 
 // Register registers a connected node to the service.
-func (s *Service) Register(nid helium.NodeID) error { // TODO should be per session
+func (s *Service) Register(nid session.NodeID) error { // TODO should be per session
 	return s.executor.Register(nid)
 }
 
 // Unregister unregisters a disconnected node from the service
-func (s *Service) Unregister(nid helium.NodeID) error {
+func (s *Service) Unregister(nid session.NodeID) error {
 	return s.executor.Unregister(nid)
 }
 

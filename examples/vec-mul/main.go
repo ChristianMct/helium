@@ -24,18 +24,18 @@ import (
 var (
 	// sessionParams defines the session parameters for the example application
 	sessionParams = session.Parameters{
-		ID:    "example-session",                                       // the id of the session must be unique
-		Nodes: []helium.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
+		ID:    "example-session",                                        // the id of the session must be unique
+		Nodes: []session.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
 		FHEParameters: bgv.ParametersLiteral{ // the FHE parameters
 			LogN:             14,
 			LogQ:             []int{56, 55, 55, 54, 54, 54},
 			LogP:             []int{55, 55},
 			PlaintextModulus: 65537,
 		},
-		Threshold:  3,                                                                                           // the number of honest nodes assumed by the system.
-		ShamirPks:  map[helium.NodeID]mhe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
-		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                               // the CRS
-		Secrets:    nil,                                                                                         // normally read from a file, simulated here for simplicity (see loadSecrets)
+		Threshold:  3,                                                                                            // the number of honest nodes assumed by the system.
+		ShamirPks:  map[session.NodeID]mhe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
+		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                                // the CRS
+		Secrets:    nil,                                                                                          // normally read from a file, simulated here for simplicity (see loadSecrets)
 	}
 
 	// the configuration of peer nodes
@@ -117,9 +117,9 @@ var (
 )
 
 var (
-	nodeID   helium.NodeID
+	nodeID   session.NodeID
 	nodeAddr helium.NodeAddress
-	helperID helium.NodeID = "helper"
+	helperID session.NodeID = "helper"
 	input    uint64
 )
 
@@ -163,7 +163,7 @@ func main() {
 	if nodeID == helperID {
 		ip = compute.NoInput // the cloud has no input, the compute.NoInput InputProvider is used
 	} else {
-		ip = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, sess session.Session) (any, error) {
+		ip = func(ctx context.Context, _ session.CircuitID, ol circuit.OperandLabel, sess session.Session) (any, error) {
 			bgvParams := sess.Params.(bgv.Parameters)
 			in := make([]uint64, bgvParams.MaxSlots())
 			// the session nodes create their input by replicating the user-provided input for each slot
@@ -174,7 +174,7 @@ func main() {
 		}
 	}
 
-	ctx := helium.NewBackgroundContext(config.SessionParameters[0].ID)
+	ctx := session.NewBackgroundContext(config.SessionParameters[0].ID)
 	var cdescs chan<- circuit.Descriptor
 	var outs <-chan circuit.Output
 	var err error
@@ -194,7 +194,7 @@ func main() {
 		cdescs <- circuit.Descriptor{
 			Signature: circuit.Signature{Name: circuit.Name("mul-4-dec")}, // the name of the circuit to be evaluated
 			CircuitID: "mul-4-dec-0",                                      // a unique, user-defined id for the circuit
-			NodeMapping: map[string]helium.NodeID{ // the mapping from node ids in the circuit to actual node ids
+			NodeMapping: map[string]session.NodeID{ // the mapping from node ids in the circuit to actual node ids
 				"p0":   "node-1",
 				"p1":   "node-2",
 				"p2":   "node-3",
@@ -225,7 +225,7 @@ func main() {
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
-func loadSecrets(sp session.Parameters, nid helium.NodeID) (secrets *session.Secrets, err error) {
+func loadSecrets(sp session.Parameters, nid session.NodeID) (secrets *session.Secrets, err error) {
 
 	ss, err := session.GenTestSecretKeys(sp)
 	if err != nil {

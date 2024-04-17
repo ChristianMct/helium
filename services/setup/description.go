@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/stretchr/testify/require"
@@ -67,7 +66,7 @@ func (sd Description) String() string {
 }
 
 // CheckTestSetup checks if a public key provider is able to produce valid keys for a given test session and setup description.
-func CheckTestSetup(ctx context.Context, t *testing.T, lt *session.TestSession, setup Description, n helium.PublicKeyProvider) {
+func CheckTestSetup(ctx context.Context, t *testing.T, lt *session.TestSession, setup Description, n session.PublicKeyProvider) {
 
 	params := lt.RlweParams
 	sk := lt.SkIdeal

@@ -15,6 +15,7 @@ import (
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
+	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -29,12 +30,12 @@ const (
 // peer nodes to communicate with the helium server.
 type HeliumClient struct {
 	node          *node.Node
-	id, helperID  helium.NodeID
+	id, helperID  session.NodeID
 	helperAddress helium.NodeAddress
 
 	outgoingShares chan protocol.Share
 
-	helium.PublicKeyProvider
+	session.PublicKeyProvider
 
 	*grpc.ClientConn
 	pb.HeliumClient
@@ -57,7 +58,7 @@ func RunHeliumClient(ctx context.Context, config node.Config, nl helium.NodesLis
 }
 
 // NewHeliumClient creates a new helium client.
-func NewHeliumClient(node *node.Node, helperID helium.NodeID, helperAddress helium.NodeAddress) *HeliumClient {
+func NewHeliumClient(node *node.Node, helperID session.NodeID, helperAddress helium.NodeAddress) *HeliumClient {
 	hc := new(HeliumClient)
 	hc.node = node
 	hc.PublicKeyProvider = node
@@ -197,7 +198,7 @@ func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocol.De
 }
 
 // GetCiphertext queries and returns a ciphertext.
-func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
 	apiCt, err := hc.HeliumClient.GetCiphertext(hc.outgoingContext(ctx), &pb.CiphertextID{CiphertextId: string(ctID)})
 	if err != nil {
 		return nil, err
@@ -206,7 +207,7 @@ func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID helium.Ciphertex
 }
 
 // PutCiphertext sends a ciphertext to the helium server.
-func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
 	apiCt, err := getAPICiphertext(&ct)
 	if err != nil {
 		return err

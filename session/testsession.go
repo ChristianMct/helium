@@ -3,7 +3,6 @@ package session
 import (
 	"fmt"
 
-	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
@@ -14,11 +13,11 @@ type TestSession struct {
 	SessParams    Parameters
 	RlweParams    rlwe.Parameters
 	SkIdeal       *rlwe.SecretKey
-	NodeSessions  map[helium.NodeID]*Session
+	NodeSessions  map[NodeID]*Session
 	HelperSession *Session
 
 	// key backend
-	*helium.CachedKeyBackend
+	*CachedKeyBackend
 
 	// lattigo helpers
 	//Encoder   *bgv.Encoder
@@ -26,11 +25,11 @@ type TestSession struct {
 	Decrpytor *rlwe.Decryptor
 }
 
-func NewTestSession(N, T int, rlweparams FHEParamerersLiteralProvider, helperID helium.NodeID) (*TestSession, error) {
-	nids := make([]helium.NodeID, N)
-	nspk := make(map[helium.NodeID]drlwe.ShamirPublicPoint)
+func NewTestSession(N, T int, rlweparams FHEParamerersLiteralProvider, helperID NodeID) (*TestSession, error) {
+	nids := make([]NodeID, N)
+	nspk := make(map[NodeID]drlwe.ShamirPublicPoint)
 	for i := range nids {
-		nids[i] = helium.NodeID(fmt.Sprintf("node-%d", i))
+		nids[i] = NodeID(fmt.Sprintf("node-%d", i))
 		nspk[nids[i]] = drlwe.ShamirPublicPoint(i + 1)
 	}
 
@@ -47,7 +46,7 @@ func NewTestSession(N, T int, rlweparams FHEParamerersLiteralProvider, helperID 
 
 }
 
-func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSession, error) {
+func NewTestSessionFromParams(sp Parameters, helperID NodeID) (*TestSession, error) {
 	ts := new(TestSession)
 
 	ts.SessParams = sp
@@ -65,7 +64,7 @@ func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSessi
 	}
 
 	ts.SkIdeal = rlwe.NewSecretKey(ts.RlweParams)
-	ts.NodeSessions = make(map[helium.NodeID]*Session, len(sp.Nodes))
+	ts.NodeSessions = make(map[NodeID]*Session, len(sp.Nodes))
 	for _, nid := range sp.Nodes {
 
 		spi := sp
@@ -88,20 +87,20 @@ func NewTestSessionFromParams(sp Parameters, helperID helium.NodeID) (*TestSessi
 		return nil, err
 	}
 
-	ts.CachedKeyBackend = helium.NewCachedPublicKeyBackend(helium.NewTestKeyBackend(ts.RlweParams, ts.SkIdeal))
+	ts.CachedKeyBackend = NewCachedPublicKeyBackend(NewTestKeyBackend(ts.RlweParams, ts.SkIdeal))
 
 	ts.Encryptor = rlwe.NewEncryptor(ts.RlweParams, ts.SkIdeal)
 	ts.Decrpytor = rlwe.NewDecryptor(ts.RlweParams, ts.SkIdeal)
 	return ts, nil
 }
 
-func GenTestSecretKeys(sessParams Parameters) (secs map[helium.NodeID]*Secrets, err error) {
+func GenTestSecretKeys(sessParams Parameters) (secs map[NodeID]*Secrets, err error) {
 	params, err := rlwe.NewParametersFromLiteral(sessParams.FHEParameters.GetRLWEParametersLiteral())
 	if err != nil {
 		return nil, err
 	}
 
-	secs = make(map[helium.NodeID]*Secrets, len(sessParams.Nodes))
+	secs = make(map[NodeID]*Secrets, len(sessParams.Nodes))
 	for _, nid := range sessParams.Nodes {
 		ss := new(Secrets)
 		secs[nid] = ss
@@ -113,7 +112,7 @@ func GenTestSecretKeys(sessParams Parameters) (secs map[helium.NodeID]*Secrets, 
 	}
 
 	// simulates the generation of the shamir threshold keys
-	shares := make(map[helium.NodeID]map[helium.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
+	shares := make(map[NodeID]map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 	thresholdizer := drlwe.NewThresholdizer(params)
 
 	for nidi, ssi := range secs {
@@ -128,7 +127,7 @@ func GenTestSecretKeys(sessParams Parameters) (secs map[helium.NodeID]*Secrets, 
 			return nil, err
 		}
 
-		shares[nidi] = make(map[helium.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
+		shares[nidi] = make(map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 
 		// TODO: add seeding to Thresholdizer and replace the following code with the Thresholdizer.GenShamirPolynomial method
 		usampleri := ringqp.NewUniformSampler(prngi, *params.RingQP())

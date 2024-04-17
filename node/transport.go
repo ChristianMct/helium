@@ -3,10 +3,10 @@ package node
 import (
 	"fmt"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
+	"github.com/ChristianMct/helium/session"
 	"golang.org/x/net/context"
 )
 
@@ -85,20 +85,20 @@ func (n *protocolTransport) GetAggregationOutput(ctx context.Context, pd protoco
 
 type computeTransport struct {
 	protocolTransport
-	putCiphertext func(ctx context.Context, ct helium.Ciphertext) error
-	getCiphertext func(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error)
+	putCiphertext func(ctx context.Context, ct session.Ciphertext) error
+	getCiphertext func(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error)
 }
 
-func (n *computeTransport) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+func (n *computeTransport) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
 	return n.putCiphertext(ctx, ct)
 }
 
-func (n *computeTransport) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+func (n *computeTransport) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
 	return n.getCiphertext(ctx, ctID)
 }
 
 type testTransport struct {
-	hid            helium.NodeID
+	hid            session.NodeID
 	helperSetupSrv *setup.Service
 	helperCompSrv  *compute.Service
 	*protocol.TestTransport
@@ -106,7 +106,7 @@ type testTransport struct {
 	//clients []chan protocol.Share
 }
 
-func NewTestTransport(hid helium.NodeID, helperSetupSrv *setup.Service, helperCompSrv *compute.Service) *testTransport {
+func NewTestTransport(hid session.NodeID, helperSetupSrv *setup.Service, helperCompSrv *compute.Service) *testTransport {
 	tt := &testTransport{
 		hid:            hid,
 		TestTransport:  protocol.NewTestTransport(),
@@ -116,7 +116,7 @@ func NewTestTransport(hid helium.NodeID, helperSetupSrv *setup.Service, helperCo
 	return tt
 }
 
-func (tt testTransport) TransportFor(nid helium.NodeID) Transport {
+func (tt testTransport) TransportFor(nid session.NodeID) Transport {
 	if nid == tt.hid {
 		return tt
 	}
@@ -132,10 +132,10 @@ func (tt testTransport) GetAggregationOutput(ctx context.Context, pd protocol.De
 	return tt.helperSetupSrv.GetAggregationOutput(ctx, pd)
 }
 
-func (tt testTransport) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+func (tt testTransport) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
 	return tt.helperCompSrv.PutCiphertext(ctx, ct)
 }
 
-func (tt testTransport) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+func (tt testTransport) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
 	return tt.helperCompSrv.GetCiphertext(ctx, ctID)
 }

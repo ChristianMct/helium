@@ -6,7 +6,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
@@ -43,7 +42,7 @@ func TestProtocols(t *testing.T) {
 
 		params := TestPN12QP109
 
-		hid := helium.NodeID("helper")
+		hid := session.NodeID("helper")
 		testSess, err := session.NewTestSession(ts.N, ts.T, params, hid)
 		if err != nil {
 			t.Fatal(err)
@@ -113,7 +112,7 @@ func runProto(pd Descriptor, testSess session.TestSession, input Input, t *testi
 		t.Fatal(err)
 	}
 
-	ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
+	ctx := session.NewBackgroundContext(testSess.SessParams.ID)
 	incoming := make(chan Share)
 	resc := make(chan AggregationOutput, 1)
 	errc := make(chan error, 1)
@@ -140,7 +139,7 @@ func runProto(pd Descriptor, testSess session.TestSession, input Input, t *testi
 			continue
 		}
 
-		if pd.Signature.Type == DEC && helium.NodeID(pd.Signature.Args["target"]) == nid {
+		if pd.Signature.Type == DEC && session.NodeID(pd.Signature.Args["target"]) == nid {
 			require.NotNil(t, err, "decryption receiver should not generate a share")
 			continue
 		}
@@ -195,7 +194,7 @@ func checkOutput(out interface{}, pd Descriptor, testSess session.TestSession, t
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	case DEC:
-		recSk, err := testSess.NodeSessions[helium.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
+		recSk, err := testSess.NodeSessions[session.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
 		if err != nil {
 			t.Fatal(err)
 		}

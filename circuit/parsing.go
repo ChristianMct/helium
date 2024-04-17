@@ -6,7 +6,6 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
@@ -27,7 +26,7 @@ type circuitParserContext struct {
 	//dummyEvaluator
 	cd     Descriptor
 	md     Metadata
-	SubCtx map[helium.CircuitID]*circuitParserContext
+	SubCtx map[session.CircuitID]*circuitParserContext
 	params session.FHEParameters
 	l      sync.Mutex
 }
@@ -40,12 +39,12 @@ func newCircuitParserCtx(cd Descriptor, params session.FHEParameters) *circuitPa
 			InputSet:     utils.NewEmptySet[OperandLabel](),
 			Ops:          utils.NewEmptySet[OperandLabel](),
 			OutputSet:    utils.NewEmptySet[OperandLabel](),
-			InputsFor:    make(map[helium.NodeID]utils.Set[OperandLabel]),
-			OutputsFor:   make(map[helium.NodeID]utils.Set[OperandLabel]),
+			InputsFor:    make(map[session.NodeID]utils.Set[OperandLabel]),
+			OutputsFor:   make(map[session.NodeID]utils.Set[OperandLabel]),
 			KeySwitchOps: make(map[string]protocol.Signature),
 			GaloisKeys:   make(utils.Set[uint64]),
 		},
-		SubCtx: make(map[helium.CircuitID]*circuitParserContext, 0),
+		SubCtx: make(map[session.CircuitID]*circuitParserContext, 0),
 		params: params,
 	}
 	//cpc.dummyEvaluator.ctx = cpc
@@ -110,13 +109,13 @@ func (e *circuitParserContext) Get(opl OperandLabel) Operand {
 	return Operand{OperandLabel: opl}
 }
 
-func (e *circuitParserContext) Output(out Operand, to helium.NodeID) {
+func (e *circuitParserContext) Output(out Operand, to session.NodeID) {
 	e.l.Lock()
 	defer e.l.Unlock()
 	e.output(out, to)
 }
 
-func (e *circuitParserContext) output(out Operand, to helium.NodeID) {
+func (e *circuitParserContext) output(out Operand, to session.NodeID) {
 	opl := out.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping)
 	e.md.OutputSet.Add(opl)
 	e.md.Ops.Add(opl)
@@ -164,12 +163,12 @@ func GetProtocolSignature(t protocol.Type, in OperandLabel, params map[string]st
 	return protocol.Signature{Type: t, Args: parm}
 }
 
-func (e *circuitParserContext) DEC(in Operand, rec helium.NodeID, params map[string]string) (err error) {
+func (e *circuitParserContext) DEC(in Operand, rec session.NodeID, params map[string]string) (err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
 
-	if argRec, has := params["target"]; has && helium.NodeID(argRec) != rec {
+	if argRec, has := params["target"]; has && session.NodeID(argRec) != rec {
 		return fmt.Errorf("if specified, the target argument must match rec")
 	}
 
@@ -185,12 +184,12 @@ func (e *circuitParserContext) DEC(in Operand, rec helium.NodeID, params map[str
 	return nil
 }
 
-func (e *circuitParserContext) PCKS(in Operand, rec helium.NodeID, params map[string]string) (err error) {
+func (e *circuitParserContext) PCKS(in Operand, rec session.NodeID, params map[string]string) (err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
 
-	if argRec, has := params["target"]; has && helium.NodeID(argRec) != rec {
+	if argRec, has := params["target"]; has && session.NodeID(argRec) != rec {
 		return fmt.Errorf("if specified, the target argument must match rec")
 	}
 

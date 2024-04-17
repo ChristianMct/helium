@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
@@ -20,10 +19,21 @@ type FHEParameters interface { // TODO: Lattigo could have a common interface fo
 	GetRLWEParameters() *rlwe.Parameters
 }
 
+// NodeID is the unique identifier of a node.
+type NodeID string
+
+// SessionID is the unique identifier of a session.
+type SessionID string
+
+// CircuitID is the unique identifier of a running circuit.
+type CircuitID string
+
+type CiphertextID string
+
 // Session holds the session's critical state.
 type Session struct {
 	Parameters
-	NodeID helium.NodeID
+	NodeID NodeID
 
 	Params FHEParameters
 
@@ -42,17 +52,17 @@ type FHEParamerersLiteralProvider interface {
 
 // Parameters contains data used to initialize a Session.
 type Parameters struct {
-	ID            helium.SessionID
-	Nodes         []helium.NodeID
+	ID            SessionID
+	Nodes         []NodeID
 	FHEParameters FHEParamerersLiteralProvider
 	Threshold     int
-	ShamirPks     map[helium.NodeID]drlwe.ShamirPublicPoint
+	ShamirPks     map[NodeID]drlwe.ShamirPublicPoint
 	PublicSeed    []byte
 	*Secrets
 }
 
 // NewSession creates a new session.
-func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err error) {
+func NewSession(sessParams Parameters, nodeID NodeID) (sess *Session, err error) {
 	sess = new(Session)
 	sess.NodeID = nodeID
 	//sess.ObjectStore = objStore
@@ -81,7 +91,7 @@ func NewSession(sessParams Parameters, nodeID helium.NodeID) (sess *Session, err
 	}
 	sess.PublicSeed = slices.Clone(sessParams.PublicSeed)
 
-	sess.ShamirPks = make(map[helium.NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
+	sess.ShamirPks = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
 	for _, nid := range sess.Nodes {
 		var has bool
 		if sess.ShamirPks[nid], has = sessParams.ShamirPks[nid]; !has {
@@ -167,7 +177,7 @@ func genSecretKey(pp rlwe.ParameterProvider, prng sampling.PRNG) (sk *rlwe.Secre
 	return
 }
 
-func (sess *Session) GetSecretKeyForGroup(parties []helium.NodeID) (sk *rlwe.SecretKey, err error) {
+func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err error) {
 	switch {
 	case len(parties) == len(sess.Nodes):
 		if sess.secretKey == nil {
@@ -219,8 +229,8 @@ func (sess *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
 	return sess.ThresholdSecretKey, nil
 }
 
-func (sess *Session) GetShamirPublicPoints() map[helium.NodeID]drlwe.ShamirPublicPoint {
-	spts := make(map[helium.NodeID]drlwe.ShamirPublicPoint, len(sess.ShamirPks))
+func (sess *Session) GetShamirPublicPoints() map[NodeID]drlwe.ShamirPublicPoint {
+	spts := make(map[NodeID]drlwe.ShamirPublicPoint, len(sess.ShamirPks))
 	for p, spt := range sess.ShamirPks {
 		spts[p] = spt
 	}
@@ -235,11 +245,11 @@ func (sess *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
 	return spts
 }
 
-func (sess *Session) Contains(nodeID helium.NodeID) bool {
+func (sess *Session) Contains(nodeID NodeID) bool {
 	return utils.NewSet(sess.Nodes).Contains(nodeID)
 }
 
-func (sess *Session) GetSessionFromID(sessionID helium.SessionID) (*Session, bool) {
+func (sess *Session) GetSessionFromID(sessionID SessionID) (*Session, bool) {
 	if sess.ID == sessionID {
 		return sess, true
 	}
@@ -247,7 +257,7 @@ func (sess *Session) GetSessionFromID(sessionID helium.SessionID) (*Session, boo
 }
 
 func (sess *Session) GetSessionFromContext(ctx context.Context) (*Session, bool) {
-	sessID, has := helium.SessionIDFromContext(ctx)
+	sessID, has := SessionIDFromContext(ctx)
 	if !has {
 		return nil, false
 	}

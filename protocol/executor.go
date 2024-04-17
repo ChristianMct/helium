@@ -7,7 +7,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
@@ -29,7 +28,7 @@ const (
 // participant list based on the regsitered nodes, and perform the aggregation.
 type Executor struct {
 	config ExecutorConfig
-	self   helium.NodeID
+	self   session.NodeID
 
 	sessions      session.SessionProvider
 	transport     Transport
@@ -37,7 +36,7 @@ type Executor struct {
 	inputProvider InputProvider
 
 	// node tracking
-	connectedNodes     map[helium.NodeID]utils.Set[ID]
+	connectedNodes     map[session.NodeID]utils.Set[ID]
 	connectedNodesMu   sync.RWMutex
 	connectedNodesCond sync.Cond
 
@@ -57,7 +56,7 @@ type Executor struct {
 	runningProtos  map[ID]struct {
 		pd           Descriptor
 		incoming     chan Share
-		disconnected chan helium.NodeID
+		disconnected chan session.NodeID
 	}
 
 	completedProtos []Descriptor
@@ -142,7 +141,7 @@ func (ev Event) IsComputeEvent() bool {
 }
 
 // NewExectutor creates a new executor.
-func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, upstream *coordinator.Channel[Event], ip InputProvider) (*Executor, error) {
+func NewExectutor(config ExecutorConfig, ownID session.NodeID, sessions session.SessionProvider, upstream *coordinator.Channel[Event], ip InputProvider) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
 	if s.config.SigQueueSize == 0 {
@@ -180,10 +179,10 @@ func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.S
 	s.runningProtos = make(map[ID]struct {
 		pd           Descriptor
 		incoming     chan Share
-		disconnected chan helium.NodeID
+		disconnected chan session.NodeID
 	})
 
-	s.connectedNodes = make(map[helium.NodeID]utils.Set[ID])
+	s.connectedNodes = make(map[session.NodeID]utils.Set[ID])
 	s.connectedNodesCond = *sync.NewCond(&s.connectedNodesMu)
 
 	s.completedProtos = make([]Descriptor, 0)
@@ -331,14 +330,14 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *session.Session, p
 
 	// registers the protocol
 	var aggregation <-chan AggregationOutput
-	var disconnected chan helium.NodeID
+	var disconnected chan session.NodeID
 	s.runningProtoMu.Lock()
 	incoming := make(chan Share)
-	disconnected = make(chan helium.NodeID, len(pd.Participants))
+	disconnected = make(chan session.NodeID, len(pd.Participants))
 	s.runningProtos[pid] = struct {
 		pd           Descriptor
 		incoming     chan Share
-		disconnected chan helium.NodeID
+		disconnected chan session.NodeID
 	}{
 		pd:           pd,
 		incoming:     incoming,
@@ -540,7 +539,7 @@ func (s *Executor) GetOutput(ctx context.Context, aggOut AggregationOutput, rec 
 }
 
 // Register is called by the transport when a new peer register itself for the setup.
-func (s *Executor) Register(peer helium.NodeID) error {
+func (s *Executor) Register(peer session.NodeID) error {
 	s.connectedNodesMu.Lock()
 	defer s.connectedNodesCond.Broadcast()
 	defer s.connectedNodesMu.Unlock()
@@ -556,7 +555,7 @@ func (s *Executor) Register(peer helium.NodeID) error {
 }
 
 // Unregister is called by the transport when a peer is unregistered from the setup.
-func (s *Executor) Unregister(peer helium.NodeID) error {
+func (s *Executor) Unregister(peer session.NodeID) error {
 
 	s.connectedNodesMu.Lock()
 	_, has := s.connectedNodes[peer]
@@ -573,8 +572,8 @@ func (s *Executor) Unregister(peer helium.NodeID) error {
 	return nil // TODO: Implement
 }
 
-func (s *Executor) getAvailable() utils.Set[helium.NodeID] {
-	available := make(utils.Set[helium.NodeID])
+func (s *Executor) getAvailable() utils.Set[session.NodeID] {
+	available := make(utils.Set[session.NodeID])
 	for nid, nProtos := range s.connectedNodes {
 		if len(nProtos) < s.config.MaxProtoPerNode {
 			available.Add(nid)
@@ -586,16 +585,16 @@ func (s *Executor) getAvailable() utils.Set[helium.NodeID] {
 func (s *Executor) getProtocolDescriptor(sig Signature, sess *session.Session) Descriptor {
 	pd := Descriptor{Signature: sig, Aggregator: s.self}
 
-	var available, selected utils.Set[helium.NodeID]
+	var available, selected utils.Set[session.NodeID]
 	switch sig.Type {
 	case DEC:
-		if sess.Contains(helium.NodeID(sig.Args["target"])) {
-			selected = utils.NewSingletonSet(helium.NodeID(sig.Args["target"]))
+		if sess.Contains(session.NodeID(sig.Args["target"])) {
+			selected = utils.NewSingletonSet(session.NodeID(sig.Args["target"]))
 			break
 		}
 		fallthrough
 	default:
-		selected = utils.NewEmptySet[helium.NodeID]()
+		selected = utils.NewEmptySet[session.NodeID]()
 	}
 
 	s.connectedNodesMu.Lock()
@@ -621,7 +620,7 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *session.Session) D
 	return pd
 }
 
-func (s *Executor) DisconnectedNode(id helium.NodeID) {
+func (s *Executor) DisconnectedNode(id session.NodeID) {
 	s.runningProtoMu.RLock()
 	protoIds := s.connectedNodes[id]
 	for pid := range protoIds {
@@ -634,7 +633,7 @@ func (s *Executor) Logf(msg string, v ...any) {
 	log.Printf("%s | [executor] %s\n", s.self, fmt.Sprintf(msg, v...))
 }
 
-func (s *Executor) NodeID() helium.NodeID {
+func (s *Executor) NodeID() session.NodeID {
 	return s.self
 }
 
@@ -654,13 +653,13 @@ func (s *Executor) isParticipantFor(pd Descriptor) bool {
 func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {
 	if pd.Signature.Type == DEC || pd.Signature.Type == PCKS {
 		target := pd.Signature.Args["target"]
-		return s.self == helium.NodeID(target)
+		return s.self == session.NodeID(target)
 	}
 	return false
 }
 
 // type testCoordinator struct {
-// 	hid                helium.NodeID
+// 	hid                session.NodeID
 // 	log                []Event
 // 	closed             bool
 // 	incoming, outgoing chan Event
@@ -669,7 +668,7 @@ func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {
 // 	l sync.Mutex
 // }
 
-// func NewTestCoordinator(hid helium.NodeID) *testCoordinator {
+// func NewTestCoordinator(hid session.NodeID) *testCoordinator {
 // 	tc := &testCoordinator{hid: hid,
 // 		log:      make([]Event, 0),
 // 		incoming: make(chan Event),
@@ -700,7 +699,7 @@ func (s *Executor) isKeySwitchReceiver(pd Descriptor) bool {
 
 // func (tc *testCoordinator) Register(ctx context.Context) (evChan *EventChannel, present int, err error) {
 
-// 	nid, has := helium.NodeIDFromContext(ctx)
+// 	nid, has := session.NodeIDFromContext(ctx)
 // 	if !has {
 // 		return nil, 0, fmt.Errorf("no node id found in context")
 // 	}
@@ -739,7 +738,7 @@ func NewTestTransport() *TestTransport {
 	return &TestTransport{incoming: make(chan Share), outgoing: nil}
 }
 
-func (tt *TestTransport) TransportFor(nid helium.NodeID) *TestTransport {
+func (tt *TestTransport) TransportFor(nid session.NodeID) *TestTransport {
 	tnt := new(TestTransport)
 	tnt.outgoing = tt.incoming
 	return tnt

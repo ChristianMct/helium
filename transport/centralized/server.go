@@ -15,6 +15,7 @@ import (
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
+	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -32,10 +33,9 @@ const (
 // In the current implementation, the server is responsible for keeping the event log and
 // a server cannot be restarted after it is closed. // TODO
 type HeliumServer struct {
-	helium.PublicKeyProvider
-	helperNode *node.Node
-	id         helium.NodeID
-
+	session.PublicKeyProvider
+	helperNode     *node.Node
+	id             session.NodeID
 	incomingShares chan protocol.Share
 
 	// event log
@@ -43,7 +43,7 @@ type HeliumServer struct {
 	eventsClosed bool
 	eventsMu     sync.RWMutex
 
-	nodes   map[helium.NodeID]*peer
+	nodes   map[session.NodeID]*peer
 	nodesMu sync.RWMutex
 	closing chan struct{}
 
@@ -98,7 +98,7 @@ func NewHeliumServer(helperNode *node.Node) *HeliumServer {
 	hsv.Server = grpc.NewServer(serverOpts...)
 	hsv.Server.RegisterService(&pb.Helium_ServiceDesc, hsv)
 
-	hsv.nodes = make(map[helium.NodeID]*peer)
+	hsv.nodes = make(map[session.NodeID]*peer)
 	for _, n := range helperNode.NodeList() {
 		hsv.nodes[n.NodeID] = &peer{}
 	}
@@ -147,11 +147,11 @@ func (nt *nodeTransport) GetAggregationOutput(ctx context.Context, pd protocol.D
 	panic("unimplemented")
 }
 
-func (nt *nodeTransport) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+func (nt *nodeTransport) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
 	panic("unimplemented")
 }
 
-func (nt *nodeTransport) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+func (nt *nodeTransport) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
 	panic("unimplemented")
 }
 
@@ -338,7 +338,7 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.Ciphertex
 		return nil, err
 	}
 
-	ct, err := hsv.helperNode.GetCiphertext(ctx, helium.CiphertextID(ctid.CiphertextId))
+	ct, err := hsv.helperNode.GetCiphertext(ctx, session.CiphertextID(ctid.CiphertextId))
 	if err != nil {
 		return nil, err
 	}

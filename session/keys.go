@@ -1,4 +1,4 @@
-package helium
+package session
 
 import (
 	"context"

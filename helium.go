@@ -2,32 +2,20 @@
 package helium
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"path"
 	"strings"
 
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/ChristianMct/helium/session"
 )
-
-// NodeID is the unique identifier of a node.
-type NodeID string
-
-// SessionID is the unique identifier of a session.
-type SessionID string
-
-// CircuitID is the unique identifier of a running circuit.
-type CircuitID string
-
-type CiphertextID string
 
 // NodeAddress is the network address of a node.
 type NodeAddress string
 
 // NodeInfo contains the unique identifier and the network address of a node.
 type NodeInfo struct {
-	NodeID
+	session.NodeID
 	NodeAddress
 }
 
@@ -38,7 +26,7 @@ type NodesList []NodeInfo
 
 // AddressOf returns the network address of the node with the given ID. Returns
 // an empty string if the node is not found in the list.
-func (nl NodesList) AddressOf(id NodeID) NodeAddress {
+func (nl NodesList) AddressOf(id session.NodeID) NodeAddress {
 	for _, node := range nl {
 		if node.NodeID == id {
 			return node.NodeAddress
@@ -57,99 +45,9 @@ func (nl NodesList) String() string {
 	return str + "]"
 }
 
-type ctxKey string
-
-var (
-	// CtxNodeID is the context key for the node ID.
-	CtxNodeID ctxKey = "node_id"
-	// CtxSessionID is the context key for the session ID.
-	// Helium contexts must always have a session id.
-	CtxSessionID ctxKey = "session_id"
-	// CtxCircuitID is the context key for the circuit ID.
-	// The circuit ID is optional and is only present in the context
-	// of a circuit execution.
-	CtxCircuitID ctxKey = "circuit_id"
-)
-
-// NewContext returns a new context derived from ctx with the given session and circuit IDs.
-func NewContext(ctx context.Context, sessID SessionID, circID ...CircuitID) context.Context {
-	ctx = context.WithValue(ctx, CtxSessionID, sessID)
-	if len(circID) != 0 {
-		ctx = ContextWithCircuitID(ctx, circID[0])
-	}
-	return ctx
-}
-
-// NewBackgroundContext returns a new context derived from context.Background with
-// the given session and circuit IDs.
-func NewBackgroundContext(sessID SessionID, circID ...CircuitID) context.Context {
-	return NewContext(context.Background(), sessID, circID...)
-}
-
-// ContextWithCircuitID returns a new context derived from ctx with the given session ID.
-func ContextWithCircuitID(ctx context.Context, circID CircuitID) context.Context {
-	return context.WithValue(ctx, CtxCircuitID, circID)
-}
-
-// ContextWithNodeID returns a new context derived from ctx with the given node ID.
-func ContextWithNodeID(ctx context.Context, nodeID NodeID) context.Context {
-	return context.WithValue(ctx, CtxNodeID, nodeID)
-}
-
-// NodeIDFromContext returns the node ID from the context.
-func NodeIDFromContext(ctx context.Context) (NodeID, bool) {
-	nid, ok := ctx.Value(CtxNodeID).(NodeID)
-	return nid, ok
-}
-
-// SessionIDFromContext returns the session ID from the context.
-func SessionIDFromContext(ctx context.Context) (SessionID, bool) {
-	sessID, ok := ctx.Value(CtxSessionID).(SessionID)
-	return sessID, ok
-}
-
-// CircuitIDFromContext returns the circuit ID from the context, if present.
-func CircuitIDFromContext(ctx context.Context) (CircuitID, bool) {
-	circID, isPresent := ctx.Value(CtxCircuitID).(CircuitID)
-	return circID, isPresent
-}
-
 // String returns a string representation of the node address.
 func (na NodeAddress) String() string {
 	return string(na)
-}
-
-// CiphertextType is an enumerated type for the types of ciphertexts.
-type CiphertextType int
-
-const (
-	// Unspecified is the default value for the type of a ciphertext.
-	Unspecified CiphertextType = iota
-	// BFV is the type of a ciphertext in the BFV scheme.
-	BFV
-	// BGV is the type of a ciphertext in the BGV scheme.
-	BGV
-	// CKKS is the type of a ciphertext in the CKKS scheme.
-	CKKS
-	// RGSW is the type of a ciphertext in the RGSW scheme.
-	RGSW
-)
-
-var typeToString = [...]string{"Unspecified", "BFV", "BGV", "CKKS", "RGSW"}
-
-// String returns a string representation of the ciphertext type.
-func (ctt CiphertextType) String() string {
-	if ctt < 0 || int(ctt) > len(typeToString) {
-		return "invalid"
-	}
-	return typeToString[ctt]
-}
-
-// CiphertextMetadata contains information on ciphertexts.
-// In the current bgv-specific implementation, the type is not used.
-type CiphertextMetadata struct {
-	ID   CiphertextID
-	Type CiphertextType
 }
 
 // URL defines a URL format to serve as ciphertext identifier for
@@ -165,17 +63,17 @@ func ParseURL(s string) (*URL, error) {
 	return (*URL)(u), nil
 }
 
-func (u *URL) CiphertextBaseID() CiphertextID {
-	return CiphertextID(path.Base(u.Path))
-}
-
-func (u *URL) CiphertextID() CiphertextID {
-	return CiphertextID(u.String())
-}
-
 // NodeID returns the host part of the URL as a NodeID.
-func (u *URL) NodeID() NodeID {
-	return NodeID(u.Host)
+func (u *URL) NodeID() session.NodeID {
+	return session.NodeID(u.Host)
+}
+
+func (u *URL) CiphertextBaseID() session.CiphertextID {
+	return session.CiphertextID(path.Base(u.Path))
+}
+
+func (u *URL) CiphertextID() session.CiphertextID {
+	return session.CiphertextID(u.String())
 }
 
 // CircuitID returns the circuit id part of the URL, if any.
@@ -192,23 +90,17 @@ func (u *URL) String() string {
 	return (*url.URL)(u).String()
 }
 
-// Ciphertext is a type for ciphertext within the helium framework.
-type Ciphertext struct {
-	rlwe.Ciphertext
-	CiphertextMetadata
-}
-
 // TLSConfig is a struct for specifying TLS-related configuration.
 // TLS is not supported yet.
 //
 //nolint:gosec // sha1 needed to check certificate
 type TLSConfig struct {
-	InsecureChannels bool              // if set, disables TLS authentication
-	FromDirectory    string            // path to a directory containing the TLS material as files
-	PeerPKs          map[NodeID]string // Mapping of <node, pubKey> where pubKey is PEM encoded
-	PeerCerts        map[NodeID]string // Mapping of <node, certifcate> where pubKey is PEM encoded ASN.1 DER string
-	CACert           string            // Root CA certificate as a PEM encoded ASN.1 DER string
-	OwnCert          string            // Own certificate as a PEM encoded ASN.1 DER string
-	OwnPk            string            // Own public key as a PEM encoded string
-	OwnSk            string            // Own secret key as a PEM encoded string
+	InsecureChannels bool                      // if set, disables TLS authentication
+	FromDirectory    string                    // path to a directory containing the TLS material as files
+	PeerPKs          map[session.NodeID]string // Mapping of <node, pubKey> where pubKey is PEM encoded
+	PeerCerts        map[session.NodeID]string // Mapping of <node, certifcate> where pubKey is PEM encoded ASN.1 DER string
+	CACert           string                    // Root CA certificate as a PEM encoded ASN.1 DER string
+	OwnCert          string                    // Own certificate as a PEM encoded ASN.1 DER string
+	OwnPk            string                    // Own public key as a PEM encoded string
+	OwnSk            string                    // Own secret key as a PEM encoded string
 }

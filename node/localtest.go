@@ -55,12 +55,12 @@ type LocalTest struct {
 func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test = new(LocalTest)
 
-	helperID := helium.NodeID("helper")
-	sessNodesID := make([]helium.NodeID, config.PeerNodes)
-	shamirPks := make(map[helium.NodeID]drlwe.ShamirPublicPoint, config.PeerNodes)
+	helperID := session.NodeID("helper")
+	sessNodesID := make([]session.NodeID, config.PeerNodes)
+	shamirPks := make(map[session.NodeID]drlwe.ShamirPublicPoint, config.PeerNodes)
 	test.NodesList = make(helium.NodesList, 1+config.PeerNodes)
 	for i := range sessNodesID {
-		nid := helium.NodeID("peer-" + strconv.Itoa(i))
+		nid := session.NodeID("peer-" + strconv.Itoa(i))
 		sessNodesID[i] = nid
 		shamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
 		test.NodesList[i] = helium.NodeInfo{NodeID: nid}
@@ -115,7 +115,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
-func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[helium.NodeID]*session.Secrets) (sessNodesConfig []Config, helperNodeConfig Config) {
+func genNodeConfigs(config LocalTestConfig, nl helium.NodesList, secrets map[session.NodeID]*session.Secrets) (sessNodesConfig []Config, helperNodeConfig Config) {
 
 	tlsConfigs, err := createTLSConfigs(config, nl)
 	if err != nil {
@@ -186,9 +186,9 @@ type nodeCrypto struct {
 	cert   x509.Certificate
 }
 
-func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (map[helium.NodeID]helium.TLSConfig, error) {
+func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (map[session.NodeID]helium.TLSConfig, error) {
 
-	tlsConfigs := make(map[helium.NodeID]helium.TLSConfig, len(nodeList))
+	tlsConfigs := make(map[session.NodeID]helium.TLSConfig, len(nodeList))
 
 	if testConfig.InsecureChannels {
 		for _, n := range nodeList {
@@ -230,7 +230,7 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (ma
 		return nil, err
 	}
 
-	peerCrypto := make(map[helium.NodeID]nodeCrypto, len(nodeList))
+	peerCrypto := make(map[session.NodeID]nodeCrypto, len(nodeList))
 	// sign certs for everyone
 	for _, peer := range nodeList {
 		pubkey, skey, errGenKey := ed25519.GenerateKey(nil)
@@ -279,8 +279,8 @@ func createTLSConfigs(testConfig LocalTestConfig, nodeList helium.NodesList) (ma
 
 	// create the tls configs
 	for nodeID, nodeCrypo := range peerCrypto {
-		peerPKs := make(map[helium.NodeID]string, len(nodeList)-1) // fully connected nodes
-		peerCerts := make(map[helium.NodeID]string, len(nodeList)-1)
+		peerPKs := make(map[session.NodeID]string, len(nodeList)-1) // fully connected nodes
+		peerCerts := make(map[session.NodeID]string, len(nodeList)-1)
 
 		var skPem, pkPem, certPem []byte
 		skPem, err = cryptoUtil.ToPEM(nodeCrypo.skey)
@@ -355,9 +355,9 @@ func (lc LocalTest) SessionNodes() []*Node {
 	return lc.Nodes[1:]
 }
 
-func (lc LocalTest) SessionNodesIds() []helium.NodeID {
+func (lc LocalTest) SessionNodesIds() []session.NodeID {
 	sessionNodes := lc.SessionNodes()
-	ids := make([]helium.NodeID, len(sessionNodes))
+	ids := make([]session.NodeID, len(sessionNodes))
 	for i, node := range sessionNodes {
 		ids[i] = node.id
 	}
@@ -365,8 +365,8 @@ func (lc LocalTest) SessionNodesIds() []helium.NodeID {
 }
 
 // NodeIds returns the node ideas of all nodes in the local test.
-func (lc LocalTest) NodeIds() []helium.NodeID {
-	ids := make([]helium.NodeID, len(lc.Nodes))
+func (lc LocalTest) NodeIds() []session.NodeID {
+	ids := make([]session.NodeID, len(lc.Nodes))
 	for i, node := range lc.Nodes {
 		ids[i] = node.id
 	}

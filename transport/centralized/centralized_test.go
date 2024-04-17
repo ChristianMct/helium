@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/services/compute"
@@ -38,7 +37,7 @@ type testSetting struct {
 	N           int // N - total parties
 	T           int // T - parties in the access structure
 	CircuitSigs []TestCircuitSig
-	Reciever    helium.NodeID
+	Reciever    session.NodeID
 	Rep         int // numer of repetition for each circuit
 }
 
@@ -95,7 +94,7 @@ func TestSetup(t *testing.T) {
 			lis := bufconn.Listen(buffConBufferSize)
 			go helper.Serve(lis)
 
-			ctx := helium.NewBackgroundContext(sessParams.ID)
+			ctx := session.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			g.Go(func() error {
 				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
@@ -161,12 +160,12 @@ func TestCompute(t *testing.T) {
 			ts.Rep = 1
 		}
 
-		nodemap := map[string]helium.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
+		nodemap := map[string]session.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
 
-		expResult := make(map[helium.CircuitID]uint64)
+		expResult := make(map[session.CircuitID]uint64)
 		for _, tc := range ts.CircuitSigs {
 			for i := 0; i < ts.Rep; i++ {
-				cid := helium.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+				cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
 				expResult[cid] = tc.ExpResult
 			}
 		}
@@ -196,11 +195,11 @@ func TestCompute(t *testing.T) {
 			go helper.Serve(lis)
 
 			testOuts := make(chan struct {
-				helium.NodeID
+				session.NodeID
 				circuit.Output
 			}, len(expResult))
 
-			ctx := helium.NewBackgroundContext(sessParams.ID)
+			ctx := session.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			g.Go(func() error {
 				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
@@ -211,7 +210,7 @@ func TestCompute(t *testing.T) {
 				go func() {
 					for _, tc := range ts.CircuitSigs {
 						for i := 0; i < ts.Rep; i++ {
-							cid := helium.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+							cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
 							cdescs <- circuit.Descriptor{Signature: circuit.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: helper.id}
 						}
 					}
@@ -220,7 +219,7 @@ func TestCompute(t *testing.T) {
 
 				for out := range outs {
 					testOuts <- struct {
-						helium.NodeID
+						session.NodeID
 						circuit.Output
 					}{helper.id, out}
 				}
@@ -237,7 +236,7 @@ func TestCompute(t *testing.T) {
 						return fmt.Errorf("node %s failed to connect: %v", cli.id, err)
 					}
 
-					ip := func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
+					ip := func(ctx context.Context, _ session.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
 						return nodeIDtoTestInput(string(cli.id)), nil
 					}
 
@@ -248,7 +247,7 @@ func TestCompute(t *testing.T) {
 
 					for out := range outs {
 						testOuts <- struct {
-							helium.NodeID
+							session.NodeID
 							circuit.Output
 						}{cli.id, out}
 					}

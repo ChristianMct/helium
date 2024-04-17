@@ -7,7 +7,6 @@ import (
 
 	"golang.org/x/exp/maps"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
@@ -174,7 +173,7 @@ func (se *evaluatorRuntime) keyOpSig(pt protocol.Type, in circuit.Operand, param
 
 func (se *evaluatorRuntime) keyOpExec(sig protocol.Signature, in circuit.Operand) (err error) {
 
-	ctx := helium.NewBackgroundContext(se.sess.ID, se.cDesc.CircuitID)
+	ctx := session.NewBackgroundContext(se.sess.ID, se.cDesc.CircuitID)
 
 	if err := se.protoExec.RunKeyOperation(ctx, sig); err != nil {
 		return err
@@ -196,7 +195,7 @@ func (se *evaluatorRuntime) getOperandLabelForRuntime(cOpLabel circuit.OperandLa
 	return cOpLabel.ForCircuit(se.cDesc.CircuitID).ForMapping(se.cDesc.NodeMapping)
 }
 
-func (se *evaluatorRuntime) DEC(in circuit.Operand, rec helium.NodeID, params map[string]string) (err error) {
+func (se *evaluatorRuntime) DEC(in circuit.Operand, rec session.NodeID, params map[string]string) (err error) {
 	var fop *circuit.FutureOperand
 	var has bool
 	if fop, has = se.ops[in.OperandLabel]; !has {
@@ -212,7 +211,7 @@ func (se *evaluatorRuntime) DEC(in circuit.Operand, rec helium.NodeID, params ma
 	return se.keyOpExec(sig, in)
 }
 
-func (se *evaluatorRuntime) PCKS(in circuit.Operand, rec helium.NodeID, params map[string]string) (err error) {
+func (se *evaluatorRuntime) PCKS(in circuit.Operand, rec session.NodeID, params map[string]string) (err error) {
 	if _, has := se.ops[in.OperandLabel]; !has {
 		fop := circuit.NewFutureOperand(in.OperandLabel)
 		fop.Set(in)

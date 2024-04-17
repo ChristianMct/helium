@@ -74,10 +74,10 @@ type CircuitRuntime interface {
 // - *rlwe.Ciphertext: an encrypted input
 // - *rlwe.Plaintext: a Lattigo plaintext input, which will be encrypted by the framework
 // - []uint64: a Go plaintext input, which will be encoded and encrypted by the framework
-type InputProvider func(context.Context, helium.CircuitID, circuit.OperandLabel, session.Session) (any, error)
+type InputProvider func(context.Context, session.CircuitID, circuit.OperandLabel, session.Session) (any, error)
 
 // NoInput is an input provider that returns nil for all inputs.
-var NoInput InputProvider = func(_ context.Context, _ helium.CircuitID, _ circuit.OperandLabel, _ session.Session) (any, error) {
+var NoInput InputProvider = func(_ context.Context, _ session.CircuitID, _ circuit.OperandLabel, _ session.Session) (any, error) {
 	return nil, nil
 }
 
@@ -108,7 +108,7 @@ type Coordinator coordinator.Coordinator[Event]
 // Service represents a compute service instance.
 type Service struct {
 	config ServiceConfig
-	self   helium.NodeID
+	self   session.NodeID
 
 	sessions session.SessionProvider
 	*protocol.Executor
@@ -125,7 +125,7 @@ type Service struct {
 	queuedCircuits chan circuit.Descriptor
 
 	runningCircuitsMu sync.RWMutex
-	runningCircuits   map[helium.CircuitID]CircuitRuntime
+	runningCircuits   map[session.CircuitID]CircuitRuntime
 
 	completedCircuits chan circuit.Descriptor
 
@@ -146,7 +146,7 @@ const (
 )
 
 // NewComputeService creates a new compute service instance.
-func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk circuit.PublicKeyProvider) (s *Service, err error) {
+func NewComputeService(ownID session.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk circuit.PublicKeyProvider) (s *Service, err error) {
 	s = new(Service)
 
 	s.config = conf
@@ -168,11 +168,11 @@ func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, co
 		return nil, err
 	}
 
-	s.pubkeyBackend = helium.NewCachedPublicKeyBackend(pkbk)
+	s.pubkeyBackend = session.NewCachedPublicKeyBackend(pkbk)
 
 	s.queuedCircuits = make(chan circuit.Descriptor, conf.CircQueueSize)
 
-	s.runningCircuits = make(map[helium.CircuitID]CircuitRuntime)
+	s.runningCircuits = make(map[session.CircuitID]CircuitRuntime)
 
 	//s.running = make(chan struct{})
 
@@ -214,7 +214,7 @@ func recoverPresentState(events <-chan Event, present int) (completedProto, fail
 
 	var current int
 	runProto := make(map[protocol.ID]protocol.Descriptor)
-	runCircuit := make(map[helium.CircuitID]circuit.Descriptor)
+	runCircuit := make(map[session.CircuitID]circuit.Descriptor)
 	for ev := range events {
 
 		if ev.CircuitEvent != nil {
@@ -342,7 +342,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	s.transport = trans
 	s.inputProvider = ip
 
-	runCtx, cancelRunCtx := context.WithCancel(helium.ContextWithNodeID(ctx, s.self))
+	runCtx, cancelRunCtx := context.WithCancel(session.ContextWithNodeID(ctx, s.self))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator
@@ -380,7 +380,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 				}
 
 				for opl := range cinf.OutputsFor[s.self] {
-					ct, err := s.transport.GetCiphertext(ctx, helium.CiphertextID(opl))
+					ct, err := s.transport.GetCiphertext(ctx, session.CiphertextID(opl))
 					if err != nil {
 						panic(err)
 					}
@@ -713,7 +713,7 @@ func (s *Service) RunKeyOperation(ctx context.Context, sig protocol.Signature) (
 
 // GetCiphertext retreives a ciphertext from the corresponding circuit runtime.
 // The runtime is identified by the circuit ID part of the ciphertext ids.
-func (s *Service) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+func (s *Service) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
 
 	_, exists := s.sessions.GetSessionFromContext(ctx)
 	if !exists {
@@ -729,12 +729,12 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (
 		return nil, fmt.Errorf("non-local ciphertext id")
 	}
 
-	cid := helium.CircuitID(ctURL.CircuitID())
+	cid := session.CircuitID(ctURL.CircuitID())
 	if len(cid) == 0 {
 		return nil, fmt.Errorf("ciphertext label does not include a circuit ID")
 	}
 
-	var ct *helium.Ciphertext
+	var ct *session.Ciphertext
 	var op *circuit.Operand
 	var isOutput, isInCircuit bool
 	s.outputsMu.RLock()
@@ -754,17 +754,17 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (
 		return nil, fmt.Errorf("ciphertext with id %s not found for circuit %s", ctID, ctURL.CircuitID())
 	}
 
-	ct = &helium.Ciphertext{Ciphertext: *op.Ciphertext}
+	ct = &session.Ciphertext{Ciphertext: *op.Ciphertext}
 	return ct, nil
 }
 
 // PutCiphertext provides the ciphertext to the corresponding circuit runtime.
 // The runtime is identified by the circuit ID part of the ciphertext ids.
-func (s *Service) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+func (s *Service) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
 
 	_, exists := s.sessions.GetSessionFromContext(ctx)
 	if !exists {
-		sessid, _ := helium.SessionIDFromContext(ctx)
+		sessid, _ := session.SessionIDFromContext(ctx)
 		return fmt.Errorf("invalid session id \"%s\"", sessid)
 	}
 
@@ -773,7 +773,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error
 		return fmt.Errorf("invalid ciphertext id \"%s\": %w", ct.ID, err)
 	}
 
-	cid := helium.CircuitID(ctURL.CircuitID())
+	cid := session.CircuitID(ctURL.CircuitID())
 
 	if len(cid) == 0 {
 		return fmt.Errorf("ciphertext label does not include a circuit ID")
@@ -954,13 +954,13 @@ func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 }
 
 func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitRuntime, error) {
-	cid, has := helium.CircuitIDFromContext(ctx)
+	cid, has := session.CircuitIDFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("should have circuit id in context")
 	}
 
 	s.runningCircuitsMu.RLock()
-	c, envExists := s.runningCircuits[helium.CircuitID(cid)]
+	c, envExists := s.runningCircuits[session.CircuitID(cid)]
 	s.runningCircuitsMu.RUnlock()
 	if !envExists {
 		return nil, fmt.Errorf("unknown circuit %s", cid)
@@ -974,7 +974,7 @@ func (s *Service) getCircuitFromOperandLabel(opl circuit.OperandLabel) (CircuitR
 	cid := opl.CircuitID()
 
 	s.runningCircuitsMu.RLock()
-	c, envExists := s.runningCircuits[helium.CircuitID(cid)]
+	c, envExists := s.runningCircuits[session.CircuitID(cid)]
 	s.runningCircuitsMu.RUnlock()
 	if !envExists {
 		return nil, fmt.Errorf("unknown circuit %s", cid)

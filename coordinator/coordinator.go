@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/session"
 )
 
 type EventType any
@@ -31,7 +31,7 @@ type Coordinator[T EventType] interface {
 }
 
 type TestCoordinator[T EventType] struct {
-	hid     helium.NodeID
+	hid     session.NodeID
 	log     Log[T]
 	closed  bool
 	c       channel[T]
@@ -40,7 +40,7 @@ type TestCoordinator[T EventType] struct {
 	l sync.Mutex
 }
 
-func NewTestCoordinator[T EventType](hid helium.NodeID) *TestCoordinator[T] {
+func NewTestCoordinator[T EventType](hid session.NodeID) *TestCoordinator[T] {
 	tc := &TestCoordinator[T]{hid: hid,
 		log:     make([]T, 0),
 		c:       channel[T]{incoming: make(chan T), outgoing: make(chan T)},
@@ -73,7 +73,7 @@ func (tc *TestCoordinator[T]) Register(ctx context.Context) (evChan *Channel[T],
 	tc.l.Lock()
 	defer tc.l.Unlock()
 
-	nid, has := helium.NodeIDFromContext(ctx)
+	nid, has := session.NodeIDFromContext(ctx)
 	if !has {
 		return nil, 0, fmt.Errorf("no node id found in context")
 	}

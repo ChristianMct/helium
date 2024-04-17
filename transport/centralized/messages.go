@@ -3,12 +3,12 @@ package centralized
 import (
 	"fmt"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
+	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/transport/pb"
 	"github.com/ChristianMct/helium/utils"
 )
@@ -116,14 +116,14 @@ func getAPIProtocolDesc(pd *protocol.Descriptor) *pb.ProtocolDescriptor {
 func getProtocolDescFromAPI(apiPD *pb.ProtocolDescriptor) *protocol.Descriptor {
 	desc := &protocol.Descriptor{
 		Signature:    protocol.Signature{Type: protocol.Type(apiPD.ProtocolType), Args: make(map[string]string)},
-		Aggregator:   helium.NodeID(apiPD.Aggregator.NodeId),
-		Participants: make([]helium.NodeID, 0, len(apiPD.Participants)),
+		Aggregator:   session.NodeID(apiPD.Aggregator.NodeId),
+		Participants: make([]session.NodeID, 0, len(apiPD.Participants)),
 	}
 	for k, v := range apiPD.Args {
 		desc.Signature.Args[k] = v
 	}
 	for _, p := range apiPD.Participants {
-		desc.Participants = append(desc.Participants, helium.NodeID(p.NodeId))
+		desc.Participants = append(desc.Participants, session.NodeID(p.NodeId))
 	}
 	return desc
 }
@@ -156,9 +156,9 @@ func getCircuitDescFromAPI(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
 			Name: circuit.Name(apiCd.CircuitSignature.Name),
 			Args: make(map[string]string, len(apiCd.CircuitSignature.Args)),
 		},
-		CircuitID:   helium.CircuitID(apiCd.CircuitID.CircuitID),
-		NodeMapping: make(map[string]helium.NodeID, len(apiCd.NodeMapping)),
-		Evaluator:   helium.NodeID(apiCd.Evaluator.NodeId),
+		CircuitID:   session.CircuitID(apiCd.CircuitID.CircuitID),
+		NodeMapping: make(map[string]session.NodeID, len(apiCd.NodeMapping)),
+		Evaluator:   session.NodeID(apiCd.Evaluator.NodeId),
 	}
 
 	for k, v := range apiCd.CircuitSignature.Args {
@@ -166,7 +166,7 @@ func getCircuitDescFromAPI(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
 	}
 
 	for s, nid := range apiCd.NodeMapping {
-		cd.NodeMapping[s] = helium.NodeID(nid.NodeId)
+		cd.NodeMapping[s] = session.NodeID(nid.NodeId)
 	}
 
 	return cd
@@ -203,12 +203,12 @@ func getShareFromAPI(s *pb.Share) (protocol.Share, error) {
 		ShareMetadata: protocol.ShareMetadata{
 			ProtocolID:   pID,
 			ProtocolType: pType,
-			From:         make(utils.Set[helium.NodeID]),
+			From:         make(utils.Set[session.NodeID]),
 		},
 		MHEShare: share,
 	}
 	for _, nid := range desc.AggregateFor {
-		ps.From.Add(helium.NodeID(nid.NodeId))
+		ps.From.Add(session.NodeID(nid.NodeId))
 	}
 
 	err := ps.MHEShare.UnmarshalBinary(s.GetShare())
@@ -218,7 +218,7 @@ func getShareFromAPI(s *pb.Share) (protocol.Share, error) {
 	return ps, nil
 }
 
-func getAPICiphertext(ct *helium.Ciphertext) (*pb.Ciphertext, error) {
+func getAPICiphertext(ct *session.Ciphertext) (*pb.Ciphertext, error) {
 	ctBytes, err := ct.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -230,10 +230,10 @@ func getAPICiphertext(ct *helium.Ciphertext) (*pb.Ciphertext, error) {
 	}, nil
 }
 
-func getCiphertextFromAPI(apiCt *pb.Ciphertext) (*helium.Ciphertext, error) {
-	var ct helium.Ciphertext
-	ct.CiphertextMetadata.ID = helium.CiphertextID(apiCt.Metadata.GetId().CiphertextId)
-	ct.CiphertextMetadata.Type = helium.CiphertextType(apiCt.Metadata.GetType())
+func getCiphertextFromAPI(apiCt *pb.Ciphertext) (*session.Ciphertext, error) {
+	var ct session.Ciphertext
+	ct.CiphertextMetadata.ID = session.CiphertextID(apiCt.Metadata.GetId().CiphertextId)
+	ct.CiphertextMetadata.Type = session.CiphertextType(apiCt.Metadata.GetType())
 	err := ct.Ciphertext.UnmarshalBinary(apiCt.Ciphertext)
 	if err != nil {
 		return nil, err

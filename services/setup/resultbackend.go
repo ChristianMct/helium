@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/session"
 )
 
 type objStoreResultBackend struct {
@@ -21,7 +21,7 @@ func newObjStoreResultBackend(os objectstore.ObjectStore) *objStoreResultBackend
 
 func (osrb objStoreResultBackend) Has(ctx context.Context, sig protocol.Signature) (has bool, err error) {
 
-	sessid, has := helium.SessionIDFromContext(ctx)
+	sessid, has := session.SessionIDFromContext(ctx)
 	if !has {
 		return false, fmt.Errorf("session id not found in context")
 	}
@@ -39,7 +39,7 @@ func (osrb objStoreResultBackend) Has(ctx context.Context, sig protocol.Signatur
 
 func (osrb objStoreResultBackend) Put(ctx context.Context, pd protocol.Descriptor, aggShare protocol.Share) error {
 
-	sessid, has := helium.SessionIDFromContext(ctx)
+	sessid, has := session.SessionIDFromContext(ctx)
 	if !has {
 		return fmt.Errorf("session id not found in context")
 	}
@@ -54,7 +54,7 @@ func (osrb objStoreResultBackend) Put(ctx context.Context, pd protocol.Descripto
 }
 
 func (osrb objStoreResultBackend) GetShare(ctx context.Context, sig protocol.Signature, share protocol.LattigoShare) (err error) { // TODO: replace by binary unmasharller and remove interface
-	sessid, has := helium.SessionIDFromContext(ctx)
+	sessid, has := session.SessionIDFromContext(ctx)
 	if !has {
 		return fmt.Errorf("session id not found in context")
 	}
@@ -64,7 +64,7 @@ func (osrb objStoreResultBackend) GetShare(ctx context.Context, sig protocol.Sig
 }
 
 func (osrb objStoreResultBackend) GetProtocolDesc(ctx context.Context, sig protocol.Signature) (pd *protocol.Descriptor, err error) {
-	sessid, has := helium.SessionIDFromContext(ctx)
+	sessid, has := session.SessionIDFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("session id not found in context")
 	}

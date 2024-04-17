@@ -35,7 +35,7 @@ import (
 //     encrypted inputs to the compuation. Peer nodes do not need to have an address.
 type Node struct {
 	addr         helium.NodeAddress
-	id, helperID helium.NodeID
+	id, helperID session.NodeID
 	nodeList     helium.NodesList
 
 	// sessions and state
@@ -164,7 +164,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 		return nil, nil, fmt.Errorf("session `%s` does not exist", sess.ID)
 	}
 
-	ctx = helium.ContextWithNodeID(ctx, node.id)
+	ctx = session.ContextWithNodeID(ctx, node.id)
 
 	// App loading
 
@@ -271,7 +271,7 @@ func (node *Node) GetAggregationOutput(ctx context.Context, pd protocol.Descript
 // PutCiphertext registers a new ciphertext for the compute service.
 // If this node is the helper node, the method registers the ciphertext with the service.
 // If this node is a peer node, the method sends the ciphertext to the helper node.
-func (node *Node) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error {
+func (node *Node) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
 	if node.id == node.helperID {
 		return node.compute.PutCiphertext(ctx, ct)
 	}
@@ -281,7 +281,7 @@ func (node *Node) PutCiphertext(ctx context.Context, ct helium.Ciphertext) error
 // GetCiphertext returns a ciphertext from the compute service.
 // If this node is the helper node, the method retrieves the ciphertext from the service.
 // If this node is a peer node, the method retrieves the ciphertext from the helper node.
-func (node *Node) GetCiphertext(ctx context.Context, ctID helium.CiphertextID) (*helium.Ciphertext, error) {
+func (node *Node) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
 	if node.id == node.helperID {
 		return node.compute.GetCiphertext(ctx, ctID)
 	}
@@ -304,7 +304,7 @@ func (node *Node) NodeList() helium.NodesList {
 }
 
 // ID returns the node's ID.
-func (node *Node) ID() helium.NodeID {
+func (node *Node) ID() session.NodeID {
 	return node.id
 }
 
@@ -326,14 +326,14 @@ func (node *Node) IsHelperNode() bool {
 // SessionProvider interface implementation
 
 // GetSessionFromID returns the session with the given ID.
-func (node *Node) GetSessionFromID(sessionID helium.SessionID) (*session.Session, bool) {
+func (node *Node) GetSessionFromID(sessionID session.SessionID) (*session.Session, bool) {
 	return node.sessions.GetSessionFromID(sessionID)
 }
 
 // GetSessionFromContext returns the session by extracting the session id from the
 // provided context.
 func (node *Node) GetSessionFromContext(ctx context.Context) (*session.Session, bool) {
-	sessID, has := helium.SessionIDFromContext(ctx)
+	sessID, has := session.SessionIDFromContext(ctx)
 	if !has {
 		return nil, false
 	}
@@ -434,7 +434,7 @@ func (node *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.Relinearizat
 // Coordinator interface implementation
 
 // Register is called by the transport upon connection of a new peer node.
-func (node *Node) Register(peer helium.NodeID) error {
+func (node *Node) Register(peer session.NodeID) error {
 	if peer == node.id {
 		return nil // TODO specific to helper-assisted setting
 	}
@@ -442,7 +442,7 @@ func (node *Node) Register(peer helium.NodeID) error {
 }
 
 // Unregister is called by the transport upon disconnection of a peer node.
-func (node *Node) Unregister(peer helium.NodeID) error {
+func (node *Node) Unregister(peer session.NodeID) error {
 	return errors.Join(node.setup.Unregister(peer), node.compute.Unregister(peer))
 }
 

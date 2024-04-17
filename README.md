@@ -53,7 +53,7 @@ Here is an overview of an Helium application:
     },
   }
 
-  inputProvider = func(ctx context.Context, cid helium.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
+  inputProvider = func(ctx context.Context, cid session.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
       // ... user-defined logic to provide input for a given circuit
   }
 

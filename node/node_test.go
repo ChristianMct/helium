@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
@@ -28,7 +27,7 @@ type testSetting struct {
 	N           int // N - total parties
 	T           int // T - parties in the access structure
 	CircuitSigs []TestCircuitSig
-	Reciever    helium.NodeID
+	Reciever    session.NodeID
 	Rep         int // numer of repetition for each circuit
 }
 
@@ -61,23 +60,23 @@ type testNode struct {
 	*Node
 	compute.InputProvider
 	OutputReceiver chan circuit.Output
-	Outputs        map[helium.CircuitID]circuit.Output
+	Outputs        map[session.CircuitID]circuit.Output
 }
 
-func NewTestNodes(lt *LocalTest) (all, clients map[helium.NodeID]*testNode, cloud *testNode) {
-	all = make(map[helium.NodeID]*testNode, len(lt.Nodes))
+func NewTestNodes(lt *LocalTest) (all, clients map[session.NodeID]*testNode, cloud *testNode) {
+	all = make(map[session.NodeID]*testNode, len(lt.Nodes))
 	cloud = &testNode{}
 	cloud.Node = lt.HelperNode
 	cloud.InputProvider = compute.NoInput
-	cloud.Outputs = make(map[helium.CircuitID]circuit.Output)
+	cloud.Outputs = make(map[session.CircuitID]circuit.Output)
 	all[cloud.id] = cloud
 
-	clients = make(map[helium.NodeID]*testNode)
+	clients = make(map[session.NodeID]*testNode)
 	for _, n := range lt.PeerNodes {
 		cli := &testNode{}
 		cli.Node = n
 		cli.InputProvider = compute.NoInput
-		cli.Outputs = make(map[helium.CircuitID]circuit.Output)
+		cli.Outputs = make(map[session.CircuitID]circuit.Output)
 		clients[n.id] = cli
 		all[n.id] = cli
 	}
@@ -118,7 +117,7 @@ func TestNodeSetup(t *testing.T) {
 				SetupDescription: &testSetupDescription,
 			}
 
-			ctx := helium.NewBackgroundContext(sessParams.ID)
+			ctx := session.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			for _, node := range all {
 				node := node
@@ -178,7 +177,7 @@ func TestNodeCompute(t *testing.T) {
 
 			for _, cli := range clients {
 				cid := cli.id
-				cli.InputProvider = func(ctx context.Context, _ helium.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
+				cli.InputProvider = func(ctx context.Context, _ session.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
 					return NodeIDtoTestInput(string(cid)), nil
 				}
 			}
@@ -188,7 +187,7 @@ func TestNodeCompute(t *testing.T) {
 				Circuits:         circuit.TestCircuits,
 			}
 
-			ctx := helium.NewBackgroundContext(sessParams.ID)
+			ctx := session.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			var cdescs = make(chan chan<- circuit.Descriptor)
 			for _, node := range all {
@@ -212,12 +211,12 @@ func TestNodeCompute(t *testing.T) {
 				})
 			}
 
-			nodemap := map[string]helium.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
+			nodemap := map[string]session.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
 			cdesc := <-cdescs
-			expResult := make(map[helium.CircuitID]uint64)
+			expResult := make(map[session.CircuitID]uint64)
 			for _, tc := range ts.CircuitSigs {
 				for i := 0; i < ts.Rep; i++ {
-					cid := helium.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+					cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
 					cdesc <- circuit.Descriptor{Signature: circuit.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: cloud.id}
 					expResult[cid] = tc.ExpResult
 				}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
@@ -50,14 +49,14 @@ type Runtime interface {
 	// given reciever.
 	// It expect the users to provide the decryption parameters, including the level
 	// at which the operation is performed and the smudging parameter.
-	DEC(in Operand, rec helium.NodeID, params map[string]string) error
+	DEC(in Operand, rec session.NodeID, params map[string]string) error
 
 	// PCKS performes the re-encryption of in to the public key of rec.
 	// The the re-encrypted operand is considered an output for the this circuit and the
 	// given reciever.
 	// It expect the users to provide the key-switch parameters, including the level
 	// at which the operation is performed and the smudging parameter.
-	PCKS(in Operand, rec helium.NodeID, params map[string]string) error
+	PCKS(in Operand, rec session.NodeID, params map[string]string) error
 }
 
 // PublicKeyProvider is an interface for querying public encryption- and evaluation-keys.
@@ -86,9 +85,9 @@ type Signature struct {
 // node ids in the circuit definition.
 type Descriptor struct {
 	Signature
-	helium.CircuitID
-	NodeMapping map[string]helium.NodeID
-	Evaluator   helium.NodeID
+	session.CircuitID
+	NodeMapping map[string]session.NodeID
+	Evaluator   session.NodeID
 }
 
 // Metadata is a type for gathering information about a circuit instance.
@@ -96,7 +95,7 @@ type Descriptor struct {
 type Metadata struct {
 	Descriptor
 	InputSet, Ops, OutputSet utils.Set[OperandLabel]
-	InputsFor, OutputsFor    map[helium.NodeID]utils.Set[OperandLabel]
+	InputsFor, OutputsFor    map[session.NodeID]utils.Set[OperandLabel]
 	KeySwitchOps             map[string]protocol.Signature
 	NeedRlk                  bool
 	GaloisKeys               utils.Set[uint64]
@@ -128,7 +127,7 @@ const (
 
 // Output is a type for circuit outputs. It associates the output operand with the ID of the circuit that has produced it.
 type Output struct {
-	helium.CircuitID
+	session.CircuitID
 	Operand
 }
 

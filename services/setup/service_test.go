@@ -12,7 +12,6 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/session"
 
 	"github.com/stretchr/testify/require"
@@ -60,8 +59,8 @@ type testnode struct {
 	//protocol.Coordinator
 }
 
-func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all, sessNodes map[helium.NodeID]*testnode, helperNode *testnode) {
-	hid := helium.NodeID("helper")
+func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all, sessNodes map[session.NodeID]*testnode, helperNode *testnode) {
+	hid := session.NodeID("helper")
 
 	sessParams := testSess.SessParams
 
@@ -69,7 +68,7 @@ func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all,
 
 	//protoTrans := protocol.NewTestTransport()
 
-	all = make(map[helium.NodeID]*testnode, ts.N+1)
+	all = make(map[session.NodeID]*testnode, ts.N+1)
 	clou := new(testnode)
 	all["helper"] = clou
 
@@ -80,7 +79,7 @@ func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all,
 		t.Fatal(err)
 	}
 
-	clients := make(map[helium.NodeID]*testnode, ts.N)
+	clients := make(map[session.NodeID]*testnode, ts.N)
 	for nid := range nids {
 		cli := &testnode{}
 		cli.Session = testSess.NodeSessions[nid]
@@ -104,7 +103,7 @@ func TestSetup(t *testing.T) {
 			}
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-				hid := helium.NodeID("helper")
+				hid := session.NodeID("helper")
 
 				testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
 				if err != nil {
@@ -115,7 +114,7 @@ func TestSetup(t *testing.T) {
 				tc := coordinator.NewTestCoordinator[Event](hid)
 				tt := newTestTransport(clou.Service)
 
-				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
+				ctx := session.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
 				go func() {
 					sigList := DescriptionToSignatureList(sd)
@@ -158,7 +157,7 @@ func TestSetupLateConnect(t *testing.T) {
 			}
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-				hid := helium.NodeID("helper")
+				hid := session.NodeID("helper")
 
 				testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
 				if err != nil {
@@ -173,7 +172,7 @@ func TestSetupLateConnect(t *testing.T) {
 				tc := coordinator.NewTestCoordinator[Event](hid)
 				tt := newTestTransport(clou.Service)
 
-				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
+				ctx := session.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
 				go func() {
 					sigList := DescriptionToSignatureList(sd)
@@ -220,7 +219,7 @@ func TestSetupRetries(t *testing.T) {
 	ts := testSetting{N: 3, T: 2}
 	literalParams := TestPN12QP109
 
-	hid := helium.NodeID("helper")
+	hid := session.NodeID("helper")
 
 	testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
 	if err != nil {
@@ -231,7 +230,7 @@ func TestSetupRetries(t *testing.T) {
 	tc := coordinator.NewTestCoordinator[Event](hid)
 	tt := newTestTransport(clou.Service)
 
-	ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
+	ctx := session.NewBackgroundContext(testSess.SessParams.ID)
 
 	// runs the setup
 	go func() {
@@ -259,7 +258,7 @@ func TestSetupRetries(t *testing.T) {
 		return errors.WithMessagef(err, "error at node %s", p0.self)
 	})
 
-	p1Chan, _, err := tc.Register(helium.ContextWithNodeID(nodesRunCtx, p1.self))
+	p1Chan, _, err := tc.Register(session.ContextWithNodeID(nodesRunCtx, p1.self))
 	require.Nil(t, err)
 	ev := <-p1Chan.Incoming
 	require.Equal(t,
@@ -268,7 +267,7 @@ func TestSetupRetries(t *testing.T) {
 				EventType: protocol.Started,
 				Descriptor: protocol.Descriptor{
 					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []helium.NodeID{"node-0", "node-1"},
+					Participants: []session.NodeID{"node-0", "node-1"},
 					Aggregator:   "helper",
 				},
 			},
@@ -286,7 +285,7 @@ func TestSetupRetries(t *testing.T) {
 				EventType: protocol.Failed,
 				Descriptor: protocol.Descriptor{
 					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []helium.NodeID{"node-0", "node-1"},
+					Participants: []session.NodeID{"node-0", "node-1"},
 					Aggregator:   "helper",
 				},
 			},
@@ -306,7 +305,7 @@ func TestSetupRetries(t *testing.T) {
 				EventType: protocol.Started,
 				Descriptor: protocol.Descriptor{
 					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []helium.NodeID{"node-0", "node-2"},
+					Participants: []session.NodeID{"node-0", "node-2"},
 					Aggregator:   "helper",
 				},
 			},
@@ -321,7 +320,7 @@ func TestSetupRetries(t *testing.T) {
 				EventType: protocol.Completed,
 				Descriptor: protocol.Descriptor{
 					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []helium.NodeID{"node-0", "node-2"},
+					Participants: []session.NodeID{"node-0", "node-2"},
 					Aggregator:   "helper",
 				},
 			},

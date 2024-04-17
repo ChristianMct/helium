@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/session"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -15,13 +15,13 @@ var (
 	ctxCircuitID ctxKey = "circuit_id"
 )
 
-func getOutgoingContext(ctx context.Context, senderID helium.NodeID) context.Context {
+func getOutgoingContext(ctx context.Context, senderID session.NodeID) context.Context {
 	md := metadata.New(nil)
 	md.Append("sender_id", string(senderID))
-	if sessID, hasSessID := helium.SessionIDFromContext(ctx); hasSessID {
+	if sessID, hasSessID := session.SessionIDFromContext(ctx); hasSessID {
 		md.Append(string(ctxSessionID), string(sessID))
 	}
-	if circID, hasCircID := helium.CircuitIDFromContext(ctx); hasCircID {
+	if circID, hasCircID := session.CircuitIDFromContext(ctx); hasCircID {
 		md.Append(string(ctxCircuitID), string(circID))
 	}
 	return metadata.NewOutgoingContext(ctx, md)
@@ -34,10 +34,10 @@ func getContextFromIncomingContext(inctx context.Context) (ctx context.Context, 
 		return nil, fmt.Errorf("invalid incoming context: missing session id")
 	}
 
-	ctx = context.WithValue(inctx, helium.CtxSessionID, sid)
+	ctx = context.WithValue(inctx, session.CtxSessionID, sid)
 	cid := circuitIDFromIncomingContext(inctx)
 	if len(cid) != 0 {
-		ctx = context.WithValue(ctx, helium.CtxCircuitID, cid)
+		ctx = context.WithValue(ctx, session.CtxCircuitID, cid)
 	}
 	return
 }
@@ -54,14 +54,14 @@ func valueFromIncomingContext(ctx context.Context, key string) string {
 	return id[0]
 }
 
-func senderIDFromIncomingContext(ctx context.Context) helium.NodeID {
-	return helium.NodeID(valueFromIncomingContext(ctx, "sender_id"))
+func senderIDFromIncomingContext(ctx context.Context) session.NodeID {
+	return session.NodeID(valueFromIncomingContext(ctx, "sender_id"))
 }
 
-func sessionIDFromIncomingContext(ctx context.Context) helium.SessionID {
-	return helium.SessionID(valueFromIncomingContext(ctx, string(ctxSessionID)))
+func sessionIDFromIncomingContext(ctx context.Context) session.SessionID {
+	return session.SessionID(valueFromIncomingContext(ctx, string(ctxSessionID)))
 }
 
-func circuitIDFromIncomingContext(ctx context.Context) helium.CircuitID {
-	return helium.CircuitID(valueFromIncomingContext(ctx, string(ctxCircuitID)))
+func circuitIDFromIncomingContext(ctx context.Context) session.CircuitID {
+	return session.CircuitID(valueFromIncomingContext(ctx, string(ctxCircuitID)))
 }

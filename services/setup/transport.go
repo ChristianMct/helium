@@ -3,8 +3,8 @@ package setup
 import (
 	"context"
 
-	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/session"
 )
 
 // Transport defines the transport interface needed by the setup service.
@@ -28,10 +28,11 @@ func newTestTransport(helperSrv *Service) *testNodeTrans {
 	return &testNodeTrans{TestTransport: protocol.NewTestTransport(), helperSrv: helperSrv}
 }
 
-func (tt *testNodeTrans) TransportFor(nid helium.NodeID) Transport {
+func (tt *testNodeTrans) TransportFor(nid session.NodeID) Transport {
 	if nid == tt.helperSrv.self {
 		return tt
 	}
+
 	ttc := &testNodeTrans{
 		TestTransport: tt.TestTransport.TransportFor(nid),
 		helperSrv:     tt.helperSrv,
