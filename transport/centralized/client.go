@@ -11,7 +11,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
@@ -39,6 +39,21 @@ type HeliumClient struct {
 	*grpc.ClientConn
 	pb.HeliumClient
 	statsHandler
+}
+
+func RunHeliumClient(ctx context.Context, config node.Config, nl helium.NodesList, app node.App, ip compute.InputProvider) (outs <-chan circuit.Output, err error) {
+
+	n, err := node.New(config, nl)
+	if err != nil {
+		return nil, err
+	}
+
+	hc := NewHeliumClient(n, config.HelperID, nl.AddressOf(config.HelperID))
+	if err := hc.Connect(); err != nil {
+		return nil, err
+	}
+
+	return hc.Run(ctx, app, ip)
 }
 
 // NewHeliumClient creates a new helium client.
@@ -128,7 +143,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer Dialer) error {
 // Register registers the client with the helium server and returns a channel for receiving events.
 // It returns the current sequence number for the event log as present. Reading present+1 events
 // from the returned channel will not block for longer than network-introduced delays.
-func (hc *HeliumClient) Register(ctx context.Context) (upstream *coord.Channel[node.Event], present int, err error) {
+func (hc *HeliumClient) Register(ctx context.Context) (upstream *coordinator.Channel[node.Event], present int, err error) {
 	stream, err := hc.HeliumClient.Register(hc.outgoingContext(ctx), &pb.Void{})
 	if err != nil {
 		return nil, 0, err
@@ -154,7 +169,7 @@ func (hc *HeliumClient) Register(ctx context.Context) (upstream *coord.Channel[n
 		}
 	}()
 
-	return &coord.Channel[node.Event]{Incoming: eventsStream}, present, nil
+	return &coordinator.Channel[node.Event]{Incoming: eventsStream}, present, nil
 }
 
 // PutShare sends a share to the helium server.

@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
@@ -102,7 +102,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 
 	test.PeerNodes = test.Nodes[1:]
 
-	test.coordinator = coord.NewTestCoordinator[Event](helperID)
+	test.coordinator = coordinator.NewTestCoordinator[Event](helperID)
 	test.transport = *NewTestTransport(test.HelperNode.id, test.HelperNode.setup, test.HelperNode.compute)
 
 	var ok bool

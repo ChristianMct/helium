@@ -219,7 +219,7 @@ func TestCompute(t *testing.T) {
 				}()
 
 				for out := range outs {
-					testOuts <- struct { // TODO NEXT: something blocks the output
+					testOuts <- struct {
 						helium.NodeID
 						circuit.Output
 					}{helper.id, out}

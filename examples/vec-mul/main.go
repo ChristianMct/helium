@@ -49,8 +49,8 @@ var (
 		SetupConfig:   setup.ServiceConfig{Protocols: protocol.ExecutorConfig{MaxParticipation: 1}},
 		ComputeConfig: compute.ServiceConfig{MaxCircuitEvaluation: 1, Protocols: protocol.ExecutorConfig{MaxParticipation: 1}},
 
-		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},        // use a volatile in-memory store for state
-		TLSConfig:         centralized.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
+		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},   // use a volatile in-memory store for state
+		TLSConfig:         helium.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
 	}
 
 	// the configuration of the helper node. Similar as for peer node, but enables multiple protocol and circuit evaluations at once.
@@ -64,7 +64,7 @@ var (
 		SetupConfig:       setup.ServiceConfig{Protocols: protocol.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
 		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16, Protocols: protocol.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
-		TLSConfig:         centralized.TLSConfig{InsecureChannels: true},
+		TLSConfig:         helium.TLSConfig{InsecureChannels: true},
 	}
 
 	// the node list for the example system
@@ -174,9 +174,17 @@ func main() {
 		}
 	}
 
-	// runs the app on a new node
 	ctx := helium.NewBackgroundContext(config.SessionParameters[0].ID)
-	n, cdescs, outputs, err := node.RunNew(ctx, config, nodelist, app, ip)
+	var cdescs chan<- circuit.Descriptor
+	var outs <-chan circuit.Output
+	var err error
+
+	// runs the app on a new node
+	if nodeID == helperID {
+		cdescs, outs, err = centralized.RunHeliumServer(ctx, config, nodelist, app, ip)
+	} else {
+		outs, err = centralized.RunHeliumClient(ctx, config, nodelist, app, ip)
+	}
 	if err != nil {
 		log.Fatalf("could not run node: %s", err)
 	}
@@ -195,24 +203,22 @@ func main() {
 				"rec":  "helper"},
 			Evaluator: "helper", // the id of the circuit evaluator
 		}
+		close(cdescs) // when no more circuits evaluation are required, the user closes the cdesc channel
 	}
-	close(cdescs) // when no more circuits evaluation are required, the user closes the cdesc channel
 
-	params, err := n.GetParameters(ctx)
+	params, err := bgv.NewParametersFromLiteral(sessionParams.FHEParameters.(bgv.ParametersLiteral))
 	if err != nil {
 		log.Fatalf("%s | [main] error getting session parameters: %v\n", nodeID, err)
 	}
-	encoder := bgv.NewEncoder(params.(bgv.Parameters))
+	encoder := bgv.NewEncoder(params)
 
 	// outputs are received on the outputs channel. The output is a Lattigo rlwe.Plaintext.
-	out, hasOut := <-outputs
-
-	n.Close()
+	out, hasOut := <-outs
 
 	if hasOut {
 		pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
 		pt.IsNTT = true
-		res := make([]uint64, params.(bgv.Parameters).MaxSlots())
+		res := make([]uint64, params.MaxSlots())
 		encoder.Decode(pt, res)
 		fmt.Printf("%v\n", res)
 	}

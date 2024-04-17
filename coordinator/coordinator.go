@@ -1,66 +1,97 @@
 package coordinator
 
 import (
+	"context"
+	"fmt"
+	"sync"
+
 	"github.com/ChristianMct/helium"
 )
 
-// Coordinator defines the interface for a coordinator.
-// A coordinator is a source of incoming events for the
-// coordinated (downstream) component and a sink for outgoing
-// events from the coordinated component.
-type Coordinator interface {
-	Incoming() <-chan Event
-	Outgoing() chan<- Event
+type EventType any
+
+type Log[T EventType] []T
+
+type Channel[T EventType] struct {
+	Incoming <-chan T
+	Outgoing chan<- T
 }
 
-// TestCoordinator is a test implementation of a centralized coordinator
-// that broadcasts its events to all its clients.
-type TestCoordinator struct {
-	incoming, outgoing chan Event
-	clients            map[helium.NodeID]*TestCoordinator
-	done               chan struct{}
+type channel[T EventType] struct {
+	incoming chan T
+	outgoing chan T
 }
 
-// NewTestCoordinator creates a new test coordinator.
-func NewTestCoordinator() *TestCoordinator {
-	tc := &TestCoordinator{incoming: make(chan Event), outgoing: make(chan Event), clients: make(map[helium.NodeID]*TestCoordinator), done: make(chan struct{})}
+func (c *channel[T]) Channel() *Channel[T] {
+	return &Channel[T]{Incoming: c.incoming, Outgoing: c.outgoing}
+}
+
+type Coordinator[T EventType] interface {
+	Register(ctx context.Context) (evChan *Channel[T], present int, err error)
+}
+
+type TestCoordinator[T EventType] struct {
+	hid     helium.NodeID
+	log     Log[T]
+	closed  bool
+	c       channel[T]
+	clients []chan T
+
+	l sync.Mutex
+}
+
+func NewTestCoordinator[T EventType](hid helium.NodeID) *TestCoordinator[T] {
+	tc := &TestCoordinator[T]{hid: hid,
+		log:     make([]T, 0),
+		c:       channel[T]{incoming: make(chan T), outgoing: make(chan T)},
+		clients: make([]chan T, 0)}
 	go func() {
-		for ev := range tc.outgoing {
+		for ev := range tc.c.outgoing {
+			tc.l.Lock()
+			tc.log = append(tc.log, ev)
 			for _, cli := range tc.clients {
-				cli.incoming <- ev
+				cli <- ev
 			}
+			tc.l.Unlock()
 		}
-		//log.Printf("test | closing client upstreams")
+		tc.l.Lock()
+		tc.closed = true
 		for _, cli := range tc.clients {
-			close(cli.incoming)
+			close(cli)
 		}
+		tc.l.Unlock()
 	}()
 	return tc
 }
 
-// NewPeerCoordinator creates a new node coordinator.
-func (tc *TestCoordinator) NewPeerCoordinator(nid helium.NodeID) *TestCoordinator {
-	tcc := &TestCoordinator{incoming: make(chan Event), outgoing: make(chan Event)}
-	tc.clients[nid] = tcc
-	return tcc
+func (tc *TestCoordinator[T]) Close() {
+	close(tc.c.incoming)
 }
 
-// Incoming returns the incoming event channel.
-func (tc *TestCoordinator) Incoming() <-chan Event {
-	return tc.incoming
-}
+func (tc *TestCoordinator[T]) Register(ctx context.Context) (evChan *Channel[T], present int, err error) {
 
-// Outgoing returns the outgoing event channel.
-func (tc *TestCoordinator) Outgoing() chan<- Event {
-	return tc.outgoing
-}
+	tc.l.Lock()
+	defer tc.l.Unlock()
 
-// LogEvent appends a new event to the coordination log.
-func (tc *TestCoordinator) LogEvent(ev Event) {
-	tc.incoming <- ev
-}
+	nid, has := helium.NodeIDFromContext(ctx)
+	if !has {
+		return nil, 0, fmt.Errorf("no node id found in context")
+	}
 
-// Close closes the coordination log.
-func (tc *TestCoordinator) Close() {
-	close(tc.incoming)
+	if nid == tc.hid {
+		return tc.c.Channel(), 0, nil
+	}
+
+	p := len(tc.log)
+	cliC := channel[T]{incoming: make(chan T, p), outgoing: make(chan T)}
+	for _, ev := range tc.log {
+		cliC.incoming <- ev
+	}
+	if tc.closed {
+		close(cliC.incoming)
+	} else {
+		tc.clients = append(tc.clients, cliC.incoming)
+	}
+
+	return cliC.Channel(), p, nil
 }

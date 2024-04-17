@@ -9,7 +9,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
@@ -146,7 +146,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				require.Nil(t, err)
 			}
 
-			tc := coord.NewTestCoordinator[Event](hid)
+			tc := coordinator.NewTestCoordinator[Event](hid)
 			tt := newTestTransport(clou.Service)
 
 			g, ctx := errgroup.WithContext(ctx)
@@ -314,7 +314,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				require.Nil(t, err)
 			}
 
-			tc := coord.NewTestCoordinator[Event](hid)
+			tc := coordinator.NewTestCoordinator[Event](hid)
 			tt := newTestTransport(clou.Service)
 
 			g, ctx := errgroup.WithContext(ctx)

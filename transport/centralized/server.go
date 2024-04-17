@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/services/compute"
@@ -38,7 +39,7 @@ type HeliumServer struct {
 	incomingShares chan protocol.Share
 
 	// event log
-	events       coord.Log[node.Event]
+	events       coordinator.Log[node.Event]
 	eventsClosed bool
 	eventsMu     sync.RWMutex
 
@@ -50,6 +51,25 @@ type HeliumServer struct {
 	*grpc.Server
 	*pb.UnimplementedHeliumServer
 	statsHandler
+}
+
+func RunHeliumServer(ctx context.Context, config node.Config, nl helium.NodesList, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+
+	helperNode, err := node.New(config, nl)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	hsv := NewHeliumServer(helperNode)
+
+	lis, err := net.Listen("tcp", string(config.Address))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	go hsv.Serve(lis)
+
+	return hsv.Run(ctx, app, ip)
 }
 
 // NewHeliumServer creates a new helium server with the provided node information and handlers.
@@ -97,7 +117,7 @@ type nodeCoordinator struct {
 	*HeliumServer
 }
 
-func (nc *nodeCoordinator) Register(ctx context.Context) (evChan *coord.Channel[node.Event], present int, err error) {
+func (nc *nodeCoordinator) Register(ctx context.Context) (evChan *coordinator.Channel[node.Event], present int, err error) {
 	outgoing := make(chan node.Event)
 
 	go func() {
@@ -108,7 +128,7 @@ func (nc *nodeCoordinator) Register(ctx context.Context) (evChan *coord.Channel[
 		nc.CloseEventLog()
 	}()
 
-	return &coord.Channel[node.Event]{Outgoing: outgoing}, 0, nil
+	return &coordinator.Channel[node.Event]{Outgoing: outgoing}, 0, nil
 }
 
 type nodeTransport struct {

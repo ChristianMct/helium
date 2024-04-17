@@ -9,7 +9,7 @@ import (
 	"log"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
@@ -43,7 +43,7 @@ type Event struct {
 	protocol.Event
 }
 
-type Coordinator coord.Coordinator[Event]
+type Coordinator coordinator.Coordinator[Event]
 
 // NewSetupService creates a new setup service.
 func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf ServiceConfig, backend objectstore.ObjectStore) (s *Service, err error) {
@@ -55,7 +55,7 @@ func NewSetupService(ownID helium.NodeID, sessions session.SessionProvider, conf
 	s.incoming = make(chan protocol.Event)
 	s.outgoing = make(chan protocol.Event)
 
-	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
+	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coordinator.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
 	if err != nil {
 		return nil, err
 	}

@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"golang.org/x/sync/errgroup"
@@ -33,7 +33,7 @@ type Executor struct {
 
 	sessions      session.SessionProvider
 	transport     Transport
-	upstream      *coord.Channel[Event]
+	upstream      *coordinator.Channel[Event]
 	inputProvider InputProvider
 
 	// node tracking
@@ -142,7 +142,7 @@ func (ev Event) IsComputeEvent() bool {
 }
 
 // NewExectutor creates a new executor.
-func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, upstream *coord.Channel[Event], ip InputProvider) (*Executor, error) {
+func NewExectutor(config ExecutorConfig, ownID helium.NodeID, sessions session.SessionProvider, upstream *coordinator.Channel[Event], ip InputProvider) (*Executor, error) {
 	s := new(Executor)
 	s.config = config
 	if s.config.SigQueueSize == 0 {

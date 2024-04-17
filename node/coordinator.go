@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
 )
@@ -22,7 +22,7 @@ func (ev Event) IsSetup() bool {
 	return ev.SetupEvent != nil
 }
 
-type Coordinator coord.Coordinator[Event]
+type Coordinator coordinator.Coordinator[Event]
 
 type setupCoordinator struct {
 	incoming, outgoing chan setup.Event
@@ -119,16 +119,16 @@ func newServicesCoordinator(ctx context.Context, upstream Coordinator) (*Service
 	return sc, nil
 }
 
-func (sc setupCoordinator) Register(ctx context.Context) (evChan *coord.Channel[setup.Event], present int, err error) {
-	evChan = &coord.Channel[setup.Event]{
+func (sc setupCoordinator) Register(ctx context.Context) (evChan *coordinator.Channel[setup.Event], present int, err error) {
+	evChan = &coordinator.Channel[setup.Event]{
 		Incoming: sc.incoming,
 		Outgoing: sc.outgoing,
 	}
 	return evChan, len(sc.incoming), nil
 }
 
-func (sc computeCoordinator) Register(ctx context.Context) (evChan *coord.Channel[compute.Event], present int, err error) {
-	evChan = &coord.Channel[compute.Event]{
+func (sc computeCoordinator) Register(ctx context.Context) (evChan *coordinator.Channel[compute.Event], present int, err error) {
+	evChan = &coordinator.Channel[compute.Event]{
 		Incoming: sc.incoming,
 		Outgoing: sc.outgoing,
 	}

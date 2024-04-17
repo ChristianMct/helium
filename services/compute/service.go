@@ -12,7 +12,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuit"
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/session"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -103,7 +103,7 @@ type Event struct {
 	ProtocolEvent *protocol.Event
 }
 
-type Coordinator coord.Coordinator[Event]
+type Coordinator coordinator.Coordinator[Event]
 
 // Service represents a compute service instance.
 type Service struct {
@@ -163,7 +163,7 @@ func NewComputeService(ownID helium.NodeID, sessions session.SessionProvider, co
 
 	s.self = ownID
 	s.sessions = sessions
-	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coord.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
+	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coordinator.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +595,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuit.Descriptor) (err
 	return
 }
 
-func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor, upstreamChan coord.Channel[Event]) (err error) {
+func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor, upstreamChan coordinator.Channel[Event]) (err error) {
 
 	s.runningCircuitsMu.RLock()
 	cinst, has := s.runningCircuits[cd.CircuitID]
@@ -636,7 +636,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor, upstrea
 	return err
 }
 
-func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, ev CircuitRuntime, md circuit.Metadata, upstreamChan coord.Channel[Event]) (err error) {
+func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, ev CircuitRuntime, md circuit.Metadata, upstreamChan coordinator.Channel[Event]) (err error) {
 	cd := md.Descriptor
 	s.Logf("started circuit %s as evaluator", cd.CircuitID)
 

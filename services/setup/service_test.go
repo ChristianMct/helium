@@ -5,7 +5,7 @@ import (
 	"log"
 	"testing"
 
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocol"
 	"github.com/ChristianMct/helium/utils"
@@ -112,7 +112,7 @@ func TestSetup(t *testing.T) {
 				}
 
 				all, _, clou := getNodes(t, ts, testSess)
-				tc := coord.NewTestCoordinator[Event](hid)
+				tc := coordinator.NewTestCoordinator[Event](hid)
 				tt := newTestTransport(clou.Service)
 
 				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
@@ -170,7 +170,7 @@ func TestSetupLateConnect(t *testing.T) {
 				for _, node := range cli {
 					clis = append(clis, node)
 				}
-				tc := coord.NewTestCoordinator[Event](hid)
+				tc := coordinator.NewTestCoordinator[Event](hid)
 				tt := newTestTransport(clou.Service)
 
 				ctx := helium.NewBackgroundContext(testSess.SessParams.ID)
@@ -228,7 +228,7 @@ func TestSetupRetries(t *testing.T) {
 	}
 
 	all, cli, clou := getNodes(t, ts, testSess)
-	tc := coord.NewTestCoordinator[Event](hid)
+	tc := coordinator.NewTestCoordinator[Event](hid)
 	tt := newTestTransport(clou.Service)
 
 	ctx := helium.NewBackgroundContext(testSess.SessParams.ID)

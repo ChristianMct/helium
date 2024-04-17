@@ -59,20 +59,24 @@ Here is an overview of an Helium application:
 
   ctx, config, nodelist := // ... (omitted config, usually loaded from files or command-line flags)
 
-  n, cdescs, outputs, err := node.RunNew(ctx, config, nodelist, app, inputProvider) // create an helium node that runs the app
-  if err != nil {
-    log.Fatal(err)
-  }
-
-  // cdesc is a channel to send circuit evaluation request(s)
-  cdescs <- circuits.Descriptor{
-    Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")}, // evaluates circuit "mul-4-dec"
-    CircuitID:   "mul-4-dec-0",                                        // as circuit  "mul-4-dec-0"
-    // ... other runtime-specific info 
-  }
-
-  // outputs is a channel to recieve the evaluation(s) output(s)
-  out <- outputs 
+  var cdescs chan<- circuit.Descriptor
+	var outs <-chan circuit.Output
+	if nodeID == helperID {
+    // the helper runs the server-side of helium
+		cdescs, outs, err = centralized.RunHeliumServer(ctx, config, nodelist, app, inputProvider)
+    
+    // cdesc is a channel to send circuit evaluation request(s)
+    cdescs <- circuits.Descriptor{
+      Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")}, // evaluates circuit "mul-4-dec"
+      CircuitID:   "mul-4-dec-0",                                        // as circuit  "mul-4-dec-0"
+      // ... other runtime-specific info 
+      }
+	} else {
+    // non-helper nodes run the client side
+		outs, err = centralized.RunHeliumClient(ctx, config, nodelist, app, inputProvider)
+	}
+  // outs is a channel to recieve the evaluation(s) output(s)
+  out <- outs 
   // ... 
 ```
 

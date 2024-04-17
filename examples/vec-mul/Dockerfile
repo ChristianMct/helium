@@ -1,7 +1,7 @@
 #########################################
 #  Builder                              #
 #########################################
-FROM golang:1.22 as builder
+FROM golang:latest as builder
 
 ARG APP=examples/vec-mul/
 

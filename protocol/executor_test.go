@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/coord"
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/session"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ func TestExecutor(t *testing.T) {
 
 			executors := make(map[helium.NodeID]*Executor, len(nids))
 			testTrans := NewTestTransport()
-			testCoord := coord.NewTestCoordinator[Event](hid)
+			testCoord := coordinator.NewTestCoordinator[Event](hid)
 
 			ct := testSess.Encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
 			rkg1Done := make(chan struct{})

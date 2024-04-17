@@ -56,8 +56,11 @@ func ValidateConfig(config Config, nl helium.NodesList) error {
 	if len(config.HelperID) == 0 {
 		return fmt.Errorf("config must specify a helper ID")
 	}
+	if len(nl) == 0 {
+		return fmt.Errorf("node list is empty or nil")
+	}
 	if nl.AddressOf(config.HelperID) == "" {
-		return fmt.Errorf("helper ID not found in the node list")
+		return fmt.Errorf("helper ID `%s` not found in the node list", config.HelperID)
 	}
 	return nil
 }

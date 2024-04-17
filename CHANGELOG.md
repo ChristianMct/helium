@@ -6,6 +6,7 @@ This file contains a log of the main changes made to the framework.
 
 ### Added
 - CKKS-based sessions
+- Protocol retries
 
 ### Changed
 - The `session.Parameters` type now has an interface type field `FHEParameters` for specifiying the FHE scheme parameters. Currently,
