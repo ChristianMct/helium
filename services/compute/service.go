@@ -10,11 +10,11 @@ import (
 	"log"
 	"sync"
 
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
@@ -32,7 +32,7 @@ type Encoder interface {
 // FHEProvider is an interface for requesting FHE-related objects as implemented
 // in the Lattigo library.
 type FHEProvider interface {
-	GetParameters(ctx context.Context) (session.FHEParameters, error)
+	GetParameters(ctx context.Context) (sessions.FHEParameters, error)
 	GetEncoder(ctx context.Context) (Encoder, error)
 	GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error)
 	// GetEvaluator(ctx context.Context, rlk bool, galEls []uint64) (*fheEvaluator, error)
@@ -46,22 +46,22 @@ type FHEProvider interface {
 //     and recieve outputs.
 type CircuitRuntime interface {
 	// Init provides the circuit runtime with the circuit's metadata.
-	Init(ctx context.Context, md circuit.Metadata) (err error)
+	Init(ctx context.Context, md circuits.Metadata) (err error)
 
 	// Eval runs the circuit evaluation, given the circuit.
-	Eval(ctx context.Context, c circuit.Circuit) (err error)
+	Eval(ctx context.Context, c circuits.Circuit) (err error)
 
 	// IncomingOperand provides the circuit runtime with an incoming operand.
-	IncomingOperand(circuit.Operand) error
+	IncomingOperand(circuits.Operand) error
 
 	// CompletedProtocol informs the circuit runtime that a protocol has been completed.
-	CompletedProtocol(protocol.Descriptor) error
+	CompletedProtocol(protocols.Descriptor) error
 
 	// GetOperand returns the operand with the given label, if it exists.
-	GetOperand(context.Context, circuit.OperandLabel) (*circuit.Operand, bool)
+	GetOperand(context.Context, circuits.OperandLabel) (*circuits.Operand, bool)
 
 	// GetFutureOperand returns the future operand with the given label, if it exists.
-	GetFutureOperand(context.Context, circuit.OperandLabel) (*circuit.FutureOperand, bool)
+	GetFutureOperand(context.Context, circuits.OperandLabel) (*circuits.FutureOperand, bool)
 
 	// Wait blocks until the circuit executing in this runtime (including its related protocols) completes.
 	Wait() error
@@ -74,15 +74,15 @@ type CircuitRuntime interface {
 // - *rlwe.Ciphertext: an encrypted input
 // - *rlwe.Plaintext: a Lattigo plaintext input, which will be encrypted by the framework
 // - []uint64: a Go plaintext input, which will be encoded and encrypted by the framework
-type InputProvider func(context.Context, session.CircuitID, circuit.OperandLabel, session.Session) (any, error)
+type InputProvider func(context.Context, sessions.CircuitID, circuits.OperandLabel, sessions.Session) (any, error)
 
 // NoInput is an input provider that returns nil for all inputs.
-var NoInput InputProvider = func(_ context.Context, _ session.CircuitID, _ circuit.OperandLabel, _ session.Session) (any, error) {
+var NoInput InputProvider = func(_ context.Context, _ sessions.CircuitID, _ circuits.OperandLabel, _ sessions.Session) (any, error) {
 	return nil, nil
 }
 
 // OutputReceiver is a type for receiving outputs from a circuit.
-type OutputReceiver chan<- circuit.Output
+type OutputReceiver chan<- circuits.Output
 
 // NoOutput is an output receiver that do not send any input
 var NoOutput OutputReceiver = make(OutputReceiver)
@@ -95,12 +95,12 @@ type ServiceConfig struct {
 	// MaxCircuitEvaluation is the maximum number of circuits that can be evaluated concurrently.
 	MaxCircuitEvaluation int
 	// Protocols is the configuration of the protocol executor.
-	Protocols protocol.ExecutorConfig
+	Protocols protocols.ExecutorConfig
 }
 
 type Event struct {
-	CircuitEvent  *circuit.Event
-	ProtocolEvent *protocol.Event
+	CircuitEvent  *circuits.Event
+	ProtocolEvent *protocols.Event
 }
 
 type Coordinator coordinator.Coordinator[Event]
@@ -108,34 +108,34 @@ type Coordinator coordinator.Coordinator[Event]
 // Service represents a compute service instance.
 type Service struct {
 	config ServiceConfig
-	self   session.NodeID
+	self   sessions.NodeID
 
-	sessions session.SessionProvider
-	*protocol.Executor
+	sessProvider sessions.Provider
+	*protocols.Executor
 	transport Transport
 
-	pubkeyBackend circuit.PublicKeyProvider
+	pubkeyBackend circuits.PublicKeyProvider
 
 	inputProvider InputProvider
-	localOutputs  chan circuit.Output
+	localOutputs  chan circuits.Output
 
 	outputsMu sync.RWMutex
-	outputs   map[circuit.OperandLabel]*circuit.Operand
+	outputs   map[circuits.OperandLabel]*circuits.Operand
 
-	queuedCircuits chan circuit.Descriptor
+	queuedCircuits chan circuits.Descriptor
 
 	runningCircuitsMu sync.RWMutex
-	runningCircuits   map[session.CircuitID]CircuitRuntime
+	runningCircuits   map[sessions.CircuitID]CircuitRuntime
 
-	completedCircuits chan circuit.Descriptor
+	completedCircuits chan circuits.Descriptor
 
 	// upstream coordinator
 
 	// downstream coordinator
-	incoming, outgoing chan protocol.Event
+	incoming, outgoing chan protocols.Event
 
 	// circuit library
-	library map[circuit.Name]circuit.Circuit
+	library map[circuits.Name]circuits.Circuit
 }
 
 const (
@@ -146,7 +146,7 @@ const (
 )
 
 // NewComputeService creates a new compute service instance.
-func NewComputeService(ownID session.NodeID, sessions session.SessionProvider, conf ServiceConfig, pkbk circuit.PublicKeyProvider) (s *Service, err error) {
+func NewComputeService(ownID sessions.NodeID, sessProv sessions.Provider, conf ServiceConfig, pkbk circuits.PublicKeyProvider) (s *Service, err error) {
 	s = new(Service)
 
 	s.config = conf
@@ -158,35 +158,35 @@ func NewComputeService(ownID session.NodeID, sessions session.SessionProvider, c
 	}
 
 	// coordinator
-	s.incoming = make(chan protocol.Event)
-	s.outgoing = make(chan protocol.Event)
+	s.incoming = make(chan protocols.Event)
+	s.outgoing = make(chan protocols.Event)
 
 	s.self = ownID
-	s.sessions = sessions
-	s.Executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coordinator.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
+	s.sessProvider = sessProv
+	s.Executor, err = protocols.NewExectutor(conf.Protocols, s.self, sessProv, &coordinator.Channel[protocols.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
 	if err != nil {
 		return nil, err
 	}
 
-	s.pubkeyBackend = session.NewCachedPublicKeyBackend(pkbk)
+	s.pubkeyBackend = sessions.NewCachedPublicKeyBackend(pkbk)
 
-	s.queuedCircuits = make(chan circuit.Descriptor, conf.CircQueueSize)
+	s.queuedCircuits = make(chan circuits.Descriptor, conf.CircQueueSize)
 
-	s.runningCircuits = make(map[session.CircuitID]CircuitRuntime)
+	s.runningCircuits = make(map[sessions.CircuitID]CircuitRuntime)
 
 	//s.running = make(chan struct{})
 
-	s.localOutputs = make(chan circuit.Output)
-	s.outputs = make(map[circuit.OperandLabel]*circuit.Operand)
+	s.localOutputs = make(chan circuits.Output)
+	s.outputs = make(map[circuits.OperandLabel]*circuits.Operand)
 
 	return s, nil
 }
 
 // RegisterCircuit registers a circuit to the service's library.
 // It returns an error if the circuit is already registered.
-func (s *Service) RegisterCircuit(name circuit.Name, circ circuit.Circuit) error {
+func (s *Service) RegisterCircuit(name circuits.Name, circ circuits.Circuit) error {
 	if s.library == nil {
-		s.library = make(map[circuit.Name]circuit.Circuit)
+		s.library = make(map[circuits.Name]circuits.Circuit)
 	}
 	if _, has := s.library[name]; has {
 		return fmt.Errorf("circuit name \"%s\" already registered", name)
@@ -197,7 +197,7 @@ func (s *Service) RegisterCircuit(name circuit.Name, circ circuit.Circuit) error
 
 // RegisterCircuits registers a set of circuits to the service's library.
 // It returns an error if any of the circuits is already registered.
-func (s *Service) RegisterCircuits(cs map[circuit.Name]circuit.Circuit) error {
+func (s *Service) RegisterCircuits(cs map[circuits.Name]circuits.Circuit) error {
 	for cn, c := range cs {
 		if err := s.RegisterCircuit(cn, c); err != nil {
 			return err
@@ -206,34 +206,34 @@ func (s *Service) RegisterCircuits(cs map[circuit.Name]circuit.Circuit) error {
 	return nil
 }
 
-func recoverPresentState(events <-chan Event, present int) (completedProto, failedProto, runningProto []protocol.Descriptor, completedCirc, failedCirc, runningCirc []circuit.Descriptor, err error) {
+func recoverPresentState(events <-chan Event, present int) (completedProto, failedProto, runningProto []protocols.Descriptor, completedCirc, failedCirc, runningCirc []circuits.Descriptor, err error) {
 
 	if present == 0 {
 		return
 	}
 
 	var current int
-	runProto := make(map[protocol.ID]protocol.Descriptor)
-	runCircuit := make(map[session.CircuitID]circuit.Descriptor)
+	runProto := make(map[protocols.ID]protocols.Descriptor)
+	runCircuit := make(map[sessions.CircuitID]circuits.Descriptor)
 	for ev := range events {
 
 		if ev.CircuitEvent != nil {
 			cid := ev.CircuitEvent.CircuitID
 			switch ev.CircuitEvent.EventType {
-			case circuit.Started:
+			case circuits.Started:
 				runCircuit[cid] = ev.CircuitEvent.Descriptor
-			case circuit.Executing:
+			case circuits.Executing:
 				if _, has := runCircuit[cid]; !has {
 					err = fmt.Errorf("inconsisted state, circuit %s execution event before start", cid)
 					return
 				}
-			case circuit.Completed, circuit.Failed:
+			case circuits.Completed, circuits.Failed:
 				if _, has := runCircuit[cid]; !has {
 					err = fmt.Errorf("inconsisted state, circuit %s termination event before start", cid)
 					return
 				}
 				delete(runCircuit, cid)
-				if ev.CircuitEvent.EventType == circuit.Completed {
+				if ev.CircuitEvent.EventType == circuits.Completed {
 					completedCirc = append(completedCirc, ev.CircuitEvent.Descriptor)
 				} else {
 					failedCirc = append(failedCirc, ev.CircuitEvent.Descriptor)
@@ -244,20 +244,20 @@ func recoverPresentState(events <-chan Event, present int) (completedProto, fail
 		if ev.ProtocolEvent != nil {
 			pid := ev.ProtocolEvent.ID()
 			switch ev.ProtocolEvent.EventType {
-			case protocol.Started:
+			case protocols.Started:
 				runProto[pid] = ev.ProtocolEvent.Descriptor
-			case protocol.Executing:
+			case protocols.Executing:
 				if _, has := runProto[pid]; !has {
 					err = fmt.Errorf("inconsisted state, protocol %s execution event before start", ev.ProtocolEvent.HID())
 					return
 				}
-			case protocol.Completed, protocol.Failed:
+			case protocols.Completed, protocols.Failed:
 				if _, has := runProto[pid]; !has {
 					err = fmt.Errorf("inconsisted state, protocol %s termination event before start", ev.ProtocolEvent.HID())
 					return
 				}
 				delete(runProto, pid)
-				if ev.ProtocolEvent.EventType == protocol.Completed {
+				if ev.ProtocolEvent.EventType == protocols.Completed {
 					completedProto = append(completedProto, ev.ProtocolEvent.Descriptor)
 				} else {
 					failedProto = append(failedProto, ev.ProtocolEvent.Descriptor)
@@ -292,7 +292,7 @@ func (s *Service) init(ctx context.Context, upstreamInc <-chan Event, present in
 	}
 
 	// stacks the completed circuit in a queue for processing by Run
-	s.completedCircuits = make(chan circuit.Descriptor, len(complCd))
+	s.completedCircuits = make(chan circuits.Descriptor, len(complCd))
 	for _, ccd := range complCd {
 		s.completedCircuits <- ccd
 	}
@@ -322,7 +322,7 @@ func (s *Service) init(ctx context.Context, upstreamInc <-chan Event, present in
 		if !rpd.Signature.Type.IsCompute() {
 			continue
 		}
-		s.incoming <- protocol.Event{EventType: protocol.Started, Descriptor: rpd}
+		s.incoming <- protocols.Event{EventType: protocols.Started, Descriptor: rpd}
 	}
 
 	s.Logf("service initialized protocols with %d completed, %d failed and %d running (present=%d)", len(complPd), len(failPd), len(runPd), present)
@@ -342,7 +342,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	s.transport = trans
 	s.inputProvider = ip
 
-	serviceCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), services.CtxKeyName, "compute"))
+	serviceCtx, cancelRunCtx := context.WithCancel(context.WithValue(sessions.ContextWithNodeID(ctx, s.self), services.CtxKeyName, "compute"))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator
@@ -367,25 +367,25 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					panic(fmt.Errorf("no registered circuit for name \"%s\"", cd.Name))
 				}
 
-				sess, has := s.sessions.GetSessionFromContext(serviceCtx)
+				sess, has := s.sessProvider.GetSessionFromContext(serviceCtx)
 				if !has {
 					panic(fmt.Errorf("could not retrieve session from the context"))
 				}
 
 				params := sess.Params
 
-				cinf, err := circuit.Parse(c, cd, params)
+				cinf, err := circuits.Parse(c, cd, params)
 				if err != nil {
 					panic(err)
 				}
 
 				for opl := range cinf.OutputsFor[s.self] {
-					ct, err := s.transport.GetCiphertext(serviceCtx, session.CiphertextID(opl))
+					ct, err := s.transport.GetCiphertext(serviceCtx, sessions.CiphertextID(opl))
 					if err != nil {
 						panic(err)
 					}
 
-					or <- circuit.Output{CircuitID: cd.CircuitID, Operand: circuit.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}}
+					or <- circuits.Output{CircuitID: cd.CircuitID, Operand: circuits.Operand{OperandLabel: opl, Ciphertext: &ct.Ciphertext}}
 				}
 			}
 		} else {
@@ -425,7 +425,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 				s.incoming <- pev
 
 				switch pev.EventType {
-				case protocol.Completed:
+				case protocols.Completed:
 					if err := s.sendCompletedPdToCircuit(pev.Descriptor); err != nil {
 						panic(err)
 					}
@@ -437,13 +437,13 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 			cev := *ev.CircuitEvent
 			s.Logf("new coordination event: CIRCUIT %s", cev)
 			switch ev.CircuitEvent.EventType {
-			case circuit.Started:
+			case circuits.Started:
 				err := s.createCircuit(serviceCtx, cev.Descriptor)
 				if err != nil {
 					panic(err)
 				}
 				s.queuedCircuits <- cev.Descriptor
-			case circuit.Completed, circuit.Failed:
+			case circuits.Completed, circuits.Failed:
 				s.runningCircuitsMu.Lock()
 				delete(s.runningCircuits, ev.CircuitEvent.CircuitID)
 				s.runningCircuitsMu.Unlock()
@@ -460,13 +460,13 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 			pev := pev
 			upstreamChan.Outgoing <- Event{ProtocolEvent: &pev}
 
-			if pev.EventType == protocol.Completed {
+			if pev.EventType == protocols.Completed {
 				opls, has := pev.Signature.Args["op"]
 				if !has {
 					panic("no op argument in circuit protocol event")
 				}
 
-				opl := circuit.OperandLabel(opls)
+				opl := circuits.OperandLabel(opls)
 				cid := opl.CircuitID()
 
 				s.runningCircuitsMu.RLock()
@@ -511,13 +511,13 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	return nil
 }
 
-func (s *Service) sendCompletedPdToCircuit(pd protocol.Descriptor) error {
+func (s *Service) sendCompletedPdToCircuit(pd protocols.Descriptor) error {
 	opls, has := pd.Signature.Args["op"]
 	if !has {
 		panic("no op argument in circuit protocol event")
 	}
 
-	opl := circuit.OperandLabel(opls)
+	opl := circuits.OperandLabel(opls)
 	cid := opl.CircuitID()
 
 	s.runningCircuitsMu.RLock()
@@ -532,7 +532,7 @@ func (s *Service) sendCompletedPdToCircuit(pd protocol.Descriptor) error {
 
 // validateCircuitDescriptor checks that a circuit descriptor is valid and can be executed by
 // the service.
-func (s *Service) validateCircuitDescriptor(cd circuit.Descriptor) error {
+func (s *Service) validateCircuitDescriptor(cd circuits.Descriptor) error {
 	if len(cd.CircuitID) == 0 {
 		return fmt.Errorf("circuit descriptor has no id")
 	}
@@ -549,9 +549,9 @@ func (s *Service) validateCircuitDescriptor(cd circuit.Descriptor) error {
 	return nil
 }
 
-func (s *Service) createCircuit(ctx context.Context, cd circuit.Descriptor) (err error) {
+func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (err error) {
 	var cr CircuitRuntime
-	sess, has := s.sessions.GetSessionFromContext(ctx) // put session unwrap earlier
+	sess, has := s.sessProvider.GetSessionFromContext(ctx) // put session unwrap earlier
 	if !has {
 		return fmt.Errorf("session not found from context")
 	}
@@ -578,7 +578,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuit.Descriptor) (err
 			or:            s.localOutputs,
 			trans:         s.transport,
 			fheProvider:   s,
-			incpd:         make(chan protocol.Descriptor, 100), // TODO: not ideal
+			incpd:         make(chan protocols.Descriptor, 100), // TODO: not ideal
 		}
 
 	}
@@ -595,7 +595,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuit.Descriptor) (err
 	return
 }
 
-func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor, upstreamChan coordinator.Channel[Event]) (err error) {
+func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor, upstreamChan coordinator.Channel[Event]) (err error) {
 
 	s.runningCircuitsMu.RLock()
 	cinst, has := s.runningCircuits[cd.CircuitID]
@@ -609,14 +609,14 @@ func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor, upstrea
 		return fmt.Errorf("no registered circuit for name \"%s\"", cd.Name)
 	}
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProvider.GetSessionFromContext(ctx)
 	if !has {
 		return fmt.Errorf("could not retrieve session from the context")
 	}
 
 	params := sess.Params
 
-	cinf, err := circuit.Parse(c, cd, params)
+	cinf, err := circuits.Parse(c, cd, params)
 	if err != nil {
 		return err
 	}
@@ -636,11 +636,11 @@ func (s *Service) runCircuit(ctx context.Context, cd circuit.Descriptor, upstrea
 	return err
 }
 
-func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, ev CircuitRuntime, md circuit.Metadata, upstreamChan coordinator.Channel[Event]) (err error) {
+func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuits.Circuit, ev CircuitRuntime, md circuits.Metadata, upstreamChan coordinator.Channel[Event]) (err error) {
 	cd := md.Descriptor
 	s.Logf("started circuit %s as evaluator", cd.CircuitID)
 
-	upstreamChan.Outgoing <- Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
+	upstreamChan.Outgoing <- Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}}
 
 	err = ev.Eval(ctx, c)
 	if err != nil {
@@ -662,10 +662,10 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, 
 		if !has {
 			panic(fmt.Errorf("circuit instance has no output label %s", outLabel))
 		}
-		s.localOutputs <- circuit.Output{CircuitID: cd.CircuitID, Operand: *fop}
+		s.localOutputs <- circuits.Output{CircuitID: cd.CircuitID, Operand: *fop}
 	}
 
-	upstreamChan.Outgoing <- Event{CircuitEvent: &circuit.Event{EventType: circuit.Completed, Descriptor: cd}}
+	upstreamChan.Outgoing <- Event{CircuitEvent: &circuits.Event{EventType: circuits.Completed, Descriptor: cd}}
 
 	s.runningCircuitsMu.Lock()
 	delete(s.runningCircuits, cd.CircuitID)
@@ -677,7 +677,7 @@ func (s *Service) runCircuitAsEvaluator(ctx context.Context, c circuit.Circuit, 
 	return nil
 }
 
-func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuit.Circuit, part CircuitRuntime, md circuit.Metadata) error {
+func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuits.Circuit, part CircuitRuntime, md circuits.Metadata) error {
 
 	s.Logf("started circuit %s as participant, has input: %v, has output: %v", md.Descriptor.CircuitID, s.isInputProvider(md), s.isOutputReceiver(md))
 
@@ -692,7 +692,7 @@ func (s *Service) runCircuitAsParticipant(ctx context.Context, c circuit.Circuit
 	return nil
 }
 
-func (s *Service) EvalCircuit(ctx context.Context, cd circuit.Descriptor) error {
+func (s *Service) EvalCircuit(ctx context.Context, cd circuits.Descriptor) error {
 	err := s.createCircuit(ctx, cd)
 	if err != nil {
 		return err
@@ -704,7 +704,7 @@ func (s *Service) EvalCircuit(ctx context.Context, cd circuit.Descriptor) error 
 // KeyOperationRunner interface
 
 // RunKeyOperation runs a key operation (e.g. key switching) on the service's executor.
-func (s *Service) RunKeyOperation(ctx context.Context, sig protocol.Signature) (err error) {
+func (s *Service) RunKeyOperation(ctx context.Context, sig protocols.Signature) (err error) {
 	err = s.Executor.RunSignature(ctx, sig, s.AggregationOutputHandler)
 	return err
 }
@@ -713,9 +713,9 @@ func (s *Service) RunKeyOperation(ctx context.Context, sig protocol.Signature) (
 
 // GetCiphertext retreives a ciphertext from the corresponding circuit runtime.
 // The runtime is identified by the circuit ID part of the ciphertext ids.
-func (s *Service) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
+func (s *Service) GetCiphertext(ctx context.Context, ctID sessions.CiphertextID) (*sessions.Ciphertext, error) {
 
-	_, exists := s.sessions.GetSessionFromContext(ctx)
+	_, exists := s.sessProvider.GetSessionFromContext(ctx)
 	if !exists {
 		return nil, fmt.Errorf("invalid session id")
 	}
@@ -729,16 +729,16 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID session.CiphertextID) 
 		return nil, fmt.Errorf("non-local ciphertext id")
 	}
 
-	cid := session.CircuitID(ctURL.CircuitID())
+	cid := sessions.CircuitID(ctURL.CircuitID())
 	if len(cid) == 0 {
 		return nil, fmt.Errorf("ciphertext label does not include a circuit ID")
 	}
 
-	var ct *session.Ciphertext
-	var op *circuit.Operand
+	var ct *sessions.Ciphertext
+	var op *circuits.Operand
 	var isOutput, isInCircuit bool
 	s.outputsMu.RLock()
-	op, isOutput = s.outputs[circuit.OperandLabel(ctID)]
+	op, isOutput = s.outputs[circuits.OperandLabel(ctID)]
 	s.outputsMu.RUnlock()
 	if !isOutput {
 		s.runningCircuitsMu.RLock()
@@ -747,24 +747,24 @@ func (s *Service) GetCiphertext(ctx context.Context, ctID session.CiphertextID) 
 		if !envExists {
 			return nil, fmt.Errorf("%s is not an output and circuit %s is not running", ctID, ctURL.CircuitID())
 		}
-		op, isInCircuit = evalCtx.GetOperand(ctx, circuit.OperandLabel(ctURL.String()))
+		op, isInCircuit = evalCtx.GetOperand(ctx, circuits.OperandLabel(ctURL.String()))
 	}
 
 	if !isOutput && !isInCircuit {
 		return nil, fmt.Errorf("ciphertext with id %s not found for circuit %s", ctID, ctURL.CircuitID())
 	}
 
-	ct = &session.Ciphertext{Ciphertext: *op.Ciphertext}
+	ct = &sessions.Ciphertext{Ciphertext: *op.Ciphertext}
 	return ct, nil
 }
 
 // PutCiphertext provides the ciphertext to the corresponding circuit runtime.
 // The runtime is identified by the circuit ID part of the ciphertext ids.
-func (s *Service) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
+func (s *Service) PutCiphertext(ctx context.Context, ct sessions.Ciphertext) error {
 
-	_, exists := s.sessions.GetSessionFromContext(ctx)
+	_, exists := s.sessProvider.GetSessionFromContext(ctx)
 	if !exists {
-		sessid, _ := session.IDFromContext(ctx)
+		sessid, _ := sessions.IDFromContext(ctx)
 		return fmt.Errorf("invalid session id \"%s\"", sessid)
 	}
 
@@ -773,7 +773,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct session.Ciphertext) erro
 		return fmt.Errorf("invalid ciphertext id \"%s\": %w", ct.ID, err)
 	}
 
-	cid := session.CircuitID(ctURL.CircuitID())
+	cid := sessions.CircuitID(ctURL.CircuitID())
 
 	if len(cid) == 0 {
 		return fmt.Errorf("ciphertext label does not include a circuit ID")
@@ -786,7 +786,7 @@ func (s *Service) PutCiphertext(ctx context.Context, ct session.Ciphertext) erro
 		return fmt.Errorf("for unknown circuit %s", cid)
 	}
 
-	op := circuit.Operand{OperandLabel: circuit.OperandLabel(ct.ID), Ciphertext: &ct.Ciphertext}
+	op := circuits.Operand{OperandLabel: circuits.OperandLabel(ct.ID), Ciphertext: &ct.Ciphertext}
 	err = c.IncomingOperand(op)
 	if err != nil {
 		return err
@@ -798,13 +798,13 @@ func (s *Service) PutCiphertext(ctx context.Context, ct session.Ciphertext) erro
 }
 
 // AggregationOutputHandler recieves the completed protocol aggregations from the executor.
-func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocol.AggregationOutput) error {
+func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocols.AggregationOutput) error {
 	c, err := s.getCircuitFromContext(ctx)
 	if err != nil {
 		return err
 	}
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProvider.GetSessionFromContext(ctx)
 	if !has {
 		return fmt.Errorf("no session found for this context")
 	}
@@ -814,14 +814,14 @@ func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocol.
 		return fmt.Errorf("invalid aggregation output: descriptor does not provide input operand label")
 	}
 
-	outOpl := keyOpOutputLabel(circuit.OperandLabel(inOpl), aggOut.Descriptor.Signature)
+	outOpl := keyOpOutputLabel(circuits.OperandLabel(inOpl), aggOut.Descriptor.Signature)
 
 	fop, has := c.GetFutureOperand(ctx, outOpl)
 	if !has {
 		return fmt.Errorf("invalid aggregation output: unkown output operand: %s", outOpl)
 	}
 
-	out := protocol.AllocateOutput(aggOut.Descriptor.Signature, *sess.Params.GetRLWEParameters())
+	out := protocols.AllocateOutput(aggOut.Descriptor.Signature, *sess.Params.GetRLWEParameters())
 	err = s.Executor.GetOutput(ctx, aggOut, out)
 	if err != nil {
 		return fmt.Errorf("protocol output resulted in an error: %w", err)
@@ -829,7 +829,7 @@ func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocol.
 
 	outCt := out.(*rlwe.Ciphertext)
 
-	fop.Set(circuit.Operand{OperandLabel: outOpl, Ciphertext: outCt})
+	fop.Set(circuits.Operand{OperandLabel: outOpl, Ciphertext: outCt})
 
 	return nil
 
@@ -838,33 +838,33 @@ func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocol.
 // GetProtocolInput returns the input for a protocol from the corresponding circuit runtime.
 // The input is the ciphertext identified by the "op" protocol argument.
 // The runtime is identified by the circuit ID part of the operand label.
-func (s *Service) GetProtocolInput(ctx context.Context, pd protocol.Descriptor) (in protocol.Input, err error) {
+func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor) (in protocols.Input, err error) {
 
 	opl, has := pd.Signature.Args["op"]
 	if !has {
 		return nil, fmt.Errorf("invalid protocol descriptor: no operand specified")
 	}
 
-	c, err := s.getCircuitFromOperandLabel(circuit.OperandLabel(opl))
+	c, err := s.getCircuitFromOperandLabel(circuits.OperandLabel(opl))
 	if err != nil {
 		return nil, err
 	}
 
-	op, has := c.GetOperand(ctx, circuit.OperandLabel(opl))
+	op, has := c.GetOperand(ctx, circuits.OperandLabel(opl))
 	if !has {
 		return nil, fmt.Errorf("invalid protocol descriptor: operand label %s not in circuit", opl)
 	}
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProvider.GetSessionFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("no session found for this context")
 	}
 
-	ksin := &protocol.KeySwitchInput{InpuCt: op.Ciphertext}
+	ksin := &protocols.KeySwitchInput{InpuCt: op.Ciphertext}
 	switch pd.Signature.Type {
-	case protocol.DEC:
+	case protocols.DEC:
 		ksin.OutputKey = rlwe.NewSecretKey(sess.Params) // TODO put in session
-	case protocol.CKS, protocol.PCKS:
+	case protocols.CKS, protocols.PCKS:
 		return nil, fmt.Errorf("key switch protocol not supported yet") // TODO
 	default:
 		return nil, fmt.Errorf("invalid protocol type: %s", pd.Signature.Type)
@@ -876,20 +876,20 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocol.Descriptor) 
 // protocols.Coordinator interface
 
 // Incoming returns the incoming event channel.
-func (s *Service) Incoming() <-chan protocol.Event {
+func (s *Service) Incoming() <-chan protocols.Event {
 	return s.incoming
 }
 
 // Outgoing returns the outgoing event channel.
-func (s *Service) Outgoing() chan<- protocol.Event {
+func (s *Service) Outgoing() chan<- protocols.Event {
 	return s.outgoing
 }
 
 // FHEProvider interface
 
 // GetParameters returns the parameters of the context's session.
-func (s *Service) GetParameters(ctx context.Context) (session.FHEParameters, error) {
-	if sess, has := s.sessions.GetSessionFromContext(ctx); has {
+func (s *Service) GetParameters(ctx context.Context) (sessions.FHEParameters, error) {
+	if sess, has := s.sessProvider.GetSessionFromContext(ctx); has {
 		return sess.Params, nil
 	}
 	return nil, fmt.Errorf("no session found for context")
@@ -898,7 +898,7 @@ func (s *Service) GetParameters(ctx context.Context) (session.FHEParameters, err
 // GetEncoder returns a new encoder from the context's session.
 func (s *Service) GetEncoder(ctx context.Context) (enc Encoder, err error) {
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProvider.GetSessionFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("no session found for this context")
 	}
@@ -918,7 +918,7 @@ func (s *Service) GetEncoder(ctx context.Context) (enc Encoder, err error) {
 // GetEncryptor returns a new encryptor from the context's session and the collective public key.
 func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProvider.GetSessionFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("no session found for this context")
 	}
@@ -931,20 +931,10 @@ func (s *Service) GetEncryptor(ctx context.Context) (*rlwe.Encryptor, error) {
 	return rlwe.NewEncryptor(sess.Params, cpk), nil
 }
 
-// // GetEvaluator returns a new evaluator from the context's session and relevant evaluation keys.
-// func (s *Service) GetEvaluator(ctx context.Context, relin bool, galEls []uint64) (*fheEvaluator, error) {
-// 	sess, has := s.sessions.GetSessionFromContext(ctx)
-// 	if !has {
-// 		return nil, fmt.Errorf("no session found for this context")
-// 	}
-
-// 	return newLattigoEvaluator(ctx, relin, galEls, sess.Params, s.pubkeyBackend)
-// }
-
 // GetDecryptor returns a new decryptor from the context's session.
 // The decryptor is inialized with a secret key of 0.
 func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProvider.GetSessionFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("no session found for this context")
 	}
@@ -954,13 +944,13 @@ func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 }
 
 func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitRuntime, error) {
-	cid, has := session.CircuitIDFromContext(ctx)
+	cid, has := sessions.CircuitIDFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("should have circuit id in context")
 	}
 
 	s.runningCircuitsMu.RLock()
-	c, envExists := s.runningCircuits[session.CircuitID(cid)]
+	c, envExists := s.runningCircuits[sessions.CircuitID(cid)]
 	s.runningCircuitsMu.RUnlock()
 	if !envExists {
 		return nil, fmt.Errorf("unknown circuit %s", cid)
@@ -969,12 +959,12 @@ func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitRuntime, er
 	return c, nil
 }
 
-func (s *Service) getCircuitFromOperandLabel(opl circuit.OperandLabel) (CircuitRuntime, error) {
+func (s *Service) getCircuitFromOperandLabel(opl circuits.OperandLabel) (CircuitRuntime, error) {
 
 	cid := opl.CircuitID()
 
 	s.runningCircuitsMu.RLock()
-	c, envExists := s.runningCircuits[session.CircuitID(cid)]
+	c, envExists := s.runningCircuits[sessions.CircuitID(cid)]
 	s.runningCircuitsMu.RUnlock()
 	if !envExists {
 		return nil, fmt.Errorf("unknown circuit %s", cid)
@@ -982,15 +972,15 @@ func (s *Service) getCircuitFromOperandLabel(opl circuit.OperandLabel) (CircuitR
 	return c, nil
 }
 
-func (s *Service) isInputProvider(md circuit.Metadata) bool {
+func (s *Service) isInputProvider(md circuits.Metadata) bool {
 	return len(md.InputsFor[s.self]) > 0
 }
 
-func (s *Service) isOutputReceiver(md circuit.Metadata) bool {
+func (s *Service) isOutputReceiver(md circuits.Metadata) bool {
 	return len(md.OutputsFor[s.self]) > 0
 }
 
-func (s *Service) isEvaluator(cd circuit.Descriptor) bool {
+func (s *Service) isEvaluator(cd circuits.Descriptor) bool {
 	return cd.Evaluator == s.self
 }
 

@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -23,11 +23,11 @@ import (
 )
 
 type TestCircuitSig struct {
-	circuit.Signature
+	circuits.Signature
 	ExpResult uint64
 }
 
-var testSessionParameters = session.Parameters{
+var testSessionParameters = sessions.Parameters{
 	ID:            "test-session",
 	FHEParameters: bgv.ParametersLiteral{LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}, PlaintextModulus: 79873},
 	// Threshold:     set by test
@@ -37,7 +37,7 @@ type testSetting struct {
 	N           int // N - total parties
 	T           int // T - parties in the access structure
 	CircuitSigs []TestCircuitSig
-	Reciever    session.NodeID
+	Reciever    sessions.NodeID
 	Rep         int // numer of repetition for each circuit
 }
 
@@ -48,8 +48,8 @@ var testSetupDescription = setup.Description{
 }
 
 var testCircuits = []TestCircuitSig{
-	{Signature: circuit.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
-	{Signature: circuit.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
+	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
 }
 
 var testSettings = []testSetting{
@@ -94,7 +94,7 @@ func TestSetup(t *testing.T) {
 			lis := bufconn.Listen(buffConBufferSize)
 			go helper.Serve(lis)
 
-			ctx := session.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			g.Go(func() error {
 				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
@@ -160,12 +160,12 @@ func TestCompute(t *testing.T) {
 			ts.Rep = 1
 		}
 
-		nodemap := map[string]session.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
+		nodemap := map[string]sessions.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
 
-		expResult := make(map[session.CircuitID]uint64)
+		expResult := make(map[sessions.CircuitID]uint64)
 		for _, tc := range ts.CircuitSigs {
 			for i := 0; i < ts.Rep; i++ {
-				cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+				cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
 				expResult[cid] = tc.ExpResult
 			}
 		}
@@ -182,7 +182,7 @@ func TestCompute(t *testing.T) {
 
 			app := node.App{
 				SetupDescription: &testSetupDescription,
-				Circuits:         circuit.TestCircuits,
+				Circuits:         circuits.TestCircuits,
 			}
 
 			helper := NewHeliumServer(lt.HelperNode)
@@ -195,11 +195,11 @@ func TestCompute(t *testing.T) {
 			go helper.Serve(lis)
 
 			testOuts := make(chan struct {
-				session.NodeID
-				circuit.Output
+				sessions.NodeID
+				circuits.Output
 			}, len(expResult))
 
-			ctx := session.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			g.Go(func() error {
 				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
@@ -210,8 +210,8 @@ func TestCompute(t *testing.T) {
 				go func() {
 					for _, tc := range ts.CircuitSigs {
 						for i := 0; i < ts.Rep; i++ {
-							cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
-							cdescs <- circuit.Descriptor{Signature: circuit.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: helper.id}
+							cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+							cdescs <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: helper.id}
 						}
 					}
 					close(cdescs)
@@ -219,8 +219,8 @@ func TestCompute(t *testing.T) {
 
 				for out := range outs {
 					testOuts <- struct {
-						session.NodeID
-						circuit.Output
+						sessions.NodeID
+						circuits.Output
 					}{helper.id, out}
 				}
 
@@ -236,7 +236,7 @@ func TestCompute(t *testing.T) {
 						return fmt.Errorf("node %s failed to connect: %v", cli.id, err)
 					}
 
-					ip := func(ctx context.Context, _ session.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
+					ip := func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
 						return nodeIDtoTestInput(string(cli.id)), nil
 					}
 
@@ -247,8 +247,8 @@ func TestCompute(t *testing.T) {
 
 					for out := range outs {
 						testOuts <- struct {
-							session.NodeID
-							circuit.Output
+							sessions.NodeID
+							circuits.Output
 						}{cli.id, out}
 					}
 					return nil

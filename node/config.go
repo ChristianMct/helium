@@ -8,7 +8,7 @@ import (
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 )
 
 // Config is the configuration of a node.
@@ -17,10 +17,10 @@ import (
 //
 // In the current implementation, only a single session per node is supported.
 type Config struct {
-	ID                session.NodeID
+	ID                sessions.NodeID
 	Address           Address
-	HelperID          session.NodeID
-	SessionParameters []session.Parameters
+	HelperID          sessions.NodeID
+	SessionParameters []sessions.Parameters
 	SetupConfig       setup.ServiceConfig
 	ComputeConfig     compute.ServiceConfig
 	ObjectStoreConfig objectstore.Config
@@ -32,7 +32,7 @@ type Address string
 
 // Info contains the unique identifier and the network address of a node.
 type Info struct {
-	session.NodeID
+	sessions.NodeID
 	Address
 }
 
@@ -43,7 +43,7 @@ type List []Info
 
 // AddressOf returns the network address of the node with the given ID. Returns
 // an empty string if the node is not found in the list.
-func (nl List) AddressOf(id session.NodeID) Address {
+func (nl List) AddressOf(id sessions.NodeID) Address {
 	for _, node := range nl {
 		if node.NodeID == id {
 			return node.Address
@@ -109,12 +109,12 @@ func ValidateConfig(config Config, nl List) error {
 //
 //nolint:gosec // sha1 needed to check certificate
 type TLSConfig struct {
-	InsecureChannels bool                      // if set, disables TLS authentication
-	FromDirectory    string                    // path to a directory containing the TLS material as files
-	PeerPKs          map[session.NodeID]string // Mapping of <node, pubKey> where pubKey is PEM encoded
-	PeerCerts        map[session.NodeID]string // Mapping of <node, certifcate> where pubKey is PEM encoded ASN.1 DER string
-	CACert           string                    // Root CA certificate as a PEM encoded ASN.1 DER string
-	OwnCert          string                    // Own certificate as a PEM encoded ASN.1 DER string
-	OwnPk            string                    // Own public key as a PEM encoded string
-	OwnSk            string                    // Own secret key as a PEM encoded string
+	InsecureChannels bool                       // if set, disables TLS authentication
+	FromDirectory    string                     // path to a directory containing the TLS material as files
+	PeerPKs          map[sessions.NodeID]string // Mapping of <node, pubKey> where pubKey is PEM encoded
+	PeerCerts        map[sessions.NodeID]string // Mapping of <node, certifcate> where pubKey is PEM encoded ASN.1 DER string
+	CACert           string                     // Root CA certificate as a PEM encoded ASN.1 DER string
+	OwnCert          string                     // Own certificate as a PEM encoded ASN.1 DER string
+	OwnPk            string                     // Own public key as a PEM encoded string
+	OwnSk            string                     // Own secret key as a PEM encoded string
 }

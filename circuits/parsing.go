@@ -1,4 +1,4 @@
-package circuit
+package circuits
 
 import (
 	"encoding/json"
@@ -6,15 +6,15 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/ChristianMct/helium/protocol"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/he"
 )
 
 // Parse parses a circuit and returns its metadata.
 // The parsing is done by symbolic execution of the circuit.
-func Parse(c Circuit, cd Descriptor, params session.FHEParameters) (*Metadata, error) {
+func Parse(c Circuit, cd Descriptor, params sessions.FHEParameters) (*Metadata, error) {
 	dummyCtx := newCircuitParserCtx(cd, params)
 	if err := c(dummyCtx); err != nil {
 		return nil, fmt.Errorf("error while parsing circuit: %w", err)
@@ -26,12 +26,12 @@ type circuitParserContext struct {
 	//dummyEvaluator
 	cd     Descriptor
 	md     Metadata
-	SubCtx map[session.CircuitID]*circuitParserContext
-	params session.FHEParameters
+	SubCtx map[sessions.CircuitID]*circuitParserContext
+	params sessions.FHEParameters
 	l      sync.Mutex
 }
 
-func newCircuitParserCtx(cd Descriptor, params session.FHEParameters) *circuitParserContext {
+func newCircuitParserCtx(cd Descriptor, params sessions.FHEParameters) *circuitParserContext {
 	cpc := &circuitParserContext{
 		cd: cd,
 		md: Metadata{
@@ -39,12 +39,12 @@ func newCircuitParserCtx(cd Descriptor, params session.FHEParameters) *circuitPa
 			InputSet:     utils.NewEmptySet[OperandLabel](),
 			Ops:          utils.NewEmptySet[OperandLabel](),
 			OutputSet:    utils.NewEmptySet[OperandLabel](),
-			InputsFor:    make(map[session.NodeID]utils.Set[OperandLabel]),
-			OutputsFor:   make(map[session.NodeID]utils.Set[OperandLabel]),
-			KeySwitchOps: make(map[string]protocol.Signature),
+			InputsFor:    make(map[sessions.NodeID]utils.Set[OperandLabel]),
+			OutputsFor:   make(map[sessions.NodeID]utils.Set[OperandLabel]),
+			KeySwitchOps: make(map[string]protocols.Signature),
 			GaloisKeys:   make(utils.Set[uint64]),
 		},
-		SubCtx: make(map[session.CircuitID]*circuitParserContext, 0),
+		SubCtx: make(map[sessions.CircuitID]*circuitParserContext, 0),
 		params: params,
 	}
 	//cpc.dummyEvaluator.ctx = cpc
@@ -109,13 +109,13 @@ func (e *circuitParserContext) Get(opl OperandLabel) Operand {
 	return Operand{OperandLabel: opl}
 }
 
-func (e *circuitParserContext) Output(out Operand, to session.NodeID) {
+func (e *circuitParserContext) Output(out Operand, to sessions.NodeID) {
 	e.l.Lock()
 	defer e.l.Unlock()
 	e.output(out, to)
 }
 
-func (e *circuitParserContext) output(out Operand, to session.NodeID) {
+func (e *circuitParserContext) output(out Operand, to sessions.NodeID) {
 	opl := out.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping)
 	e.md.OutputSet.Add(opl)
 	e.md.Ops.Add(opl)
@@ -133,7 +133,7 @@ func (e *circuitParserContext) output(out Operand, to session.NodeID) {
 	outset.Add(opl)
 }
 
-func (e *circuitParserContext) registerKeyOps(sig protocol.Signature) error {
+func (e *circuitParserContext) registerKeyOps(sig protocols.Signature) error {
 
 	target, hasTarget := sig.Args["target"]
 	if !hasTarget {
@@ -154,28 +154,28 @@ func (e *circuitParserContext) registerKeyOps(sig protocol.Signature) error {
 	return nil
 }
 
-func GetProtocolSignature(t protocol.Type, in OperandLabel, params map[string]string) (pd protocol.Signature) {
+func GetProtocolSignature(t protocols.Type, in OperandLabel, params map[string]string) (pd protocols.Signature) {
 	parm := make(map[string]string, len(params))
 	for k, v := range params {
 		parm[k] = v
 	}
 	parm["op"] = string(in)
-	return protocol.Signature{Type: t, Args: parm}
+	return protocols.Signature{Type: t, Args: parm}
 }
 
-func (e *circuitParserContext) DEC(in Operand, rec session.NodeID, params map[string]string) (err error) {
+func (e *circuitParserContext) DEC(in Operand, rec sessions.NodeID, params map[string]string) (err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
 
-	if argRec, has := params["target"]; has && session.NodeID(argRec) != rec {
+	if argRec, has := params["target"]; has && sessions.NodeID(argRec) != rec {
 		return fmt.Errorf("if specified, the target argument must match rec")
 	}
 
 	pparams := maps.Clone(params)
 	pparams["target"] = string(rec)
 
-	pd := GetProtocolSignature(protocol.DEC, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), pparams)
+	pd := GetProtocolSignature(protocols.DEC, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), pparams)
 	if err = e.registerKeyOps(pd); err != nil {
 		return err
 	}
@@ -184,19 +184,19 @@ func (e *circuitParserContext) DEC(in Operand, rec session.NodeID, params map[st
 	return nil
 }
 
-func (e *circuitParserContext) PCKS(in Operand, rec session.NodeID, params map[string]string) (err error) {
+func (e *circuitParserContext) PCKS(in Operand, rec sessions.NodeID, params map[string]string) (err error) {
 	e.Set(in)
 	e.l.Lock()
 	defer e.l.Unlock()
 
-	if argRec, has := params["target"]; has && session.NodeID(argRec) != rec {
+	if argRec, has := params["target"]; has && sessions.NodeID(argRec) != rec {
 		return fmt.Errorf("if specified, the target argument must match rec")
 	}
 
 	pparams := maps.Clone(params)
 	pparams["target"] = string(rec)
 
-	pd := GetProtocolSignature(protocol.PCKS, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), params)
+	pd := GetProtocolSignature(protocols.PCKS, in.OperandLabel.ForCircuit(e.cd.CircuitID).ForMapping(e.cd.NodeMapping), params)
 	if err = e.registerKeyOps(pd); err != nil {
 		panic(err)
 	}
@@ -205,7 +205,7 @@ func (e *circuitParserContext) PCKS(in Operand, rec session.NodeID, params map[s
 	return nil
 }
 
-func (e *circuitParserContext) Parameters() session.FHEParameters {
+func (e *circuitParserContext) Parameters() sessions.FHEParameters {
 	e.l.Lock()
 	defer e.l.Unlock()
 	return e.params

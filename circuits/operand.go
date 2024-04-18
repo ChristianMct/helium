@@ -1,4 +1,4 @@
-package circuit
+package circuits
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
@@ -68,25 +68,25 @@ func (fo *FutureOperand) Get() Operand {
 }
 
 // NodeID returns the node id part of the operand label.
-func (opl OperandLabel) NodeID() session.NodeID {
+func (opl OperandLabel) NodeID() sessions.NodeID {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
 	}
-	return session.NodeID(nopl.Host)
+	return sessions.NodeID(nopl.Host)
 }
 
 // CircuitID returns the circuit id part of the operand label.
-func (opl OperandLabel) CircuitID() session.CircuitID {
+func (opl OperandLabel) CircuitID() sessions.CircuitID {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
 	}
-	return session.CircuitID(strings.Trim(path.Dir(nopl.Path), "/"))
+	return sessions.CircuitID(strings.Trim(path.Dir(nopl.Path), "/"))
 }
 
 // HasNode returns true if the operand label has the given host id.
-func (opl OperandLabel) HasNode(id session.NodeID) bool {
+func (opl OperandLabel) HasNode(id sessions.NodeID) bool {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
@@ -96,7 +96,7 @@ func (opl OperandLabel) HasNode(id session.NodeID) bool {
 
 // ForCircuit returns a new operand label for the given circuit id, with
 // the circuit id part set to cid.
-func (opl OperandLabel) ForCircuit(cid session.CircuitID) OperandLabel {
+func (opl OperandLabel) ForCircuit(cid sessions.CircuitID) OperandLabel {
 	nopl, err := url.Parse(string(opl))
 	if err != nil {
 		panic(fmt.Errorf("invalid operand label: %s", opl))
@@ -107,7 +107,7 @@ func (opl OperandLabel) ForCircuit(cid session.CircuitID) OperandLabel {
 
 // ForMapping returns a new operand label with the node id part replaced by the
 // corresponding value in the provided mapping.
-func (opl OperandLabel) ForMapping(nodeMapping map[string]session.NodeID) OperandLabel {
+func (opl OperandLabel) ForMapping(nodeMapping map[string]sessions.NodeID) OperandLabel {
 	if nodeMapping == nil {
 		return opl
 	}

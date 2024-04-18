@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ChristianMct/helium/services"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -13,14 +13,14 @@ func getOutgoingContext(ctx context.Context) (context.Context, error) {
 	md := metadata.New(nil)
 
 	// required fields
-	if sessID, hasSessID := session.IDFromContext(ctx); hasSessID {
-		md.Append(string(session.CtxSessionID), string(sessID))
+	if sessID, hasSessID := sessions.IDFromContext(ctx); hasSessID {
+		md.Append(string(sessions.CtxSessionID), string(sessID))
 	} else {
 		return nil, fmt.Errorf("outgoing context must have a session id")
 	}
 
-	if nodeID, hasNodeID := session.NodeIDFromContext(ctx); hasNodeID {
-		md.Append(string(session.CtxNodeID), string(nodeID))
+	if nodeID, hasNodeID := sessions.NodeIDFromContext(ctx); hasNodeID {
+		md.Append(string(sessions.CtxNodeID), string(nodeID))
 	} else {
 		return nil, fmt.Errorf("outgoing context must have a node id")
 	}
@@ -30,8 +30,8 @@ func getOutgoingContext(ctx context.Context) (context.Context, error) {
 		md.Append(string(services.CtxKeyName), service)
 	}
 
-	if circID, hasCircID := session.CircuitIDFromContext(ctx); hasCircID {
-		md.Append(string(session.CtxCircuitID), string(circID))
+	if circID, hasCircID := sessions.CircuitIDFromContext(ctx); hasCircID {
+		md.Append(string(sessions.CtxCircuitID), string(circID))
 	}
 
 	return metadata.NewOutgoingContext(ctx, md), nil
@@ -44,10 +44,10 @@ func getContextFromIncomingContext(inctx context.Context) (ctx context.Context, 
 		return nil, fmt.Errorf("invalid incoming context: missing session id")
 	}
 
-	ctx = context.WithValue(inctx, session.CtxSessionID, sid)
+	ctx = context.WithValue(inctx, sessions.CtxSessionID, sid)
 	cid := circuitIDFromIncomingContext(inctx)
 	if len(cid) != 0 {
-		ctx = context.WithValue(ctx, session.CtxCircuitID, cid)
+		ctx = context.WithValue(ctx, sessions.CtxCircuitID, cid)
 	}
 	return
 }
@@ -64,14 +64,14 @@ func valueFromIncomingContext(ctx context.Context, key string) string {
 	return id[0]
 }
 
-func senderIDFromIncomingContext(ctx context.Context) session.NodeID {
-	return session.NodeID(valueFromIncomingContext(ctx, string(session.CtxNodeID)))
+func senderIDFromIncomingContext(ctx context.Context) sessions.NodeID {
+	return sessions.NodeID(valueFromIncomingContext(ctx, string(sessions.CtxNodeID)))
 }
 
-func sessionIDFromIncomingContext(ctx context.Context) session.ID {
-	return session.ID(valueFromIncomingContext(ctx, string(session.CtxSessionID)))
+func sessionIDFromIncomingContext(ctx context.Context) sessions.ID {
+	return sessions.ID(valueFromIncomingContext(ctx, string(sessions.CtxSessionID)))
 }
 
-func circuitIDFromIncomingContext(ctx context.Context) session.CircuitID {
-	return session.CircuitID(valueFromIncomingContext(ctx, string(session.CtxCircuitID)))
+func circuitIDFromIncomingContext(ctx context.Context) sessions.CircuitID {
+	return sessions.CircuitID(valueFromIncomingContext(ctx, string(sessions.CtxCircuitID)))
 }

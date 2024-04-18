@@ -6,12 +6,12 @@ import (
 	"context"
 	"net"
 
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/services/compute"
 )
 
-func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hsv *HeliumServer, cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hsv *HeliumServer, cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
 
 	helperNode, err := node.New(config, nl)
 	if err != nil {
@@ -36,7 +36,7 @@ func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app 
 	return
 }
 
-func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hc *HeliumClient, outs <-chan circuit.Output, err error) {
+func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hc *HeliumClient, outs <-chan circuits.Output, err error) {
 
 	n, err := node.New(config, nl)
 	if err != nil {

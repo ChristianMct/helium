@@ -1,6 +1,6 @@
-// Package protocol implements the MHE protocol execution.
+// Package protocols implements the MHE protocol execution.
 // It uses Lattigo as the underlying MHE library.
-package protocol
+package protocols
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
@@ -65,8 +65,8 @@ type Signature struct {
 // However, a protocol is uniquely identified by its descriptor.
 type Descriptor struct {
 	Signature
-	Participants []session.NodeID
-	Aggregator   session.NodeID
+	Participants []sessions.NodeID
+	Aggregator   sessions.NodeID
 }
 
 // ID is a type for protocol IDs. Protocol IDs are unique identifiers for
@@ -116,7 +116,7 @@ type Share struct {
 type ShareMetadata struct {
 	ProtocolID   ID
 	ProtocolType Type
-	From         utils.Set[session.NodeID]
+	From         utils.Set[sessions.NodeID]
 }
 
 // ReceiverKey is a type for the output keys in the key switching
@@ -139,7 +139,7 @@ type Protocol struct {
 	pd   Descriptor
 	id   ID
 	hid  string
-	self session.NodeID
+	self sessions.NodeID
 
 	pubrand, privrand blake2b.XOF
 
@@ -150,7 +150,7 @@ type Protocol struct {
 }
 
 // NewProtocol creates a new protocol from the provided protocol descriptor, session and inputs.
-func NewProtocol(pd Descriptor, sess *session.Session) (*Protocol, error) {
+func NewProtocol(pd Descriptor, sess *sessions.Session) (*Protocol, error) {
 
 	err := checkProtocolDescriptor(pd, sess)
 	if err != nil {
@@ -312,7 +312,7 @@ func (p *Protocol) Descriptor() Descriptor {
 }
 
 // HasShareFrom returns whether the protocol has already recieved a share from the specified node.
-func (p *Protocol) HasShareFrom(nid session.NodeID) bool {
+func (p *Protocol) HasShareFrom(nid sessions.NodeID) bool {
 	return !p.agg.missing().Contains(nid)
 }
 
@@ -339,7 +339,7 @@ func (p *Protocol) Logf(msg string, v ...any) {
 	log.Printf("%s | [%s] %s\n", p.self, p.HID(), fmt.Sprintf(msg, v...))
 }
 
-func checkProtocolDescriptor(pd Descriptor, sess *session.Session) error {
+func checkProtocolDescriptor(pd Descriptor, sess *sessions.Session) error {
 
 	if len(pd.Participants) < sess.Threshold {
 		return fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.Threshold)
@@ -351,7 +351,7 @@ func checkProtocolDescriptor(pd Descriptor, sess *session.Session) error {
 		}
 	}
 
-	target := session.NodeID(pd.Signature.Args["target"])
+	target := sessions.NodeID(pd.Signature.Args["target"])
 
 	switch pd.Signature.Type {
 	case CKS:
@@ -500,16 +500,16 @@ func (s Share) UnmarshalBinary(data []byte) error {
 // GetParticipants returns a set of protocol participants, given the online nodes and the threshold.
 // This function handle the case of the DEC protocol, where the target must be considered a participant.
 // It returns an error if there are not enough online nodes.
-func GetParticipants(sig Signature, onlineNodes utils.Set[session.NodeID], threshold int) ([]session.NodeID, error) {
+func GetParticipants(sig Signature, onlineNodes utils.Set[sessions.NodeID], threshold int) ([]sessions.NodeID, error) {
 	if len(onlineNodes) < threshold {
 		return nil, fmt.Errorf("not enough online node")
 	}
 
 	available := onlineNodes.Copy()
-	selected := utils.NewEmptySet[session.NodeID]()
+	selected := utils.NewEmptySet[sessions.NodeID]()
 	needed := threshold
 	if sig.Type == DEC {
-		target := session.NodeID(sig.Args["target"])
+		target := sessions.NodeID(sig.Args["target"])
 		selected.Add(target)
 		available.Remove(target)
 		needed--
@@ -522,7 +522,7 @@ func GetParticipants(sig Signature, onlineNodes utils.Set[session.NodeID], thres
 // GetProtocolPublicRandomness intitializes a keyed PRF from the session's public seed and
 // the protocol's information.
 // This function ensures that the PRF is unique for each protocol execution.
-func GetProtocolPublicRandomness(pd Descriptor, sess *session.Session) blake2b.XOF {
+func GetProtocolPublicRandomness(pd Descriptor, sess *sessions.Session) blake2b.XOF {
 	xof, _ := blake2b.NewXOF(blake2b.OutputLengthUnknown, nil)
 	_, err := xof.Write(sess.PublicSeed)
 	if err != nil {
@@ -543,7 +543,7 @@ func GetProtocolPublicRandomness(pd Descriptor, sess *session.Session) blake2b.X
 // GetProtocolPrivateRandomness intitializes a keyed PRF from the session's private seed and
 // the protocol's information.
 // This function ensures that the PRF is unique for each protocol execution.
-func GetProtocolPrivateRandomness(pd Descriptor, sess *session.Session) blake2b.XOF {
+func GetProtocolPrivateRandomness(pd Descriptor, sess *sessions.Session) blake2b.XOF {
 	xof := GetProtocolPublicRandomness(pd, sess)
 	_, err := xof.Write(sess.PrivateSeed)
 	if err != nil {
@@ -552,7 +552,7 @@ func GetProtocolPrivateRandomness(pd Descriptor, sess *session.Session) blake2b.
 	return xof
 }
 
-func partyListToString(partList []session.NodeID) []byte {
+func partyListToString(partList []sessions.NodeID) []byte {
 	partListSorted := make(sort.StringSlice, len(partList))
 	for i, nid := range partList {
 		partListSorted[i] = string(nid)

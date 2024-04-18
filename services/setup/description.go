@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/ChristianMct/helium/protocol"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
@@ -26,27 +26,27 @@ type Description struct {
 }
 
 // SignatureList provides utility functions for a list of signatures.
-type SignatureList []protocol.Signature
+type SignatureList []protocols.Signature
 
 // DescriptionToSignatureList converts a Description to a list of protocol signatures to be executed.
 func DescriptionToSignatureList(sd Description) SignatureList {
 	sl := make(SignatureList, 0, 3+len(sd.Gks))
 	if sd.Cpk {
-		sign := protocol.Signature{Type: protocol.CKG}
+		sign := protocols.Signature{Type: protocols.CKG}
 		sl = append(sl, sign)
 	}
 	if sd.Rlk {
-		sl = append(sl, protocol.Signature{Type: protocol.RKG})
+		sl = append(sl, protocols.Signature{Type: protocols.RKG})
 	}
 	for _, gk := range sd.Gks {
-		sign := protocol.Signature{Type: protocol.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(gk, 10)}}
+		sign := protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": strconv.FormatUint(gk, 10)}}
 		sl = append(sl, sign)
 	}
 	return sl
 }
 
 // Contains checks if a list of signatures contains a given signature.
-func (sl SignatureList) Contains(other protocol.Signature) bool {
+func (sl SignatureList) Contains(other protocols.Signature) bool {
 	for _, sig := range sl {
 		if sig.Equals(other) {
 			return true
@@ -66,7 +66,7 @@ func (sd Description) String() string {
 }
 
 // CheckTestSetup checks if a public key provider is able to produce valid keys for a given test session and setup description.
-func CheckTestSetup(ctx context.Context, t *testing.T, lt *session.TestSession, setup Description, n session.PublicKeyProvider) {
+func CheckTestSetup(ctx context.Context, t *testing.T, lt *sessions.TestSession, setup Description, n sessions.PublicKeyProvider) {
 
 	params := lt.RlweParams
 	sk := lt.SkIdeal

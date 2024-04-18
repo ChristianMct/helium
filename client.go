@@ -11,13 +11,13 @@ import (
 
 	"github.com/ChristianMct/helium/api"
 	"github.com/ChristianMct/helium/api/pb"
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
-	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services"
 	"github.com/ChristianMct/helium/services/compute"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
@@ -31,12 +31,12 @@ const (
 // peer nodes to communicate with the helium server.
 type HeliumClient struct {
 	node          *node.Node
-	id, helperID  session.NodeID
+	id, helperID  sessions.NodeID
 	helperAddress node.Address
 
-	outgoingShares chan protocol.Share
+	outgoingShares chan protocols.Share
 
-	session.PublicKeyProvider
+	sessions.PublicKeyProvider
 
 	*grpc.ClientConn
 	pb.HeliumClient
@@ -47,7 +47,7 @@ type HeliumClient struct {
 type Dialer = func(c context.Context, addr string) (net.Conn, error)
 
 // NewHeliumClient creates a new helium client.
-func NewHeliumClient(node *node.Node, helperID session.NodeID, helperAddress node.Address) *HeliumClient {
+func NewHeliumClient(node *node.Node, helperID sessions.NodeID, helperAddress node.Address) *HeliumClient {
 	hc := new(HeliumClient)
 	hc.node = node
 	hc.PublicKeyProvider = node
@@ -58,9 +58,9 @@ func NewHeliumClient(node *node.Node, helperID session.NodeID, helperAddress nod
 	return hc
 }
 
-func (hc *HeliumClient) Run(ctx context.Context, app node.App, ip compute.InputProvider) (outs <-chan circuit.Output, err error) {
+func (hc *HeliumClient) Run(ctx context.Context, app node.App, ip compute.InputProvider) (outs <-chan circuits.Output, err error) {
 
-	hc.outgoingShares = make(chan protocol.Share)
+	hc.outgoingShares = make(chan protocols.Share)
 
 	go func() {
 		for share := range hc.outgoingShares {
@@ -90,11 +90,11 @@ func (hc *HeliumClient) Run(ctx context.Context, app node.App, ip compute.InputP
 	return outs, nil
 }
 
-func (hc *HeliumClient) OutgoingShares() chan<- protocol.Share {
+func (hc *HeliumClient) OutgoingShares() chan<- protocols.Share {
 	return hc.outgoingShares
 }
 
-func (hc *HeliumClient) IncomingShares() <-chan protocol.Share {
+func (hc *HeliumClient) IncomingShares() <-chan protocols.Share {
 	return nil
 }
 
@@ -175,7 +175,7 @@ func (hc *HeliumClient) Register(ctx context.Context) (upstream *coordinator.Cha
 }
 
 // PutShare sends a share to the helium server.
-func (hc *HeliumClient) PutShare(ctx context.Context, share protocol.Share) error {
+func (hc *HeliumClient) PutShare(ctx context.Context, share protocols.Share) error {
 	apiShare, err := api.GetShare(&share)
 	if err != nil {
 		return err
@@ -185,7 +185,7 @@ func (hc *HeliumClient) PutShare(ctx context.Context, share protocol.Share) erro
 }
 
 // GetAggregationOutput queries and returns the aggregation output for a given protocol descriptor.
-func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
+func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
 	apiOut, err := hc.HeliumClient.GetAggregationOutput(hc.outgoingContext(ctx), api.GetProtocolDesc(&pd))
 	if err != nil {
 		return nil, err
@@ -195,11 +195,11 @@ func (hc *HeliumClient) GetAggregationOutput(ctx context.Context, pd protocol.De
 	if err != nil {
 		return nil, err
 	}
-	return &protocol.AggregationOutput{Share: s, Descriptor: pd}, nil
+	return &protocols.AggregationOutput{Share: s, Descriptor: pd}, nil
 }
 
 // GetCiphertext queries and returns a ciphertext.
-func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
+func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID sessions.CiphertextID) (*sessions.Ciphertext, error) {
 	apiCt, err := hc.HeliumClient.GetCiphertext(hc.outgoingContext(ctx), &pb.CiphertextID{CiphertextId: string(ctID)})
 	if err != nil {
 		return nil, err
@@ -208,7 +208,7 @@ func (hc *HeliumClient) GetCiphertext(ctx context.Context, ctID session.Cipherte
 }
 
 // PutCiphertext sends a ciphertext to the helium server.
-func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
+func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct sessions.Ciphertext) error {
 	apiCt, err := api.GetCiphertext(&ct)
 	if err != nil {
 		return err
@@ -218,7 +218,7 @@ func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct session.Ciphertext
 }
 
 func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
-	ctx = session.ContextWithNodeID(ctx, hc.id) // TODO would be better to ensure that a node always has its id in a context
+	ctx = sessions.ContextWithNodeID(ctx, hc.id) // TODO would be better to ensure that a node always has its id in a context
 	ctx, err := getOutgoingContext(ctx)
 	if err != nil {
 		panic(err)

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -19,7 +19,7 @@ import (
 )
 
 type TestCircuitSig struct {
-	circuit.Signature
+	circuits.Signature
 	ExpResult uint64
 }
 
@@ -27,11 +27,11 @@ type testSetting struct {
 	N           int // N - total parties
 	T           int // T - parties in the access structure
 	CircuitSigs []TestCircuitSig
-	Reciever    session.NodeID
+	Reciever    sessions.NodeID
 	Rep         int // numer of repetition for each circuit
 }
 
-var testSessionParameters = session.Parameters{
+var testSessionParameters = sessions.Parameters{
 	ID:            "test-session",
 	FHEParameters: bgv.ParametersLiteral{LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}, PlaintextModulus: 79873},
 	// Threshold:     set by test
@@ -44,8 +44,8 @@ var testSetupDescription = setup.Description{
 }
 
 var testCircuits = []TestCircuitSig{
-	{Signature: circuit.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
-	{Signature: circuit.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
+	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
 }
 
 var testSettings = []testSetting{
@@ -59,24 +59,24 @@ var testSettings = []testSetting{
 type testNode struct {
 	*Node
 	compute.InputProvider
-	OutputReceiver chan circuit.Output
-	Outputs        map[session.CircuitID]circuit.Output
+	OutputReceiver chan circuits.Output
+	Outputs        map[sessions.CircuitID]circuits.Output
 }
 
-func NewTestNodes(lt *LocalTest) (all, clients map[session.NodeID]*testNode, cloud *testNode) {
-	all = make(map[session.NodeID]*testNode, len(lt.Nodes))
+func NewTestNodes(lt *LocalTest) (all, clients map[sessions.NodeID]*testNode, cloud *testNode) {
+	all = make(map[sessions.NodeID]*testNode, len(lt.Nodes))
 	cloud = &testNode{}
 	cloud.Node = lt.HelperNode
 	cloud.InputProvider = compute.NoInput
-	cloud.Outputs = make(map[session.CircuitID]circuit.Output)
+	cloud.Outputs = make(map[sessions.CircuitID]circuits.Output)
 	all[cloud.id] = cloud
 
-	clients = make(map[session.NodeID]*testNode)
+	clients = make(map[sessions.NodeID]*testNode)
 	for _, n := range lt.PeerNodes {
 		cli := &testNode{}
 		cli.Node = n
 		cli.InputProvider = compute.NoInput
-		cli.Outputs = make(map[session.CircuitID]circuit.Output)
+		cli.Outputs = make(map[sessions.CircuitID]circuits.Output)
 		clients[n.id] = cli
 		all[n.id] = cli
 	}
@@ -117,7 +117,7 @@ func TestNodeSetup(t *testing.T) {
 				SetupDescription: &testSetupDescription,
 			}
 
-			ctx := session.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			for _, node := range all {
 				node := node
@@ -177,19 +177,19 @@ func TestNodeCompute(t *testing.T) {
 
 			for _, cli := range clients {
 				cid := cli.id
-				cli.InputProvider = func(ctx context.Context, _ session.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
+				cli.InputProvider = func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
 					return NodeIDtoTestInput(string(cid)), nil
 				}
 			}
 
 			app := App{
 				SetupDescription: &testSetupDescription,
-				Circuits:         circuit.TestCircuits,
+				Circuits:         circuits.TestCircuits,
 			}
 
-			ctx := session.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(sessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
-			var cdescs = make(chan chan<- circuit.Descriptor)
+			var cdescs = make(chan chan<- circuits.Descriptor)
 			for _, node := range all {
 				node := node
 				g.Go(func() error {
@@ -211,13 +211,13 @@ func TestNodeCompute(t *testing.T) {
 				})
 			}
 
-			nodemap := map[string]session.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
+			nodemap := map[string]sessions.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
 			cdesc := <-cdescs
-			expResult := make(map[session.CircuitID]uint64)
+			expResult := make(map[sessions.CircuitID]uint64)
 			for _, tc := range ts.CircuitSigs {
 				for i := 0; i < ts.Rep; i++ {
-					cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
-					cdesc <- circuit.Descriptor{Signature: circuit.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: cloud.id}
+					cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+					cdesc <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: cloud.id}
 					expResult[cid] = tc.ExpResult
 				}
 			}

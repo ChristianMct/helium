@@ -1,5 +1,5 @@
-// Package session implements helium sessions.
-package session
+// Package sessions implements helium sessions.
+package sessions
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package protocol
+package protocols
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -25,17 +25,17 @@ func TestExecutor(t *testing.T) {
 
 			params := TestPN12QP109
 
-			hid := session.NodeID("helper")
-			testSess, err := session.NewTestSession(ts.N, ts.T, params, hid)
+			hid := sessions.NodeID("helper")
+			testSess, err := sessions.NewTestSession(ts.N, ts.T, params, hid)
 			if err != nil {
 				t.Fatal(err)
 			}
 			sessParams := testSess.SessParams
 			nids := utils.NewSet(sessParams.Nodes)
 
-			ctx := session.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(sessParams.ID)
 
-			executors := make(map[session.NodeID]*Executor, len(nids))
+			executors := make(map[sessions.NodeID]*Executor, len(nids))
 			testTrans := NewTestTransport()
 			testCoord := coordinator.NewTestCoordinator[Event](hid)
 
@@ -110,7 +110,7 @@ func TestExecutor(t *testing.T) {
 				MaxParticipation: 1,
 			}
 
-			evChan, _, err := testCoord.Register(session.ContextWithNodeID(ctx, hid))
+			evChan, _, err := testCoord.Register(sessions.ContextWithNodeID(ctx, hid))
 			require.Nil(t, err)
 			helper, err = NewExectutor(conf, hid, testSess.HelperSession, evChan, hip)
 			require.Nil(t, err)
@@ -119,7 +119,7 @@ func TestExecutor(t *testing.T) {
 			g.Go(func() error { return helper.Run(gctx, testTrans) })
 			for nid := range nids {
 				nid := nid
-				evChan, _, err := testCoord.Register(session.ContextWithNodeID(ctx, nid))
+				evChan, _, err := testCoord.Register(sessions.ContextWithNodeID(ctx, nid))
 				require.Nil(t, err)
 				nexec, err := NewExectutor(conf, nid, testSess.NodeSessions[nid], evChan, pip)
 				executors[nid] = nexec

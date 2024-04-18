@@ -10,70 +10,70 @@ import (
 
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 // ServiceConfig is the configuration for the setup service.
 type ServiceConfig struct {
-	Protocols protocol.ExecutorConfig
+	Protocols protocols.ExecutorConfig
 }
 
 // Service represents an instance of the setup service.
 type Service struct {
-	self session.NodeID
+	self sessions.NodeID
 
-	sessions session.SessionProvider
+	sessProv sessions.Provider
 
-	executor  *protocol.Executor
+	executor  *protocols.Executor
 	transport Transport
 
 	// protocols.Coordinator
-	incoming, outgoing chan protocol.Event
+	incoming, outgoing chan protocols.Event
 
 	resBackend *objStoreResultBackend
 
 	//l         sync.RWMutex
-	completed *protocol.CompleteMap
+	completed *protocols.CompleteMap
 }
 
 type Event struct {
-	protocol.Event
+	protocols.Event
 }
 
 type Coordinator coordinator.Coordinator[Event]
 
 // NewSetupService creates a new setup service.
-func NewSetupService(ownID session.NodeID, sessions session.SessionProvider, conf ServiceConfig, backend objectstore.ObjectStore) (s *Service, err error) {
+func NewSetupService(ownID sessions.NodeID, sessProv sessions.Provider, conf ServiceConfig, backend objectstore.ObjectStore) (s *Service, err error) {
 	s = new(Service)
 
 	s.self = ownID
-	s.sessions = sessions
+	s.sessProv = sessProv
 
-	s.incoming = make(chan protocol.Event)
-	s.outgoing = make(chan protocol.Event)
+	s.incoming = make(chan protocols.Event)
+	s.outgoing = make(chan protocols.Event)
 
-	s.executor, err = protocol.NewExectutor(conf.Protocols, s.self, sessions, &coordinator.Channel[protocol.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
+	s.executor, err = protocols.NewExectutor(conf.Protocols, s.self, sessProv, &coordinator.Channel[protocols.Event]{Incoming: s.incoming, Outgoing: s.outgoing}, s.GetProtocolInput)
 	if err != nil {
 		return nil, err
 	}
 
 	s.resBackend = newObjStoreResultBackend(backend)
-	s.completed = protocol.NewCompletedProt(nil)
+	s.completed = protocols.NewCompletedProt(nil)
 
 	return s, nil
 }
 
-func recoverPresentState(events <-chan Event, present int) (completePd, failPd, runningPd []protocol.Descriptor, err error) {
+func recoverPresentState(events <-chan Event, present int) (completePd, failPd, runningPd []protocols.Descriptor, err error) {
 
 	if present == 0 {
 		return
 	}
 
 	var current int
-	runProto := make(map[protocol.ID]protocol.Descriptor)
+	runProto := make(map[protocols.ID]protocols.Descriptor)
 	for ev := range events {
 		pid := ev.ID()
 		if !ev.Signature.Type.IsSetup() {
@@ -81,20 +81,20 @@ func recoverPresentState(events <-chan Event, present int) (completePd, failPd, 
 		}
 
 		switch ev.EventType {
-		case protocol.Started:
+		case protocols.Started:
 			runProto[pid] = ev.Descriptor
-		case protocol.Executing:
+		case protocols.Executing:
 			if _, has := runProto[pid]; !has {
 				err = fmt.Errorf("inconsisted state, protocol %s execution event before start", ev.HID())
 				return
 			}
-		case protocol.Completed, protocol.Failed:
+		case protocols.Completed, protocols.Failed:
 			if _, has := runProto[pid]; !has {
 				err = fmt.Errorf("inconsisted state, protocol %s termination event before start", ev.HID())
 				return
 			}
 			delete(runProto, pid)
-			if ev.EventType == protocol.Completed {
+			if ev.EventType == protocols.Completed {
 				completePd = append(completePd, ev.Descriptor)
 			} else {
 				failPd = append(failPd, ev.Descriptor)
@@ -133,7 +133,7 @@ func (s *Service) init(upstreamInc <-chan Event, present int) error { // TODO: m
 
 	// queue running protocols
 	for _, rpd := range runPd {
-		s.incoming <- protocol.Event{EventType: protocol.Started, Descriptor: rpd} // sends a protocol started event downstream
+		s.incoming <- protocols.Event{EventType: protocols.Started, Descriptor: rpd} // sends a protocol started event downstream
 	}
 
 	s.Logf("service initialized with %d completed, %d failed and %d running protocols (present=%d)", len(complPd), len(failPd), len(runPd), present)
@@ -150,7 +150,7 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 
 	s.transport = trans
 
-	runCtx, cancelRunCtx := context.WithCancel(context.WithValue(session.ContextWithNodeID(ctx, s.self), services.CtxKeyName, "setup"))
+	runCtx, cancelRunCtx := context.WithCancel(context.WithValue(sessions.ContextWithNodeID(ctx, s.self), services.CtxKeyName, "setup"))
 	defer cancelRunCtx()
 
 	// registers to the upstream coordinator
@@ -216,20 +216,20 @@ func (s *Service) processEvent(ev Event) {
 	}
 
 	switch ev.EventType {
-	case protocol.Started:
-	case protocol.Completed:
+	case protocols.Started:
+	case protocols.Completed:
 		err := s.completed.CompletedProtocol(ev.Descriptor)
 		if err != nil {
 			panic(err)
 		}
-	case protocol.Failed:
+	case protocols.Failed:
 	default:
 		panic("unkown event type")
 	}
 }
 
 // RunSignature queues the given signature for execution. This method is called by the helper.
-func (s *Service) RunSignature(ctx context.Context, sig protocol.Signature) error {
+func (s *Service) RunSignature(ctx context.Context, sig protocols.Signature) error {
 
 	if !sig.Type.IsSetup() {
 		return fmt.Errorf("signature type %s is not a setup protocol", sig.Type)
@@ -248,7 +248,7 @@ func (s *Service) RunSignature(ctx context.Context, sig protocol.Signature) erro
 // GetCollectivePublicKey returns the collective public key when available.
 // The method blocks until the corresponding protocol completes.
 func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	out, err := s.getOutputForSig(ctx, protocol.Signature{Type: protocol.CKG})
+	out, err := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.CKG})
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (s *Service) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, 
 // GetGaloisKey returns the Galois key for the given Galois element when available.
 // The method blocks until the corresponding protocol completes.
 func (s *Service) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	out, err := s.getOutputForSig(ctx, protocol.Signature{Type: protocol.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
+	out, err := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RTG, Args: map[string]string{"GalEl": fmt.Sprintf("%d", galEl)}})
 	if err != nil {
 		return nil, err
 	}
@@ -268,14 +268,14 @@ func (s *Service) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisK
 // GetRelinearizationKey returns the relinearization key when available.
 // The method blocks until the corresponding protocol completes.
 func (s *Service) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	out, err := s.getOutputForSig(ctx, protocol.Signature{Type: protocol.RKG})
+	out, err := s.getOutputForSig(ctx, protocols.Signature{Type: protocols.RKG})
 	if err != nil {
 		return nil, err
 	}
 	return out.Result.(*rlwe.RelinearizationKey), nil
 }
 
-func (s *Service) getOutputForSig(ctx context.Context, sig protocol.Signature) (*protocol.Output, error) {
+func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) (*protocols.Output, error) {
 
 	pd, err := s.completed.AwaitCompletedDescriptorFor(sig)
 	if err != nil {
@@ -287,38 +287,38 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocol.Signature) (
 		return nil, fmt.Errorf("could not retrieve aggrgation output for %s: %w", pd.HID(), err)
 	}
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProv.GetSessionFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("session not found in context")
 	}
 
-	out := protocol.AllocateOutput(sig, *sess.Params.GetRLWEParameters()) // TODO cache ?
+	out := protocols.AllocateOutput(sig, *sess.Params.GetRLWEParameters()) // TODO cache ?
 	err = s.executor.GetOutput(ctx, *aggOut, out)
 	if err != nil {
 		return nil, fmt.Errorf("error while getting output: %w", err)
 	}
 
-	return &protocol.Output{Descriptor: *pd, Result: out}, nil
+	return &protocols.Output{Descriptor: *pd, Result: out}, nil
 }
 
 // GetProtocolInput returns the protocol inputs for the given protocol descriptor.
 // It is meant to be passed to a protocols.Executor as a protocols.InputProvider method.
-func (s *Service) GetProtocolInput(ctx context.Context, pd protocol.Descriptor) (protocol.Input, error) {
+func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor) (protocols.Input, error) {
 
-	sess, has := s.sessions.GetSessionFromContext(ctx)
+	sess, has := s.sessProv.GetSessionFromContext(ctx)
 	if !has {
 		return nil, fmt.Errorf("session not found in context")
 	}
 
 	switch pd.Signature.Type {
-	case protocol.CKG, protocol.RTG, protocol.RKG1:
-		p, err := protocol.NewProtocol(pd, sess) // TODO: cache and reuse ?
+	case protocols.CKG, protocols.RTG, protocols.RKG1:
+		p, err := protocols.NewProtocol(pd, sess) // TODO: cache and reuse ?
 		if err != nil {
 			return nil, err
 		}
 		return p.ReadCRP()
-	case protocol.RKG:
-		aggOutR1, err := s.GetAggregationOutput(ctx, protocol.Descriptor{Signature: protocol.Signature{Type: protocol.RKG1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
+	case protocols.RKG:
+		aggOutR1, err := s.GetAggregationOutput(ctx, protocols.Descriptor{Signature: protocols.Signature{Type: protocols.RKG1}, Participants: pd.Participants, Aggregator: pd.Aggregator})
 		if err != nil {
 			return nil, err
 		}
@@ -331,7 +331,7 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocol.Descriptor) 
 // GetAggregationOutput returns the aggregation output for the given protocol descriptor.
 // If the output is not available locally, it queries the protocol's aggregator.
 // If called at the aggregator, it runs the protocol and returns the output.
-func (s *Service) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (out *protocol.AggregationOutput, err error) {
+func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (out *protocols.AggregationOutput, err error) {
 	// first checks if it has the share locally
 	out, err = s.getAggregationOutputFromBackend(ctx, pd)
 	if err == nil {
@@ -345,8 +345,8 @@ func (s *Service) GetAggregationOutput(ctx context.Context, pd protocol.Descript
 		}
 	} else {
 		// TODO: prevent double run of protocol
-		aggOutC := make(chan protocol.AggregationOutput, 1)
-		err := s.executor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocol.AggregationOutput) error {
+		aggOutC := make(chan protocols.AggregationOutput, 1)
+		err := s.executor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocols.AggregationOutput) error {
 			aggOutC <- ao
 			return nil
 		})
@@ -365,8 +365,8 @@ func (s *Service) GetAggregationOutput(ctx context.Context, pd protocol.Descript
 	return out, nil
 }
 
-func (s *Service) getAggregationOutputFromBackend(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
-	share := protocol.Share{}
+func (s *Service) getAggregationOutputFromBackend(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
+	share := protocols.Share{}
 	lattigoShare := pd.Signature.Type.Share()
 	err := s.resBackend.GetShare(ctx, pd.Signature, lattigoShare)
 	if err != nil {
@@ -375,39 +375,39 @@ func (s *Service) getAggregationOutputFromBackend(ctx context.Context, pd protoc
 	share.MHEShare = lattigoShare
 	share.ProtocolType = pd.Signature.Type
 	share.ProtocolID = pd.ID()
-	return &protocol.AggregationOutput{Share: share, Descriptor: pd}, nil
+	return &protocols.AggregationOutput{Share: share, Descriptor: pd}, nil
 }
 
 // AggregationOutputHandler is called when a protocol aggregation completes.
 // It is meant to be passed to a protocols.Executor as a protocols.AggregationOutputHandler method.
-func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocol.AggregationOutput) error {
+func (s *Service) AggregationOutputHandler(ctx context.Context, aggOut protocols.AggregationOutput) error {
 	return s.resBackend.Put(ctx, aggOut.Descriptor, aggOut.Share)
 }
 
 // NodeID returns the node ID associated with this service.
-func (s *Service) NodeID() session.NodeID {
+func (s *Service) NodeID() sessions.NodeID {
 	return s.self
 }
 
 // protocols.Coordinator interface implementation
 
 // Incoming returns the incoming event channel for the protocols.Coordinator interface.
-func (s *Service) Incoming() <-chan protocol.Event {
+func (s *Service) Incoming() <-chan protocols.Event {
 	return s.incoming
 }
 
 // Outgoing returns the outgoing event channel for the protocols.Coordinator interface.
-func (s *Service) Outgoing() chan<- protocol.Event {
+func (s *Service) Outgoing() chan<- protocols.Event {
 	return s.outgoing
 }
 
 // Register registers a connected node to the service.
-func (s *Service) Register(nid session.NodeID) error { // TODO should be per session
+func (s *Service) Register(nid sessions.NodeID) error { // TODO should be per session
 	return s.executor.Register(nid)
 }
 
 // Unregister unregisters a disconnected node from the service
-func (s *Service) Unregister(nid session.NodeID) error {
+func (s *Service) Unregister(nid sessions.NodeID) error {
 	return s.executor.Unregister(nid)
 }
 

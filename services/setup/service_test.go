@@ -7,12 +7,12 @@ import (
 
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -45,7 +45,7 @@ var sd = Description{
 }
 
 var conf = ServiceConfig{
-	Protocols: protocol.ExecutorConfig{
+	Protocols: protocols.ExecutorConfig{
 		SigQueueSize:     300,
 		MaxProtoPerNode:  1,
 		MaxAggregation:   1,
@@ -55,12 +55,12 @@ var conf = ServiceConfig{
 
 type testnode struct {
 	*Service
-	*session.Session
+	*sessions.Session
 	//protocol.Coordinator
 }
 
-func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all, sessNodes map[session.NodeID]*testnode, helperNode *testnode) {
-	hid := session.NodeID("helper")
+func getNodes(t *testing.T, ts testSetting, testSess *sessions.TestSession) (all, sessNodes map[sessions.NodeID]*testnode, helperNode *testnode) {
+	hid := sessions.NodeID("helper")
 
 	sessParams := testSess.SessParams
 
@@ -68,7 +68,7 @@ func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all,
 
 	//protoTrans := protocol.NewTestTransport()
 
-	all = make(map[session.NodeID]*testnode, ts.N+1)
+	all = make(map[sessions.NodeID]*testnode, ts.N+1)
 	clou := new(testnode)
 	all["helper"] = clou
 
@@ -79,7 +79,7 @@ func getNodes(t *testing.T, ts testSetting, testSess *session.TestSession) (all,
 		t.Fatal(err)
 	}
 
-	clients := make(map[session.NodeID]*testnode, ts.N)
+	clients := make(map[sessions.NodeID]*testnode, ts.N)
 	for nid := range nids {
 		cli := &testnode{}
 		cli.Session = testSess.NodeSessions[nid]
@@ -103,9 +103,9 @@ func TestSetup(t *testing.T) {
 			}
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-				hid := session.NodeID("helper")
+				hid := sessions.NodeID("helper")
 
-				testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
+				testSess, err := sessions.NewTestSession(ts.N, ts.T, literalParams, hid)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -114,7 +114,7 @@ func TestSetup(t *testing.T) {
 				tc := coordinator.NewTestCoordinator[Event](hid)
 				tt := newTestTransport(clou.Service)
 
-				ctx := session.NewBackgroundContext(testSess.SessParams.ID)
+				ctx := sessions.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
 				go func() {
 					sigList := DescriptionToSignatureList(sd)
@@ -157,9 +157,9 @@ func TestSetupLateConnect(t *testing.T) {
 			}
 
 			t.Run(fmt.Sprintf("NParty=%d/T=%d/logN=%d", ts.N, ts.T, literalParams.LogN), func(t *testing.T) {
-				hid := session.NodeID("helper")
+				hid := sessions.NodeID("helper")
 
-				testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
+				testSess, err := sessions.NewTestSession(ts.N, ts.T, literalParams, hid)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -172,7 +172,7 @@ func TestSetupLateConnect(t *testing.T) {
 				tc := coordinator.NewTestCoordinator[Event](hid)
 				tt := newTestTransport(clou.Service)
 
-				ctx := session.NewBackgroundContext(testSess.SessParams.ID)
+				ctx := sessions.NewBackgroundContext(testSess.SessParams.ID)
 				// runs the setup
 				go func() {
 					sigList := DescriptionToSignatureList(sd)
@@ -219,9 +219,9 @@ func TestSetupRetries(t *testing.T) {
 	ts := testSetting{N: 3, T: 2}
 	literalParams := TestPN12QP109
 
-	hid := session.NodeID("helper")
+	hid := sessions.NodeID("helper")
 
-	testSess, err := session.NewTestSession(ts.N, ts.T, literalParams, hid)
+	testSess, err := sessions.NewTestSession(ts.N, ts.T, literalParams, hid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,11 +230,11 @@ func TestSetupRetries(t *testing.T) {
 	tc := coordinator.NewTestCoordinator[Event](hid)
 	tt := newTestTransport(clou.Service)
 
-	ctx := session.NewBackgroundContext(testSess.SessParams.ID)
+	ctx := sessions.NewBackgroundContext(testSess.SessParams.ID)
 
 	// runs the setup
 	go func() {
-		err = clou.RunSignature(ctx, protocol.Signature{Type: protocol.CKG})
+		err = clou.RunSignature(ctx, protocols.Signature{Type: protocols.CKG})
 		require.Nil(t, err)
 		tc.Close()
 	}()
@@ -258,16 +258,16 @@ func TestSetupRetries(t *testing.T) {
 		return errors.WithMessagef(err, "error at node %s", p0.self)
 	})
 
-	p1Chan, _, err := tc.Register(session.ContextWithNodeID(nodesRunCtx, p1.self))
+	p1Chan, _, err := tc.Register(sessions.ContextWithNodeID(nodesRunCtx, p1.self))
 	require.Nil(t, err)
 	ev := <-p1Chan.Incoming
 	require.Equal(t,
 		Event{
-			Event: protocol.Event{
-				EventType: protocol.Started,
-				Descriptor: protocol.Descriptor{
-					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []session.NodeID{"node-0", "node-1"},
+			Event: protocols.Event{
+				EventType: protocols.Started,
+				Descriptor: protocols.Descriptor{
+					Signature:    protocols.Signature{Type: protocols.CKG},
+					Participants: []sessions.NodeID{"node-0", "node-1"},
 					Aggregator:   "helper",
 				},
 			},
@@ -281,11 +281,11 @@ func TestSetupRetries(t *testing.T) {
 	ev = <-p1Chan.Incoming
 	require.Equal(t,
 		Event{
-			protocol.Event{
-				EventType: protocol.Failed,
-				Descriptor: protocol.Descriptor{
-					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []session.NodeID{"node-0", "node-1"},
+			protocols.Event{
+				EventType: protocols.Failed,
+				Descriptor: protocols.Descriptor{
+					Signature:    protocols.Signature{Type: protocols.CKG},
+					Participants: []sessions.NodeID{"node-0", "node-1"},
 					Aggregator:   "helper",
 				},
 			},
@@ -301,11 +301,11 @@ func TestSetupRetries(t *testing.T) {
 	ev = <-p1Chan.Incoming
 	require.Equal(t,
 		Event{
-			protocol.Event{
-				EventType: protocol.Started,
-				Descriptor: protocol.Descriptor{
-					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []session.NodeID{"node-0", "node-2"},
+			protocols.Event{
+				EventType: protocols.Started,
+				Descriptor: protocols.Descriptor{
+					Signature:    protocols.Signature{Type: protocols.CKG},
+					Participants: []sessions.NodeID{"node-0", "node-2"},
 					Aggregator:   "helper",
 				},
 			},
@@ -316,11 +316,11 @@ func TestSetupRetries(t *testing.T) {
 	ev = <-p1Chan.Incoming
 	require.Equal(t,
 		Event{
-			protocol.Event{
-				EventType: protocol.Completed,
-				Descriptor: protocol.Descriptor{
-					Signature:    protocol.Signature{Type: protocol.CKG},
-					Participants: []session.NodeID{"node-0", "node-2"},
+			protocols.Event{
+				EventType: protocols.Completed,
+				Descriptor: protocols.Descriptor{
+					Signature:    protocols.Signature{Type: protocols.CKG},
+					Participants: []sessions.NodeID{"node-0", "node-2"},
 					Aggregator:   "helper",
 				},
 			},

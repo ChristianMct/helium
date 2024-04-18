@@ -1,4 +1,4 @@
-package protocol
+package protocols
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -42,8 +42,8 @@ func TestProtocols(t *testing.T) {
 
 		params := TestPN12QP109
 
-		hid := session.NodeID("helper")
-		testSess, err := session.NewTestSession(ts.N, ts.T, params, hid)
+		hid := sessions.NodeID("helper")
+		testSess, err := sessions.NewTestSession(ts.N, ts.T, params, hid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,14 +105,14 @@ func TestProtocols(t *testing.T) {
 	}
 }
 
-func runProto(pd Descriptor, testSess session.TestSession, input Input, t *testing.T) AggregationOutput {
+func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *testing.T) AggregationOutput {
 
 	helperP, err := NewProtocol(pd, testSess.HelperSession)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := session.NewBackgroundContext(testSess.SessParams.ID)
+	ctx := sessions.NewBackgroundContext(testSess.SessParams.ID)
 	incoming := make(chan Share)
 	resc := make(chan AggregationOutput, 1)
 	errc := make(chan error, 1)
@@ -139,7 +139,7 @@ func runProto(pd Descriptor, testSess session.TestSession, input Input, t *testi
 			continue
 		}
 
-		if pd.Signature.Type == DEC && session.NodeID(pd.Signature.Args["target"]) == nid {
+		if pd.Signature.Type == DEC && sessions.NodeID(pd.Signature.Args["target"]) == nid {
 			require.NotNil(t, err, "decryption receiver should not generate a share")
 			continue
 		}
@@ -168,7 +168,7 @@ func runProto(pd Descriptor, testSess session.TestSession, input Input, t *testi
 	return aggOut
 }
 
-func checkOutput(out interface{}, pd Descriptor, testSess session.TestSession, t *testing.T) {
+func checkOutput(out interface{}, pd Descriptor, testSess sessions.TestSession, t *testing.T) {
 
 	nParties := len(testSess.NodeSessions)
 	sk := testSess.SkIdeal
@@ -194,7 +194,7 @@ func checkOutput(out interface{}, pd Descriptor, testSess session.TestSession, t
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	case DEC:
-		recSk, err := testSess.NodeSessions[session.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
+		recSk, err := testSess.NodeSessions[sessions.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
 		if err != nil {
 			t.Fatal(err)
 		}

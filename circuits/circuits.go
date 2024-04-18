@@ -1,12 +1,12 @@
-// Package circuit provides the types and interfaces for defining, parsing and executing circuits.
-package circuit
+// Package circuits provides the types and interfaces for defining, parsing and executing circuits.
+package circuits
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/ChristianMct/helium/protocol"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
@@ -19,7 +19,7 @@ type Circuit func(Runtime) error
 // Runtime defines the interface that is available to circuits to access
 // their execution context.
 type Runtime interface {
-	Parameters() session.FHEParameters
+	Parameters() sessions.FHEParameters
 
 	// Input reads an input operand with the given label from the context.
 	// When specifying the label, the user:
@@ -49,14 +49,14 @@ type Runtime interface {
 	// given reciever.
 	// It expect the users to provide the decryption parameters, including the level
 	// at which the operation is performed and the smudging parameter.
-	DEC(in Operand, rec session.NodeID, params map[string]string) error
+	DEC(in Operand, rec sessions.NodeID, params map[string]string) error
 
 	// PCKS performes the re-encryption of in to the public key of rec.
 	// The the re-encrypted operand is considered an output for the this circuit and the
 	// given reciever.
 	// It expect the users to provide the key-switch parameters, including the level
 	// at which the operation is performed and the smudging parameter.
-	PCKS(in Operand, rec session.NodeID, params map[string]string) error
+	PCKS(in Operand, rec sessions.NodeID, params map[string]string) error
 }
 
 // PublicKeyProvider is an interface for querying public encryption- and evaluation-keys.
@@ -85,9 +85,9 @@ type Signature struct {
 // node ids in the circuit definition.
 type Descriptor struct {
 	Signature
-	session.CircuitID
-	NodeMapping map[string]session.NodeID
-	Evaluator   session.NodeID
+	sessions.CircuitID
+	NodeMapping map[string]sessions.NodeID
+	Evaluator   sessions.NodeID
 }
 
 // Metadata is a type for gathering information about a circuit instance.
@@ -95,8 +95,8 @@ type Descriptor struct {
 type Metadata struct {
 	Descriptor
 	InputSet, Ops, OutputSet utils.Set[OperandLabel]
-	InputsFor, OutputsFor    map[session.NodeID]utils.Set[OperandLabel]
-	KeySwitchOps             map[string]protocol.Signature
+	InputsFor, OutputsFor    map[sessions.NodeID]utils.Set[OperandLabel]
+	KeySwitchOps             map[string]protocols.Signature
 	NeedRlk                  bool
 	GaloisKeys               utils.Set[uint64]
 }
@@ -127,7 +127,7 @@ const (
 
 // Output is a type for circuit outputs. It associates the output operand with the ID of the circuit that has produced it.
 type Output struct {
-	session.CircuitID
+	sessions.CircuitID
 	Operand
 }
 

@@ -13,12 +13,12 @@ import (
 	"log"
 	"slices"
 
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"golang.org/x/net/context"
 )
@@ -34,11 +34,11 @@ import (
 //     encrypted inputs to the compuation. Peer nodes do not need to have an address.
 type Node struct {
 	addr         Address
-	id, helperID session.NodeID
+	id, helperID sessions.NodeID
 	nodeList     List
 
-	// sessions and state
-	sessions *session.SessionStore
+	// sessStore and state
+	sessStore *sessions.Store
 	objectstore.ObjectStore
 
 	upstream Coordinator
@@ -77,7 +77,7 @@ func New(config Config, nodeList List) (node *Node, err error) {
 	}
 
 	// session
-	node.sessions = session.NewSessionStore()
+	node.sessStore = sessions.NewStore()
 	for _, sp := range config.SessionParameters {
 		_, err = node.createNewSession(sp)
 		if err != nil {
@@ -111,7 +111,7 @@ func New(config Config, nodeList List) (node *Node, err error) {
 //   - the method runs the setup and compute phases sequentially.
 //   - only the helper node can issue circuit descriptors.
 //   - loading and verification of the state from persistent storage is not implemented.
-func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, upstream Coordinator, trans Transport) (cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
 
 	node.upstream = upstream
 	node.transport = trans
@@ -122,7 +122,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 		return nil, nil, fmt.Errorf("session `%s` does not exist", sess.ID)
 	}
 
-	ctx = session.ContextWithNodeID(ctx, node.id)
+	ctx = sessions.ContextWithNodeID(ctx, node.id)
 
 	// App loading
 
@@ -138,8 +138,8 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 
 	sigList := setup.DescriptionToSignatureList(*app.SetupDescription)
 
-	cds := make(chan circuit.Descriptor)
-	or := make(chan circuit.Output)
+	cds := make(chan circuits.Descriptor)
+	or := make(chan circuits.Output)
 
 	sc, err := newServicesCoordinator(ctx, node.upstream)
 	if err != nil {
@@ -188,7 +188,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 		go func() {
 			for cd := range cds {
 				node.Logf("new circuit descriptor: %s", cd)
-				cev := compute.Event{CircuitEvent: &circuit.Event{EventType: circuit.Started, Descriptor: cd}}
+				cev := compute.Event{CircuitEvent: &circuits.Event{EventType: circuits.Started, Descriptor: cd}}
 				sc.computeCoordinator.incoming <- cev
 			}
 			node.Logf("user closed circuit discription channel, closing downstream")
@@ -204,7 +204,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 // GetAggregationOutput returns the aggregation output for a given protocol descriptor.
 // If this node is the helper node, the method retrieves the output from the services.
 // If this node is a peer node, the method retrieves the output from the helper node.
-func (node *Node) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
+func (node *Node) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
 	if node.id == node.helperID {
 		switch {
 		case pd.Signature.Type.IsSetup():
@@ -219,7 +219,7 @@ func (node *Node) GetAggregationOutput(ctx context.Context, pd protocol.Descript
 // PutCiphertext registers a new ciphertext for the compute service.
 // If this node is the helper node, the method registers the ciphertext with the service.
 // If this node is a peer node, the method sends the ciphertext to the helper node.
-func (node *Node) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
+func (node *Node) PutCiphertext(ctx context.Context, ct sessions.Ciphertext) error {
 	if node.id == node.helperID {
 		return node.compute.PutCiphertext(ctx, ct)
 	}
@@ -229,7 +229,7 @@ func (node *Node) PutCiphertext(ctx context.Context, ct session.Ciphertext) erro
 // GetCiphertext returns a ciphertext from the compute service.
 // If this node is the helper node, the method retrieves the ciphertext from the service.
 // If this node is a peer node, the method retrieves the ciphertext from the helper node.
-func (node *Node) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
+func (node *Node) GetCiphertext(ctx context.Context, ctID sessions.CiphertextID) (*sessions.Ciphertext, error) {
 	if node.id == node.helperID {
 		return node.compute.GetCiphertext(ctx, ctID)
 	}
@@ -252,7 +252,7 @@ func (node *Node) NodeList() List {
 }
 
 // ID returns the node's ID.
-func (node *Node) ID() session.NodeID {
+func (node *Node) ID() sessions.NodeID {
 	return node.id
 }
 
@@ -274,14 +274,14 @@ func (node *Node) IsHelperNode() bool {
 // SessionProvider interface implementation
 
 // GetSessionFromID returns the session with the given ID.
-func (node *Node) GetSessionFromID(sessionID session.ID) (*session.Session, bool) {
-	return node.sessions.GetSessionFromID(sessionID)
+func (node *Node) GetSessionFromID(sessionID sessions.ID) (*sessions.Session, bool) {
+	return node.sessStore.GetSessionFromID(sessionID)
 }
 
 // GetSessionFromContext returns the session by extracting the session id from the
 // provided context.
-func (node *Node) GetSessionFromContext(ctx context.Context) (*session.Session, bool) {
-	sessID, has := session.IDFromContext(ctx)
+func (node *Node) GetSessionFromContext(ctx context.Context) (*sessions.Session, bool) {
+	sessID, has := sessions.IDFromContext(ctx)
 	if !has {
 		return nil, false
 	}
@@ -330,7 +330,7 @@ func (node *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.Relinearizat
 // Coordinator interface implementation
 
 // Register is called by the transport upon connection of a new peer node.
-func (node *Node) Register(peer session.NodeID) error {
+func (node *Node) Register(peer sessions.NodeID) error {
 	if peer == node.id {
 		return nil // TODO specific to helper-assisted setting
 	}
@@ -338,14 +338,14 @@ func (node *Node) Register(peer session.NodeID) error {
 }
 
 // Unregister is called by the transport upon disconnection of a peer node.
-func (node *Node) Unregister(peer session.NodeID) error {
+func (node *Node) Unregister(peer sessions.NodeID) error {
 	return errors.Join(node.setup.Unregister(peer), node.compute.Unregister(peer))
 }
 
 // FHEProvider interface implementation
 
 // GetParameters returns the parameters from the context's session.
-func (node *Node) GetParameters(ctx context.Context) (session.FHEParameters, error) {
+func (node *Node) GetParameters(ctx context.Context) (sessions.FHEParameters, error) {
 	return node.compute.GetParameters(ctx)
 }
 
@@ -366,8 +366,8 @@ func (node *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 	return node.compute.GetDecryptor(ctx)
 }
 
-func (node *Node) createNewSession(sessParams session.Parameters) (sess *session.Session, err error) {
-	sess, err = node.sessions.NewRLWESession(sessParams, node.id)
+func (node *Node) createNewSession(sessParams sessions.Parameters) (sess *sessions.Session, err error) {
+	sess, err = node.sessStore.NewRLWESession(sessParams, node.id)
 	if err != nil {
 		return sess, err
 	}

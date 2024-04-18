@@ -1,4 +1,4 @@
-package session
+package sessions
 
 import "github.com/tuneinsight/lattigo/v5/core/rlwe"
 

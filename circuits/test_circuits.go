@@ -1,4 +1,4 @@
-package circuit
+package circuits
 
 import (
 	"github.com/tuneinsight/lattigo/v5/he"

@@ -10,12 +10,12 @@ import (
 
 	"github.com/ChristianMct/helium/api"
 	"github.com/ChristianMct/helium/api/pb"
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
-	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services/compute"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -32,17 +32,17 @@ const (
 // In the current implementation, the server is responsible for keeping the event log and
 // a server cannot be restarted after it is closed. // TODO
 type HeliumServer struct {
-	session.PublicKeyProvider
+	sessions.PublicKeyProvider
 	helperNode     *node.Node
-	id             session.NodeID
-	incomingShares chan protocol.Share
+	id             sessions.NodeID
+	incomingShares chan protocols.Share
 
 	// event log
 	events       coordinator.Log[node.Event]
 	eventsClosed bool
 	eventsMu     sync.RWMutex
 
-	nodes   map[session.NodeID]*peer
+	nodes   map[sessions.NodeID]*peer
 	nodesMu sync.RWMutex
 	closing chan struct{}
 
@@ -78,12 +78,12 @@ func NewHeliumServer(helperNode *node.Node) *HeliumServer {
 	hsv.Server = grpc.NewServer(serverOpts...)
 	hsv.Server.RegisterService(&pb.Helium_ServiceDesc, hsv)
 
-	hsv.nodes = make(map[session.NodeID]*peer)
+	hsv.nodes = make(map[sessions.NodeID]*peer)
 	for _, n := range helperNode.NodeList() {
 		hsv.nodes[n.NodeID] = &peer{}
 	}
 
-	hsv.incomingShares = make(chan protocol.Share)
+	hsv.incomingShares = make(chan protocols.Share)
 
 	return hsv
 }
@@ -115,27 +115,27 @@ type nodeTransport struct {
 	s *HeliumServer
 }
 
-func (nt *nodeTransport) IncomingShares() <-chan protocol.Share {
+func (nt *nodeTransport) IncomingShares() <-chan protocols.Share {
 	return nt.s.incomingShares
 }
 
-func (nt *nodeTransport) OutgoingShares() chan<- protocol.Share {
+func (nt *nodeTransport) OutgoingShares() chan<- protocols.Share {
 	return nil
 }
 
-func (nt *nodeTransport) GetAggregationOutput(ctx context.Context, pd protocol.Descriptor) (*protocol.AggregationOutput, error) {
+func (nt *nodeTransport) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (*protocols.AggregationOutput, error) {
 	panic("unimplemented")
 }
 
-func (nt *nodeTransport) GetCiphertext(ctx context.Context, ctID session.CiphertextID) (*session.Ciphertext, error) {
+func (nt *nodeTransport) GetCiphertext(ctx context.Context, ctID sessions.CiphertextID) (*sessions.Ciphertext, error) {
 	panic("unimplemented")
 }
 
-func (nt *nodeTransport) PutCiphertext(ctx context.Context, ct session.Ciphertext) error {
+func (nt *nodeTransport) PutCiphertext(ctx context.Context, ct sessions.Ciphertext) error {
 	panic("unimplemented")
 }
 
-func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.InputProvider) (cdescs chan<- circuit.Descriptor, outs <-chan circuit.Output, err error) {
+func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.InputProvider) (cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
 	return hsv.helperNode.Run(ctx, app, ip, &nodeCoordinator{hsv}, &nodeTransport{s: hsv})
 }
 
@@ -316,7 +316,7 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.Ciphertex
 		return nil, err
 	}
 
-	ct, err := hsv.helperNode.GetCiphertext(ctx, session.CiphertextID(ctid.CiphertextId))
+	ct, err := hsv.helperNode.GetCiphertext(ctx, sessions.CiphertextID(ctid.CiphertextId))
 	if err != nil {
 		return nil, err
 	}

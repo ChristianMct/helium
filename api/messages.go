@@ -5,25 +5,25 @@ import (
 	"fmt"
 
 	"github.com/ChristianMct/helium/api/pb"
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/node"
-	"github.com/ChristianMct/helium/protocol"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/services/setup"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 )
 
-func GetProtocolEvent(event protocol.Event) *pb.ProtocolEvent {
+func GetProtocolEvent(event protocols.Event) *pb.ProtocolEvent {
 	return &pb.ProtocolEvent{
 		Type:        pb.EventType(event.EventType),
 		Descriptor_: GetProtocolDesc(&event.Descriptor),
 	}
 }
 
-func ToProtocolEvent(apiEvent *pb.ProtocolEvent) protocol.Event {
-	return protocol.Event{
-		EventType:  protocol.EventType(apiEvent.Type),
+func ToProtocolEvent(apiEvent *pb.ProtocolEvent) protocols.Event {
+	return protocols.Event{
+		EventType:  protocols.EventType(apiEvent.Type),
 		Descriptor: *ToProtocolDesc(apiEvent.Descriptor_),
 	}
 }
@@ -60,14 +60,14 @@ func GetComputeEvent(event compute.Event) *pb.ComputeEvent {
 func ToComputeEvent(apiEvent *pb.ComputeEvent) compute.Event {
 	event := compute.Event{}
 	if apiEvent.CircuitEvent != nil {
-		event.CircuitEvent = &circuit.Event{
-			EventType:  circuit.EventType(apiEvent.CircuitEvent.Type),
+		event.CircuitEvent = &circuits.Event{
+			EventType:  circuits.EventType(apiEvent.CircuitEvent.Type),
 			Descriptor: *ToCircuitDesc(apiEvent.CircuitEvent.Descriptor_),
 		}
 	}
 	if apiEvent.ProtocolEvent != nil {
-		event.ProtocolEvent = &protocol.Event{
-			EventType:  protocol.EventType(apiEvent.ProtocolEvent.Type),
+		event.ProtocolEvent = &protocols.Event{
+			EventType:  protocols.EventType(apiEvent.ProtocolEvent.Type),
 			Descriptor: *ToProtocolDesc(apiEvent.ProtocolEvent.Descriptor_),
 		}
 	}
@@ -98,7 +98,7 @@ func ToNodeEvent(apiEvent *pb.NodeEvent) node.Event {
 	return event
 }
 
-func GetProtocolDesc(pd *protocol.Descriptor) *pb.ProtocolDescriptor {
+func GetProtocolDesc(pd *protocols.Descriptor) *pb.ProtocolDescriptor {
 	apiDesc := &pb.ProtocolDescriptor{
 		ProtocolType: pb.ProtocolType(pd.Signature.Type),
 		Args:         make(map[string]string, len(pd.Signature.Args)),
@@ -114,22 +114,22 @@ func GetProtocolDesc(pd *protocol.Descriptor) *pb.ProtocolDescriptor {
 	return apiDesc
 }
 
-func ToProtocolDesc(apiPD *pb.ProtocolDescriptor) *protocol.Descriptor {
-	desc := &protocol.Descriptor{
-		Signature:    protocol.Signature{Type: protocol.Type(apiPD.ProtocolType), Args: make(map[string]string)},
-		Aggregator:   session.NodeID(apiPD.Aggregator.NodeId),
-		Participants: make([]session.NodeID, 0, len(apiPD.Participants)),
+func ToProtocolDesc(apiPD *pb.ProtocolDescriptor) *protocols.Descriptor {
+	desc := &protocols.Descriptor{
+		Signature:    protocols.Signature{Type: protocols.Type(apiPD.ProtocolType), Args: make(map[string]string)},
+		Aggregator:   sessions.NodeID(apiPD.Aggregator.NodeId),
+		Participants: make([]sessions.NodeID, 0, len(apiPD.Participants)),
 	}
 	for k, v := range apiPD.Args {
 		desc.Signature.Args[k] = v
 	}
 	for _, p := range apiPD.Participants {
-		desc.Participants = append(desc.Participants, session.NodeID(p.NodeId))
+		desc.Participants = append(desc.Participants, sessions.NodeID(p.NodeId))
 	}
 	return desc
 }
 
-func GetCircuitDesc(cd circuit.Descriptor) *pb.CircuitDescriptor {
+func GetCircuitDesc(cd circuits.Descriptor) *pb.CircuitDescriptor {
 	apiDesc := &pb.CircuitDescriptor{
 		CircuitSignature: &pb.CircuitSignature{
 			Name: string(cd.Name),
@@ -151,15 +151,15 @@ func GetCircuitDesc(cd circuit.Descriptor) *pb.CircuitDescriptor {
 	return apiDesc
 }
 
-func ToCircuitDesc(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
-	cd := &circuit.Descriptor{
-		Signature: circuit.Signature{
-			Name: circuit.Name(apiCd.CircuitSignature.Name),
+func ToCircuitDesc(apiCd *pb.CircuitDescriptor) *circuits.Descriptor {
+	cd := &circuits.Descriptor{
+		Signature: circuits.Signature{
+			Name: circuits.Name(apiCd.CircuitSignature.Name),
 			Args: make(map[string]string, len(apiCd.CircuitSignature.Args)),
 		},
-		CircuitID:   session.CircuitID(apiCd.CircuitID.CircuitID),
-		NodeMapping: make(map[string]session.NodeID, len(apiCd.NodeMapping)),
-		Evaluator:   session.NodeID(apiCd.Evaluator.NodeId),
+		CircuitID:   sessions.CircuitID(apiCd.CircuitID.CircuitID),
+		NodeMapping: make(map[string]sessions.NodeID, len(apiCd.NodeMapping)),
+		Evaluator:   sessions.NodeID(apiCd.Evaluator.NodeId),
 	}
 
 	for k, v := range apiCd.CircuitSignature.Args {
@@ -167,13 +167,13 @@ func ToCircuitDesc(apiCd *pb.CircuitDescriptor) *circuit.Descriptor {
 	}
 
 	for s, nid := range apiCd.NodeMapping {
-		cd.NodeMapping[s] = session.NodeID(nid.NodeId)
+		cd.NodeMapping[s] = sessions.NodeID(nid.NodeId)
 	}
 
 	return cd
 }
 
-func GetShare(s *protocol.Share) (*pb.Share, error) {
+func GetShare(s *protocols.Share) (*pb.Share, error) {
 	outShareBytes, err := s.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -192,34 +192,34 @@ func GetShare(s *protocol.Share) (*pb.Share, error) {
 	return apiShare, nil
 }
 
-func ToShare(s *pb.Share) (protocol.Share, error) {
+func ToShare(s *pb.Share) (protocols.Share, error) {
 	desc := s.GetMetadata()
-	pID := protocol.ID(desc.GetProtocolID().GetProtocolID())
-	pType := protocol.Type(desc.ProtocolType)
+	pID := protocols.ID(desc.GetProtocolID().GetProtocolID())
+	pType := protocols.Type(desc.ProtocolType)
 	share := pType.Share()
 	if share == nil {
-		return protocol.Share{}, fmt.Errorf("unknown share type: %s", pType)
+		return protocols.Share{}, fmt.Errorf("unknown share type: %s", pType)
 	}
-	ps := protocol.Share{
-		ShareMetadata: protocol.ShareMetadata{
+	ps := protocols.Share{
+		ShareMetadata: protocols.ShareMetadata{
 			ProtocolID:   pID,
 			ProtocolType: pType,
-			From:         make(utils.Set[session.NodeID]),
+			From:         make(utils.Set[sessions.NodeID]),
 		},
 		MHEShare: share,
 	}
 	for _, nid := range desc.AggregateFor {
-		ps.From.Add(session.NodeID(nid.NodeId))
+		ps.From.Add(sessions.NodeID(nid.NodeId))
 	}
 
 	err := ps.MHEShare.UnmarshalBinary(s.GetShare())
 	if err != nil {
-		return protocol.Share{}, err
+		return protocols.Share{}, err
 	}
 	return ps, nil
 }
 
-func GetCiphertext(ct *session.Ciphertext) (*pb.Ciphertext, error) {
+func GetCiphertext(ct *sessions.Ciphertext) (*pb.Ciphertext, error) {
 	ctBytes, err := ct.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -231,10 +231,10 @@ func GetCiphertext(ct *session.Ciphertext) (*pb.Ciphertext, error) {
 	}, nil
 }
 
-func ToCiphertext(apiCt *pb.Ciphertext) (*session.Ciphertext, error) {
-	var ct session.Ciphertext
-	ct.CiphertextMetadata.ID = session.CiphertextID(apiCt.Metadata.GetId().CiphertextId)
-	ct.CiphertextMetadata.Type = session.CiphertextType(apiCt.Metadata.GetType())
+func ToCiphertext(apiCt *pb.Ciphertext) (*sessions.Ciphertext, error) {
+	var ct sessions.Ciphertext
+	ct.CiphertextMetadata.ID = sessions.CiphertextID(apiCt.Metadata.GetId().CiphertextId)
+	ct.CiphertextMetadata.Type = sessions.CiphertextType(apiCt.Metadata.GetType())
 	err := ct.Ciphertext.UnmarshalBinary(apiCt.Ciphertext)
 	if err != nil {
 		return nil, err

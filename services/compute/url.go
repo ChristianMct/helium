@@ -5,7 +5,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/sessions"
 )
 
 // URL defines a URL format to serve as ciphertext identifier for
@@ -22,16 +22,16 @@ func ParseURL(s string) (*URL, error) {
 }
 
 // NodeID returns the host part of the URL as a NodeID.
-func (u *URL) NodeID() session.NodeID {
-	return session.NodeID(u.Host)
+func (u *URL) NodeID() sessions.NodeID {
+	return sessions.NodeID(u.Host)
 }
 
-func (u *URL) CiphertextBaseID() session.CiphertextID {
-	return session.CiphertextID(path.Base(u.Path))
+func (u *URL) CiphertextBaseID() sessions.CiphertextID {
+	return sessions.CiphertextID(path.Base(u.Path))
 }
 
-func (u *URL) CiphertextID() session.CiphertextID {
-	return session.CiphertextID(u.String())
+func (u *URL) CiphertextID() sessions.CiphertextID {
+	return sessions.CiphertextID(u.String())
 }
 
 // CircuitID returns the circuit id part of the URL, if any.

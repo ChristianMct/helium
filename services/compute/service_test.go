@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ChristianMct/helium/circuit"
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/protocol"
-	"github.com/ChristianMct/helium/session"
+	"github.com/ChristianMct/helium/protocols"
+	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -21,18 +21,18 @@ import (
 )
 
 type TestCircuitSig struct {
-	circuit.Signature
+	circuits.Signature
 	ExpResult interface{}
 }
 
 type testSetting struct {
 	N        int // N - total parties
 	T        int // T - parties in the access structure
-	Reciever session.NodeID
+	Reciever sessions.NodeID
 	Rep      int // numer of repetition for each circuit
 }
 
-var testNodeMapping = map[string]session.NodeID{"p1": "node-0", "p2": "node-1", "eval": "helper"}
+var testNodeMapping = map[string]sessions.NodeID{"p1": "node-0", "p2": "node-1", "eval": "helper"}
 
 var testSettings = []testSetting{
 	{N: 2, Reciever: "node-0"},
@@ -45,10 +45,10 @@ var testSettings = []testSetting{
 type testnode struct {
 	*Service
 	InputProvider
-	*session.Session
+	*sessions.Session
 
-	OutputReceiver chan circuit.Output
-	Outputs        map[session.CircuitID]circuit.Output
+	OutputReceiver chan circuits.Output
+	Outputs        map[sessions.CircuitID]circuits.Output
 }
 
 func TestCloudAssistedComputeBGV(t *testing.T) {
@@ -61,8 +61,8 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 	}
 
 	var testCircuitSigs = []TestCircuitSig{
-		{Signature: circuit.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: uint64(3)},
-		{Signature: circuit.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: uint64(2)},
+		{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: uint64(3)},
+		{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: uint64(2)},
 	}
 
 	nodeIDtoTestInput := func(nid string) []uint64 {
@@ -85,26 +85,26 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
-			hid := session.NodeID("helper")
+			hid := sessions.NodeID("helper")
 
-			testSess, err := session.NewTestSession(ts.N, ts.T, bgvParamsLiteral, hid)
+			testSess, err := sessions.NewTestSession(ts.N, ts.T, bgvParamsLiteral, hid)
 			if err != nil {
 				t.Fatal(err)
 			}
 			sessParams := testSess.SessParams
 
-			ctx := session.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(sessParams.ID)
 
 			nids := utils.NewSet(sessParams.Nodes)
 
-			all := make(map[session.NodeID]*testnode, ts.N+1)
+			all := make(map[sessions.NodeID]*testnode, ts.N+1)
 			clou := new(testnode)
 			all["helper"] = clou
 
 			conf := ServiceConfig{
 				CircQueueSize:        300,
 				MaxCircuitEvaluation: 5,
-				Protocols: protocol.ExecutorConfig{
+				Protocols: protocols.ExecutorConfig{
 					SigQueueSize:     300,
 					MaxProtoPerNode:  1,
 					MaxAggregation:   1,
@@ -116,10 +116,10 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			clou.OutputReceiver = make(chan circuit.Output)
-			clou.Outputs = make(map[session.CircuitID]circuit.Output)
+			clou.OutputReceiver = make(chan circuits.Output)
+			clou.Outputs = make(map[sessions.CircuitID]circuits.Output)
 
-			clients := make(map[session.NodeID]*testnode, ts.N)
+			clients := make(map[sessions.NodeID]*testnode, ts.N)
 			for nid := range nids {
 				nid := nid
 				cli := new(testnode)
@@ -130,18 +130,18 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				}
 
 				require.Nil(t, err)
-				cli.InputProvider = func(ctx context.Context, _ session.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
+				cli.InputProvider = func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
 					return nodeIDtoTestInput(string(nid)), nil
 				}
-				cli.OutputReceiver = make(chan circuit.Output)
-				cli.Outputs = make(map[session.CircuitID]circuit.Output)
+				cli.OutputReceiver = make(chan circuits.Output)
+				cli.Outputs = make(map[sessions.CircuitID]circuits.Output)
 				clou.Executor.Register(nid)
 				clients[nid] = cli
 				all[nid] = cli
 			}
 
 			for _, n := range all {
-				err = n.RegisterCircuits(circuit.TestCircuits)
+				err = n.RegisterCircuits(circuits.TestCircuits)
 				require.Nil(t, err)
 			}
 
@@ -166,12 +166,12 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				})
 			}
 
-			cds := make([]circuit.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
-			expResult := make(map[session.CircuitID]uint64)
+			cds := make([]circuits.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
+			expResult := make(map[sessions.CircuitID]uint64)
 			for _, tc := range testCircuitSigs {
 				for r := 0; r < ts.Rep; r++ {
-					cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
-					cd := circuit.Descriptor{
+					cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
+					cd := circuits.Descriptor{
 						Signature:   tc.Signature,
 						CircuitID:   cid,
 						NodeMapping: testNodeMapping,
@@ -229,8 +229,8 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 	}
 
 	var testCircuitSigs = []TestCircuitSig{
-		{Signature: circuit.Signature{Name: "ckks-add-2-dec", Args: nil}, ExpResult: 1.0},
-		{Signature: circuit.Signature{Name: "ckks-mul-2-dec", Args: nil}, ExpResult: 0.2222222222222222},
+		{Signature: circuits.Signature{Name: "ckks-add-2-dec", Args: nil}, ExpResult: 1.0},
+		{Signature: circuits.Signature{Name: "ckks-mul-2-dec", Args: nil}, ExpResult: 0.2222222222222222},
 	}
 
 	nodeIDtoTestInput := func(nid string) []float64 {
@@ -253,26 +253,26 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
-			hid := session.NodeID("helper")
+			hid := sessions.NodeID("helper")
 
-			testSess, err := session.NewTestSession(ts.N, ts.T, ckksParamsLiteral, hid)
+			testSess, err := sessions.NewTestSession(ts.N, ts.T, ckksParamsLiteral, hid)
 			if err != nil {
 				t.Fatal(err)
 			}
 			sessParams := testSess.SessParams
 
-			ctx := session.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(sessParams.ID)
 
 			nids := utils.NewSet(sessParams.Nodes)
 
-			all := make(map[session.NodeID]*testnode, ts.N+1)
+			all := make(map[sessions.NodeID]*testnode, ts.N+1)
 			clou := new(testnode)
 			all["helper"] = clou
 
 			conf := ServiceConfig{
 				CircQueueSize:        300,
 				MaxCircuitEvaluation: 5,
-				Protocols: protocol.ExecutorConfig{
+				Protocols: protocols.ExecutorConfig{
 					SigQueueSize:     300,
 					MaxProtoPerNode:  1,
 					MaxAggregation:   1,
@@ -284,10 +284,10 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			clou.OutputReceiver = make(chan circuit.Output)
-			clou.Outputs = make(map[session.CircuitID]circuit.Output)
+			clou.OutputReceiver = make(chan circuits.Output)
+			clou.Outputs = make(map[sessions.CircuitID]circuits.Output)
 
-			clients := make(map[session.NodeID]*testnode, ts.N)
+			clients := make(map[sessions.NodeID]*testnode, ts.N)
 			for nid := range nids {
 				nid := nid
 				cli := new(testnode)
@@ -298,18 +298,18 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				}
 
 				require.Nil(t, err)
-				cli.InputProvider = func(ctx context.Context, _ session.CircuitID, ol circuit.OperandLabel, _ session.Session) (any, error) {
+				cli.InputProvider = func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
 					return nodeIDtoTestInput(string(nid)), nil
 				}
-				cli.OutputReceiver = make(chan circuit.Output)
-				cli.Outputs = make(map[session.CircuitID]circuit.Output)
+				cli.OutputReceiver = make(chan circuits.Output)
+				cli.Outputs = make(map[sessions.CircuitID]circuits.Output)
 				clou.Executor.Register(nid)
 				clients[nid] = cli
 				all[nid] = cli
 			}
 
 			for _, n := range all {
-				err = n.RegisterCircuits(circuit.TestCircuits)
+				err = n.RegisterCircuits(circuits.TestCircuits)
 				require.Nil(t, err)
 			}
 
@@ -334,12 +334,12 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				})
 			}
 
-			cds := make([]circuit.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
-			expResult := make(map[session.CircuitID]float64)
+			cds := make([]circuits.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
+			expResult := make(map[sessions.CircuitID]float64)
 			for _, tc := range testCircuitSigs {
 				for r := 0; r < ts.Rep; r++ {
-					cid := session.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
-					cd := circuit.Descriptor{
+					cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
+					cd := circuits.Descriptor{
 						Signature:   tc.Signature,
 						CircuitID:   cid,
 						NodeMapping: testNodeMapping,
