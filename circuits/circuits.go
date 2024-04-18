@@ -86,7 +86,7 @@ type Signature struct {
 type Descriptor struct {
 	Signature
 	sessions.CircuitID
-	NodeMapping map[string]sessions.NodeID
+	NodeMapping map[string]sessions.NodeID // TODO: nil node mapping is identity mapping
 	Evaluator   sessions.NodeID
 }
 

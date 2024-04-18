@@ -443,6 +443,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					panic(err)
 				}
 				s.queuedCircuits <- cev.Descriptor
+				s.Logf("circuit %s queued", cev.Descriptor.CircuitID)
 			case circuits.Completed, circuits.Failed:
 				s.runningCircuitsMu.Lock()
 				delete(s.runningCircuits, ev.CircuitEvent.CircuitID)
