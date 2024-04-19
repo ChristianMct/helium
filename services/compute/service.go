@@ -39,6 +39,11 @@ type FHEProvider interface {
 	GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error)
 }
 
+type OperandProvider interface {
+	GetOperand(circuits.OperandLabel) (*circuits.Operand, bool)
+	PutOperand(circuits.OperandLabel, *circuits.Operand) error
+}
+
 // CircuitRuntime is the interface of a circuit's execution environment.
 // There are two notable instantiation of this interface:
 //   - evaluator: the node that evaluates the circuit
@@ -129,7 +134,8 @@ type Service struct {
 
 	completedCircuits chan circuits.Descriptor
 
-	// upstream coordinator
+	opStoreMu sync.RWMutex
+	opStore   map[circuits.OperandLabel]*circuits.Operand
 
 	// downstream coordinator
 	incoming, outgoing chan protocols.Event
@@ -174,7 +180,7 @@ func NewComputeService(ownID sessions.NodeID, sessProv sessions.Provider, conf S
 
 	s.runningCircuits = make(map[sessions.CircuitID]CircuitRuntime)
 
-	//s.running = make(chan struct{})
+	s.opStore = make(map[circuits.OperandLabel]*circuits.Operand)
 
 	s.localOutputs = make(chan circuits.Output)
 	s.outputs = make(map[circuits.OperandLabel]*circuits.Operand)
@@ -443,7 +449,6 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					panic(err)
 				}
 				s.queuedCircuits <- cev.Descriptor
-				s.Logf("circuit %s queued", cev.Descriptor.CircuitID)
 			case circuits.Completed, circuits.Failed:
 				s.runningCircuitsMu.Lock()
 				delete(s.runningCircuits, ev.CircuitEvent.CircuitID)
@@ -477,7 +482,9 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 				}
 				s.runningCircuitsMu.RUnlock()
 
-				c.CompletedProtocol(pev.Descriptor)
+				if err := c.CompletedProtocol(pev.Descriptor); err != nil {
+					panic(err)
+				}
 			}
 
 		}
@@ -569,6 +576,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 			pkProvider:  s.pubkeyBackend,
 			protoExec:   s,
 			fheProvider: s,
+			opProvider:  s,
 		}
 	} else {
 		cr = &participantRuntime{
@@ -598,6 +606,8 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 
 func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor, upstreamChan coordinator.Channel[Event]) (err error) {
 
+	s.Logf("start running circuit %s", cd.CircuitID)
+
 	s.runningCircuitsMu.RLock()
 	cinst, has := s.runningCircuits[cd.CircuitID]
 	s.runningCircuitsMu.RUnlock()
@@ -626,6 +636,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor, upstre
 	if err != nil {
 		return fmt.Errorf("error at circuit initialization: %w", err)
 	}
+
 	//<-s.running // waits for the Run function to be called
 
 	if s.isEvaluator(cd) {
@@ -942,6 +953,20 @@ func (s *Service) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 
 	return rlwe.NewDecryptor(sess.Params, rlwe.NewSecretKey(sess.Params)), nil // decryptor under sk=0 (sk is determined at output)
 
+}
+
+func (s *Service) PutOperand(opl circuits.OperandLabel, op *circuits.Operand) error {
+	s.opStoreMu.Lock()
+	s.opStore[opl] = op
+	s.opStoreMu.Unlock()
+	return nil
+}
+
+func (s *Service) GetOperand(opl circuits.OperandLabel) (*circuits.Operand, bool) {
+	s.opStoreMu.RLock()
+	op, has := s.opStore[opl]
+	s.opStoreMu.RUnlock()
+	return op, has
 }
 
 func (s *Service) getCircuitFromContext(ctx context.Context) (CircuitRuntime, error) {

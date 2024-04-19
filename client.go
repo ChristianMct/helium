@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"time"
@@ -82,12 +83,10 @@ func (hc *HeliumClient) Run(ctx context.Context, app node.App, ip compute.InputP
 		}
 	}()
 
-	cdesc, outs, err := hc.node.Run(ctx, app, ip, hc, hc)
+	var cdesc chan<- circuits.Descriptor
+	cdesc, outs, err = hc.node.Run(ctx, app, ip, hc, hc)
 	close(cdesc) // TODO: client submission of circuit descriptions is not yet supported
-	if err != nil {
-		return nil, err
-	}
-	return outs, nil
+	return
 }
 
 func (hc *HeliumClient) OutgoingShares() chan<- protocols.Share {
@@ -162,7 +161,7 @@ func (hc *HeliumClient) Register(ctx context.Context) (upstream *coordinator.Cha
 			if err != nil {
 				close(eventsStream)
 				if !errors.Is(err, io.EOF) {
-					panic(fmt.Errorf("error on stream: %s", err))
+					log.Printf("[client] error on stream: %s", err)
 				}
 				return
 			}
@@ -224,6 +223,10 @@ func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
 		panic(err)
 	}
 	return ctx
+}
+
+func (hc *HeliumClient) NodeID() sessions.NodeID {
+	return hc.node.ID()
 }
 
 func readPresentFromStream(stream grpc.ClientStream) (int, error) {

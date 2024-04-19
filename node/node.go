@@ -180,11 +180,10 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 		}
 	}()
 
-	<-node.setupDone
-
-	node.Logf("setup done, starting compute phase")
-
 	if node.IsHelperNode() {
+		<-node.setupDone
+
+		node.Logf("setup done, starting compute phase")
 		go func() {
 			for cd := range cds {
 				node.Logf("new circuit descriptor: %s", cd)
@@ -373,6 +372,14 @@ func (node *Node) createNewSession(sessParams sessions.Parameters) (sess *sessio
 	}
 
 	return sess, nil
+}
+
+func (s *Node) PutOperand(opl circuits.OperandLabel, op *circuits.Operand) error {
+	return s.compute.PutOperand(opl, op)
+}
+
+func (s *Node) GetOperand(opl circuits.OperandLabel) (*circuits.Operand, bool) {
+	return s.compute.GetOperand(opl)
 }
 
 // func (node *Node) sendShares(ctx context.Context) {

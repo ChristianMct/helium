@@ -47,6 +47,7 @@ type evaluatorRuntime struct {
 
 	// data
 	inputs, ops, outputs map[circuits.OperandLabel]*circuits.FutureOperand
+	opProvider           OperandProvider
 
 	// eval
 	eval he.Evaluator
@@ -154,7 +155,10 @@ func (se *evaluatorRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOpe
 }
 
 func (se *evaluatorRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
-	panic("not supported yet") // TODO implement
+	if op, has := se.opProvider.GetOperand(opl); has {
+		return op
+	}
+	panic("trying to load an unkown operand")
 }
 
 func (se *evaluatorRuntime) NewOperand(opl circuits.OperandLabel) *circuits.Operand {

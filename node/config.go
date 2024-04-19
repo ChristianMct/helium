@@ -99,7 +99,7 @@ func ValidateConfig(config Config, nl List) error {
 		return fmt.Errorf("node list is empty or nil")
 	}
 	if nl.AddressOf(config.HelperID) == "" {
-		return fmt.Errorf("helper ID `%s` not found in the node list", config.HelperID)
+		return fmt.Errorf("no address for helper node `%s` in the node list", config.HelperID)
 	}
 	return nil
 }

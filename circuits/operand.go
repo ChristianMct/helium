@@ -34,8 +34,8 @@ type OperandLabel string
 // FutureOperand is a type for operands for which the actual ciphertext
 // is not known yet and will be set later. It enables waiting on operands.
 type FutureOperand struct {
-	Operand
-	c chan struct{}
+	Operand // TODO should hid this field to prevent user to access not-yet-set operands
+	c       chan struct{}
 }
 
 // NewFutureOperand creates a new future operand with the given label.
