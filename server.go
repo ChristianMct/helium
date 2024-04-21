@@ -18,6 +18,7 @@ import (
 	"github.com/ChristianMct/helium/sessions"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -69,10 +70,10 @@ func NewHeliumServer(helperNode *node.Node) *HeliumServer {
 		grpc.MaxSendMsgSize(MaxMsgSize),
 		grpc.StatsHandler(&hsv.statsHandler),
 		grpc.ChainUnaryInterceptor(interceptors...),
-		// grpc.KeepaliveParams(keepalive.ServerParameters{
-		// 	Time:    KeepaliveTime,
-		// 	Timeout: KeepaliveTime,
-		// }),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    KeepaliveTime,
+			Timeout: KeepaliveTime,
+		}),
 	}
 
 	hsv.Server = grpc.NewServer(serverOpts...)

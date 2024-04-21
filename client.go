@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 const (
@@ -123,7 +124,7 @@ func (hc *HeliumClient) ConnectWithDialer(dialer Dialer) error {
 			grpc.MaxCallSendMsgSize(MaxMsgSize)),
 		grpc.WithStatsHandler(&hc.statsHandler),
 		grpc.WithChainUnaryInterceptor(interceptors...),
-		//grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Second, Timeout: time.Minute}),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Second, Timeout: time.Minute}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 
