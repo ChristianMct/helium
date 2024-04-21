@@ -242,12 +242,16 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 		// stream was terminated by the node or the server
 		case <-cancelled:
 			done = true
-			close(sendQueue)
+			hsv.nodesMu.Lock()
+			close(peer.sendQueue)
+			hsv.nodesMu.Unlock()
 			hsv.Logf("stream context done for %s, err = %s", nodeID, stream.Context().Err())
 
 		// the transport is closing
 		case <-hsv.closing:
-			close(sendQueue)
+			hsv.nodesMu.Lock()
+			close(peer.sendQueue)
+			hsv.nodesMu.Unlock()
 			hsv.Logf("transport closing, closing queue for %s", nodeID)
 		}
 	}
