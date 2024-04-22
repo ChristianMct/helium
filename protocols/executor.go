@@ -557,14 +557,14 @@ func (s *Executor) GetOutput(ctx context.Context, aggOut AggregationOutput, rec 
 // Register is called by the transport when a new peer register itself for the setup.
 func (s *Executor) Register(peer sessions.NodeID) error {
 	s.connectedNodesMu.Lock()
-	defer s.connectedNodesCond.Broadcast()
-	defer s.connectedNodesMu.Unlock()
 
 	if _, has := s.connectedNodes[peer]; has {
 		panic("attempting to register a registered node")
 	}
 
 	s.connectedNodes[peer] = make(utils.Set[ID])
+	s.connectedNodesMu.Unlock()
+	s.connectedNodesCond.Broadcast()
 
 	s.Logf("registered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
