@@ -354,6 +354,9 @@ func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descrip
 			return nil, err
 		}
 		aggOut := <-aggOutC
+		if aggOut.Error != nil {
+			return nil, fmt.Errorf("aggregation error for %s: %w", pd.HID(), aggOut.Error)
+		}
 		out = &aggOut
 		err = s.resBackend.Put(ctx, pd, aggOut.Share)
 		if err != nil {
