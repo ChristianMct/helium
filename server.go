@@ -230,7 +230,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 					done = true
 					hsv.Logf("error on stream send for %s: %s", nodeID, err)
 				}
-				hsv.Logf("sent to node %s: %v", nodeID, evt)
+				//hsv.Logf("sent to node %s: %v", nodeID, evt)
 			} else {
 				done = true
 				hsv.Logf("update queue for %s closed", nodeID)

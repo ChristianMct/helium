@@ -253,7 +253,7 @@ func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan 
 					continue
 				}
 				done, err = p.agg.put(share)
-				p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
+				//p.Logf("new share from %s, done=%v, err=%v", share.From, done, err)
 				if err != nil {
 					done = true // stops aggregating on error
 				}
