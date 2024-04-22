@@ -362,11 +362,10 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 		for _, part := range pd.Participants {
 			s.connectedNodes[part].Remove(pd.ID())
 		}
-		s.connectedNodesMu.Unlock()
-		s.connectedNodesCond.Broadcast()
-
 		delete(s.runningProtos, pid)
 		s.runningProtoMu.Unlock()
+		s.connectedNodesMu.Unlock()
+		s.connectedNodesCond.Broadcast()
 	}
 	//s.runningProtoWg.Add(1)
 
@@ -586,22 +585,23 @@ func (s *Executor) Register(peer sessions.NodeID) error {
 func (s *Executor) Unregister(peer sessions.NodeID) error {
 
 	s.connectedNodesMu.Lock()
+	s.runningProtoMu.RLock()
+
 	pids, has := s.connectedNodes[peer]
 	if !has {
 		panic("unregistering an unregistered node")
 	}
 
-	s.runningProtoMu.RLock()
 	for pid := range pids {
 		p, has := s.runningProtos[pid]
 		if !has {
-			panic("incoherent state: protocol not running but node is registered for it")
+			panic(fmt.Errorf("incoherent state: protocol %s not running but node is registered for it", pid))
 		}
 		p.disconnected <- peer
 	}
-	s.runningProtoMu.RUnlock()
 
 	delete(s.connectedNodes, peer)
+	s.runningProtoMu.RUnlock()
 	s.connectedNodesMu.Unlock()
 
 	s.Logf("unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
