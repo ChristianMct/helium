@@ -4,6 +4,7 @@ package helium
 
 import (
 	"context"
+	"log"
 	"net"
 
 	"github.com/ChristianMct/helium/circuits"
@@ -44,10 +45,13 @@ func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app 
 	}
 
 	hc = NewHeliumClient(n, config.HelperID, nl.AddressOf(config.HelperID))
+
+	log.Println("[client] connecting to helper...")
 	if err := hc.Connect(); err != nil {
 		return nil, nil, err
 	}
 
+	log.Println("[client] running node")
 	outs, err = hc.Run(ctx, app, ip)
 
 	return
