@@ -166,8 +166,11 @@ func (hc *HeliumClient) Register(ctx context.Context) (upstream *coordinator.Cha
 				}
 				return
 			}
-			eventsStream <- api.ToNodeEvent(apiEvent)
 
+			ev := api.ToNodeEvent(apiEvent)
+			log.Printf("[client] received event: %s", ev)
+			eventsStream <- ev
+			log.Printf("[client] fwd event: %s", ev)
 		}
 	}()
 

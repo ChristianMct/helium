@@ -221,7 +221,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 			break
 		}
 	}
-	hsv.Logf("done sending past events to %s, stream is live", nodeID)
+	hsv.Logf("done sending %d past events to %s, stream is live", present, nodeID)
 
 	// Processes the node's sendQueue. The sendQueue channel is closed when exiting the loop
 	cancelled := stream.Context().Done()
@@ -234,6 +234,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 					done = true
 					hsv.Logf("error on stream send for %s: %s", nodeID, err)
 				}
+				hsv.Logf("sent to node %s: %s", nodeID, evt)
 			} else {
 				done = true
 				hsv.Logf("update queue for %s closed", nodeID)
