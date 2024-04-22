@@ -193,7 +193,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 	if !has {
 		panic(fmt.Errorf("invalid node id: %s", nodeID))
 	}
-	sendQueue := make(chan node.Event, 100)
+	sendQueue := make(chan node.Event, 100000)
 	peer.sendQueue = sendQueue
 	if hsv.eventsClosed {
 		close(sendQueue)
