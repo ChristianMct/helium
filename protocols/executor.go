@@ -211,13 +211,14 @@ func (s *Executor) Run(ctx context.Context, trans Transport) error { // TODO: ca
 
 				s.runningProtoMu.RLock()
 				proto, protoExists := s.runningProtos[incShare.ProtocolID]
-				s.runningProtoMu.RUnlock()
 				if !protoExists {
 					err := fmt.Errorf("invalide incoming share from sender %s: protocol %s is not running", incShare.From, incShare.ProtocolID)
 					s.Logf("error recieving share: %s", err)
+					s.runningProtoMu.RUnlock()
 					continue
 				}
 				proto.incoming <- incShare
+				s.runningProtoMu.RUnlock()
 			case <-doneWithShareTransport:
 				s.Logf("is done with share transport")
 				return nil
@@ -334,7 +335,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 	var disconnected chan sessions.NodeID
 	s.runningProtoMu.Lock()
 	s.connectedNodesMu.RLock()
-	incoming := make(chan Share)
+	incoming := make(chan Share, len(pd.Participants))
 	disconnected = make(chan sessions.NodeID, len(pd.Participants))
 	s.runningProtos[pid] = struct {
 		pd           Descriptor
@@ -420,8 +421,8 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 			aggOut.Error = fmt.Errorf("node %s disconnected before providing its share", participantID)
 		}
 	}
-	cancelAgg()
 	clearProtocol()
+	cancelAgg()
 
 	if aggOut.Error != nil {
 		s.upstream.Outgoing <- Event{EventType: Failed, Descriptor: pd}
