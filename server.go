@@ -146,7 +146,6 @@ func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.Input
 func (hsv *HeliumServer) AppendEventToLog(event node.Event) {
 	hsv.mu.Lock()
 	hsv.events = append(hsv.events, event)
-
 	for nodeID, node := range hsv.nodes {
 		if node.sendQueue != nil {
 			select {
@@ -240,16 +239,10 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 		// stream was terminated by the node or the server
 		case <-cancelled:
 			done = true
-			hsv.mu.Lock()
-			close(peer.sendQueue)
-			hsv.mu.Unlock()
 			hsv.Logf("stream context done for %s, err = %s", nodeID, stream.Context().Err())
 
 		// the transport is closing
 		case <-hsv.closing:
-			hsv.mu.Lock()
-			close(peer.sendQueue)
-			hsv.mu.Unlock()
 			hsv.Logf("transport closing, closing queue for %s", nodeID)
 		}
 	}
@@ -258,10 +251,12 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 	peer.sendQueue = nil
 	hsv.mu.Unlock()
 
+	hsv.Logf("unregistering %s...", nodeID)
 	err = hsv.helperNode.Unregister(nodeID)
 	if err != nil {
 		panic(err)
 	}
+	hsv.Logf("unregistered %s", nodeID)
 
 	return nil
 }

@@ -590,9 +590,7 @@ func (s *Executor) Unregister(peer sessions.NodeID) error {
 	if !has {
 		panic("unregistering an unregistered node")
 	}
-
 	s.DisconnectedNode(peer)
-
 	delete(s.connectedNodes, peer)
 	s.connectedNodesMu.Unlock()
 
