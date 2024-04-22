@@ -489,6 +489,17 @@ func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor)
 		return nil, fmt.Errorf("could not extract session from context")
 	}
 
+	s.connectedNodesMu.Lock()
+	for _, part := range pd.Participants {
+		if pids, has := s.connectedNodes[part]; !has {
+			s.connectedNodesMu.Unlock()
+			return nil, fmt.Errorf("participant %s not registered", part)
+		} else {
+			pids.Add(pd.ID())
+		}
+	}
+	s.connectedNodesMu.Unlock()
+
 	agg := s.runAsAggregator(ctx, sess, pd)
 	return &agg, agg.Error
 }
