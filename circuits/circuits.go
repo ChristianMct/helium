@@ -143,3 +143,13 @@ func (t EventType) String() string {
 func (u Event) String() string {
 	return fmt.Sprintf("%s: %s", u.EventType, u.Descriptor)
 }
+
+// IDFromProtocolDescriptor returns the circuit ID from a protocol descriptor. // TODO cleaner way than op label ?
+func IDFromProtocolDescriptor(pd protocols.Descriptor) sessions.CircuitID {
+	opls, has := pd.Signature.Args["op"]
+	if !has {
+		panic("no op argument in circuit protocol event")
+	}
+	opl := OperandLabel(opls)
+	return opl.CircuitID()
+}

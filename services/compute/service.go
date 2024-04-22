@@ -15,6 +15,7 @@ import (
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services"
 	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
@@ -299,7 +300,9 @@ func (s *Service) init(ctx context.Context, upstreamInc <-chan Event, present in
 
 	// stacks the completed circuit in a queue for processing by Run
 	s.completedCircuits = make(chan circuits.Descriptor, len(complCd))
+	completed := utils.NewEmptySet[sessions.CircuitID]()
 	for _, ccd := range complCd {
+		completed.Add(ccd.CircuitID)
 		s.completedCircuits <- ccd
 	}
 
@@ -311,11 +314,16 @@ func (s *Service) init(ctx context.Context, upstreamInc <-chan Event, present in
 		s.queuedCircuits <- rcd
 	}
 
-	// sends the completed
+	// sends the completed pd to the running circuits
 	for _, cpd := range complPd {
 
 		if !cpd.Signature.Type.IsCompute() {
 			continue
+		}
+
+		cid := circuits.IDFromProtocolDescriptor(cpd)
+		if completed.Contains(cid) {
+			continue // TODO: this would not work for an offline reciever reconnecting: it needs the pd for finalizing dec.
 		}
 
 		if err := s.sendCompletedPdToCircuit(cpd); err != nil {
@@ -519,20 +527,21 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 	return nil
 }
 
+type CircuitNotRunningError struct { // TODO: use more generally
+	CircuitID sessions.CircuitID
+}
+
+func (e CircuitNotRunningError) Error() string {
+	return fmt.Sprintf("circuit %s is not running", e.CircuitID)
+}
+
 func (s *Service) sendCompletedPdToCircuit(pd protocols.Descriptor) error {
-	opls, has := pd.Signature.Args["op"]
-	if !has {
-		panic("no op argument in circuit protocol event")
-	}
-
-	opl := circuits.OperandLabel(opls)
-	cid := opl.CircuitID()
-
+	cid := circuits.IDFromProtocolDescriptor(pd)
 	s.runningCircuitsMu.RLock()
 	c, has := s.runningCircuits[cid]
 	s.runningCircuitsMu.RUnlock()
 	if !has {
-		panic(fmt.Errorf("circuit is not running: %s", cid))
+		return &CircuitNotRunningError{CircuitID: cid}
 	}
 
 	return c.CompletedProtocol(pd)
