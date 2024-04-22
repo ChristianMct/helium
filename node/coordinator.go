@@ -22,6 +22,21 @@ func (ev Event) IsSetup() bool {
 	return ev.SetupEvent != nil
 }
 
+func (ev Event) String() string {
+	switch {
+	case ev.SetupEvent != nil:
+		return fmt.Sprintf("SETUP PROTOCOL %s", ev.SetupEvent.String())
+	case ev.ComputeEvent != nil:
+		switch {
+		case ev.ComputeEvent.CircuitEvent != nil:
+			return fmt.Sprintf("COMPUTE CIRCUIT %s", ev.ComputeEvent.CircuitEvent.String())
+		case ev.ComputeEvent.ProtocolEvent != nil:
+			return fmt.Sprintf("COMPUTE PROTOCOL %s", ev.ComputeEvent.ProtocolEvent.String())
+		}
+	}
+	return "INVALID	EVENT"
+}
+
 type Coordinator coordinator.Coordinator[Event]
 
 type setupCoordinator struct {

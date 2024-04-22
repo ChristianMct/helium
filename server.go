@@ -351,12 +351,12 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Cipherte
 	return &pb.CiphertextID{CiphertextId: string(ct.ID)}, nil
 }
 
-func (s *HeliumServer) PutOperand(opl circuits.OperandLabel, op *circuits.Operand) error {
-	return s.helperNode.PutOperand(opl, op)
+func (hsv *HeliumServer) PutOperand(opl circuits.OperandLabel, op *circuits.Operand) error {
+	return hsv.helperNode.PutOperand(opl, op)
 }
 
-func (s *HeliumServer) GetOperand(opl circuits.OperandLabel) (*circuits.Operand, bool) {
-	return s.helperNode.GetOperand(opl)
+func (hsv *HeliumServer) GetOperand(opl circuits.OperandLabel) (*circuits.Operand, bool) {
+	return hsv.helperNode.GetOperand(opl)
 }
 
 func (hsv *HeliumServer) Logf(msg string, v ...any) {

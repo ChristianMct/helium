@@ -532,7 +532,7 @@ func (s *Service) sendCompletedPdToCircuit(pd protocols.Descriptor) error {
 	c, has := s.runningCircuits[cid]
 	s.runningCircuitsMu.RUnlock()
 	if !has {
-		panic(fmt.Errorf("circuit is not runnig: %s", cid))
+		panic(fmt.Errorf("circuit is not running: %s", cid))
 	}
 
 	return c.CompletedProtocol(pd)

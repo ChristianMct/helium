@@ -375,12 +375,12 @@ func (node *Node) createNewSession(sessParams sessions.Parameters) (sess *sessio
 	return sess, nil
 }
 
-func (s *Node) PutOperand(opl circuits.OperandLabel, op *circuits.Operand) error {
-	return s.compute.PutOperand(opl, op)
+func (node *Node) PutOperand(opl circuits.OperandLabel, op *circuits.Operand) error {
+	return node.compute.PutOperand(opl, op)
 }
 
-func (s *Node) GetOperand(opl circuits.OperandLabel) (*circuits.Operand, bool) {
-	return s.compute.GetOperand(opl)
+func (node *Node) GetOperand(opl circuits.OperandLabel) (*circuits.Operand, bool) {
+	return node.compute.GetOperand(opl)
 }
 
 // func (node *Node) sendShares(ctx context.Context) {
