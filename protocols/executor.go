@@ -318,7 +318,7 @@ func (s *Executor) Run(ctx context.Context, trans Transport) error { // TODO: ca
 	return nil
 }
 
-// runAsAggregator runs the protocol as an aggregator/coordinator. The caller must hold the connectedNodesMu lock. // TODO: check if we can do without that
+// runAsAggregator runs the protocol as an aggregator/coordinator. The caller must write hold the connectedNodesMu lock. // TODO: check if we can do without that
 func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, pd Descriptor) (aggOut AggregationOutput) {
 
 	if !s.isAggregatorFor(pd) {
@@ -354,7 +354,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 			disconnected <- nid
 		}
 	}
-	s.connectedNodesMu.RUnlock()
+	s.connectedNodesMu.Unlock()
 	s.runningProtoMu.Unlock()
 
 	clearProtocol := func() {
