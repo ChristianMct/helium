@@ -317,7 +317,7 @@ func (s *Executor) Run(ctx context.Context, trans Transport) error { // TODO: ca
 	return nil
 }
 
-func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
+func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, pd Descriptor) (aggOut AggregationOutput) {
 
 	if !s.isAggregatorFor(pd) {
 		panic(fmt.Errorf("not the aggregator for protocol"))
@@ -379,7 +379,8 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 	if err != nil {
 		cancelAgg()
 		clearProtocol()
-		return fmt.Errorf("cannot get input for protocol: %w", err)
+		aggOut.Error = fmt.Errorf("cannot get input for protocol: %w", err)
+		return
 	}
 
 	s.upstream.Outgoing <- Event{EventType: Started, Descriptor: pd}
@@ -402,11 +403,10 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 	}
 
 	//go func() {
-	var agg AggregationOutput
-	agg.Descriptor = pd
+	aggOut.Descriptor = pd
 	for done := false; !done; {
 		select {
-		case agg = <-aggregation:
+		case aggOut = <-aggregation:
 			done = true
 		case participantID := <-disconnected:
 
@@ -417,30 +417,17 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 
 			s.Logf("node %s disconnected before providing its share, aborting protocol %s", participantID, pd.HID())
 			done = true
-			agg.Error = fmt.Errorf("node %s disconnected before providing its share", participantID)
+			aggOut.Error = fmt.Errorf("node %s disconnected before providing its share", participantID)
 		}
 	}
 	cancelAgg()
 	clearProtocol()
 
-	if agg.Error != nil {
+	if aggOut.Error != nil {
 		s.upstream.Outgoing <- Event{EventType: Failed, Descriptor: pd}
+		return
 	} else {
 		s.upstream.Outgoing <- Event{EventType: Completed, Descriptor: pd}
-	}
-
-	err = aggOutRec(ctx, agg)
-	if err != nil {
-		return fmt.Errorf("error calling aggregation output receiver: %w", err)
-	}
-
-	if agg.Error != nil {
-		// re-run the failing sig
-		sig := pd.Signature
-		if sig.Type == RKG1 {
-			sig.Type = RKG
-		}
-		return s.runSignature(ctx, sig, aggOutRec)
 	}
 
 	s.runningProtoMu.Lock()
@@ -472,22 +459,38 @@ func (s *Executor) runSignature(ctx context.Context, sig Signature, aggOutRec Ag
 	}
 
 	//s.Logf("getting key operation descriptor: %s", sig)
+	var aggOut AggregationOutput
+	for {
+		// gets a protocol descriptor with available nodes
+		pd := s.getProtocolDescriptor(sig, sess)
 
-	pd := s.getProtocolDescriptor(sig, sess)
+		// attempts to run the protocol
+		if aggOut = s.runAsAggregator(ctx, sess, pd); aggOut.Error == nil {
+			break
+		}
+
+		s.Logf("[%s] error during aggregation: %s, retrying...", pd.HID(), aggOut.Error)
+	}
 
 	//s.Logf("running key operation descriptor: %s", pd)
 
-	return s.runAsAggregator(ctx, sess, pd, aggOutRec)
+	err = aggOutRec(ctx, aggOut)
+	if err != nil {
+		return fmt.Errorf("error calling aggregation output receiver: %w", err)
+	}
+
+	return
 }
 
-func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor, aggOutRec AggregationOutputReceiver) (err error) {
+func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor) (aggOut *AggregationOutput, err error) {
 
 	sess, has := s.sessProvider.GetSessionFromContext(ctx)
 	if !has {
-		return fmt.Errorf("could not extract session from context")
+		return nil, fmt.Errorf("could not extract session from context")
 	}
 
-	return s.runAsAggregator(ctx, sess, pd, aggOutRec)
+	agg := s.runAsAggregator(ctx, sess, pd)
+	return &agg, agg.Error
 }
 
 func (s *Executor) runAsParticipant(ctx context.Context, pd Descriptor) error {

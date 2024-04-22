@@ -60,16 +60,10 @@ func TestExecutor(t *testing.T) {
 						return rkg1AggOut.Share.MHEShare, nil
 					}
 
-					aggOutC := make(chan AggregationOutput, 1) // TODO the next command is blocking, see if we want to make it async
-					err = helper.RunDescriptorAsAggregator(ctx, r1Pd, func(ctx context.Context, ao AggregationOutput) error {
-						aggOutC <- ao
-						return nil
-					})
+					rkg1AggOut, err = helper.RunDescriptorAsAggregator(ctx, r1Pd)
 					if err != nil {
 						return nil, err
 					}
-					rkg1AggOutv := <-aggOutC
-					rkg1AggOut = &rkg1AggOutv
 					if rkg1AggOut.Error != nil {
 						return nil, rkg1AggOut.Error
 					}

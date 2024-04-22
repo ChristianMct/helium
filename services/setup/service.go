@@ -345,20 +345,14 @@ func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descrip
 		}
 	} else {
 		// TODO: prevent double run of protocol
-		aggOutC := make(chan protocols.AggregationOutput, 1)
-		err := s.executor.RunDescriptorAsAggregator(ctx, pd, func(ctx context.Context, ao protocols.AggregationOutput) error {
-			aggOutC <- ao
-			return nil
-		})
+		out, err = s.executor.RunDescriptorAsAggregator(ctx, pd)
 		if err != nil {
 			return nil, err
 		}
-		aggOut := <-aggOutC
-		if aggOut.Error != nil {
-			return nil, fmt.Errorf("aggregation error for %s: %w", pd.HID(), aggOut.Error)
+		if out.Error != nil {
+			return nil, fmt.Errorf("aggregation error for %s: %w", pd.HID(), out.Error)
 		}
-		out = &aggOut
-		err = s.resBackend.Put(ctx, pd, aggOut.Share)
+		err = s.resBackend.Put(ctx, pd, out.Share)
 		if err != nil {
 			return nil, err
 		}
