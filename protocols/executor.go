@@ -318,6 +318,7 @@ func (s *Executor) Run(ctx context.Context, trans Transport) error { // TODO: ca
 	return nil
 }
 
+// runAsAggregator runs the protocol as an aggregator/coordinator. The caller must hold the connectedNodesMu lock. // TODO: check if we can do without that
 func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, pd Descriptor) (aggOut AggregationOutput) {
 
 	if !s.isAggregatorFor(pd) {
@@ -334,7 +335,7 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 	var aggregation <-chan AggregationOutput
 	var disconnected chan sessions.NodeID
 	s.runningProtoMu.Lock()
-	s.connectedNodesMu.RLock()
+	//s.connectedNodesMu.RLock()
 	incoming := make(chan Share, len(pd.Participants))
 	disconnected = make(chan sessions.NodeID, len(pd.Participants))
 	s.runningProtos[pid] = struct {
@@ -498,7 +499,7 @@ func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor)
 			pids.Add(pd.ID())
 		}
 	}
-	s.connectedNodesMu.Unlock()
+	//s.connectedNodesMu.Unlock()
 
 	agg := s.runAsAggregator(ctx, sess, pd)
 	return &agg, agg.Error
@@ -651,7 +652,7 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *sessions.Session) 
 		nodeProto.Add(pd.ID())
 	}
 
-	s.connectedNodesMu.Unlock()
+	//s.connectedNodesMu.Unlock()
 
 	return pd
 }
