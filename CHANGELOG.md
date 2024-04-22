@@ -2,7 +2,7 @@
 
 This file contains a log of the main changes made to the framework. 
 
-## [unrelease] 
+## [v0.2.0] - 22.04.2024 
 
 ### Added
 - CKKS-based sessions.
@@ -15,6 +15,8 @@ This file contains a log of the main changes made to the framework.
 `ckks.ParametersLiteral` and `bgv.ParametersLiteral` are supported.
 - The `circuits.Runtime` interface now provide a single `EvalLocal` method for specifying local operations.
 
+### Fixed 
+- Many deadlocks and concurrency issues.
 
 ## [v0.1.0] - 15.03.2024
 ### Added
