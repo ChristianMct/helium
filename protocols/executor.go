@@ -420,8 +420,8 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 	if agg.Error != nil {
 		// re-run the failing sig
 		sig := pd.Signature
-		if sig.Type == RKG {
-			sig.Type = RKG1
+		if sig.Type == RKG1 {
+			sig.Type = RKG
 		}
 		return s.runSignature(ctx, sig, aggOutRec)
 	}
