@@ -41,10 +41,12 @@ type HeliumServer struct {
 	// event log
 	events       coordinator.Log[node.Event]
 	eventsClosed bool
-	eventsMu     sync.RWMutex
+	//eventsMu     sync.RWMutex
 
-	nodes   map[sessions.NodeID]*peer
-	nodesMu sync.RWMutex
+	mu sync.Mutex
+
+	nodes map[sessions.NodeID]*peer
+	//nodesMu sync.RWMutex
 	closing chan struct{}
 
 	// grpc API
@@ -142,10 +144,9 @@ func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.Input
 
 // AppendEventToLog is called by the server side to append a new event to the log and send it to all connected peers.
 func (hsv *HeliumServer) AppendEventToLog(event node.Event) {
-	hsv.eventsMu.Lock()
+	hsv.mu.Lock()
 	hsv.events = append(hsv.events, event)
 
-	hsv.nodesMu.RLock()
 	for nodeID, node := range hsv.nodes {
 		if node.sendQueue != nil {
 			select {
@@ -155,25 +156,22 @@ func (hsv *HeliumServer) AppendEventToLog(event node.Event) {
 			}
 		}
 	}
-	hsv.nodesMu.RUnlock()
-	hsv.eventsMu.Unlock()
+	hsv.mu.Unlock()
 }
 
 // CloseEventLog is called by the server side to close the event log and stop sending events to connected peers.
 func (hsv *HeliumServer) CloseEventLog() {
-	hsv.eventsMu.Lock()
+	hsv.mu.Lock()
 	if hsv.eventsClosed {
 		panic("events already closed")
 	}
-	hsv.nodesMu.Lock()
 	hsv.eventsClosed = true
 	for _, c := range hsv.nodes {
 		if c.sendQueue != nil {
 			close(c.sendQueue)
 		}
 	}
-	hsv.nodesMu.Unlock()
-	hsv.eventsMu.Unlock()
+	hsv.mu.Unlock()
 }
 
 // Register is a gRPC handler for the Register method of the Helium service.
@@ -185,10 +183,9 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 
 	hsv.Logf("connected %s", nodeID)
 
-	hsv.eventsMu.RLock()
+	hsv.mu.Lock()
 	present := len(hsv.events)
 	pastEvents := hsv.events
-	hsv.nodesMu.Lock()
 	peer, has := hsv.nodes[nodeID]
 	if !has {
 		panic(fmt.Errorf("invalid node id: %s", nodeID))
@@ -198,9 +195,9 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 	if hsv.eventsClosed {
 		close(sendQueue)
 	}
-	hsv.nodesMu.Unlock()
-	hsv.eventsMu.RUnlock() // all events after pastEvents will go on the sendQueue
+	hsv.mu.Unlock() // all events after pastEvents will go on the sendQueue
 
+	hsv.Logf("registering %s...", nodeID)
 	err := hsv.helperNode.Register(nodeID)
 	if err != nil {
 		panic(err)
@@ -234,7 +231,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 					done = true
 					hsv.Logf("error on stream send for %s: %s", nodeID, err)
 				}
-				hsv.Logf("sent to node %s: %s", nodeID, evt)
+				hsv.Logf("sent to node %s: %v", nodeID, evt)
 			} else {
 				done = true
 				hsv.Logf("update queue for %s closed", nodeID)
@@ -243,23 +240,23 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 		// stream was terminated by the node or the server
 		case <-cancelled:
 			done = true
-			hsv.nodesMu.Lock()
+			hsv.mu.Lock()
 			close(peer.sendQueue)
-			hsv.nodesMu.Unlock()
+			hsv.mu.Unlock()
 			hsv.Logf("stream context done for %s, err = %s", nodeID, stream.Context().Err())
 
 		// the transport is closing
 		case <-hsv.closing:
-			hsv.nodesMu.Lock()
+			hsv.mu.Lock()
 			close(peer.sendQueue)
-			hsv.nodesMu.Unlock()
+			hsv.mu.Unlock()
 			hsv.Logf("transport closing, closing queue for %s", nodeID)
 		}
 	}
 
-	hsv.nodesMu.Lock()
+	hsv.mu.Lock()
 	peer.sendQueue = nil
-	hsv.nodesMu.Unlock()
+	hsv.mu.Unlock()
 
 	err = hsv.helperNode.Unregister(nodeID)
 	if err != nil {

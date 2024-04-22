@@ -161,6 +161,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 	// runs the setup phase
 	if node.IsHelperNode() {
 		// TODO: load and verify state from persistent storage
+		node.Logf("running setup phase: %d signatures to run", len(sigList))
 		for _, sig := range sigList {
 			sig := sig
 			err := node.setup.RunSignature(ctx, sig)
