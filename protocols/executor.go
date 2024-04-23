@@ -238,7 +238,6 @@ func (s *Executor) Run(ctx context.Context, trans Transport) error { // TODO: ca
 							//s.Logf("closed signature queue")
 							return nil
 						}
-						s.Logf("picked up signature from queue: %s", qsig.sig)
 						err := s.runSignature(qsig.ctx, qsig.sig, qsig.rec)
 						if err != nil {
 							s.Logf("error: %s", err)

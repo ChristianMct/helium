@@ -268,7 +268,7 @@ func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan 
 		aggOut.Share.ProtocolType = p.pd.Type
 		if err == nil {
 			aggOut.Share = p.agg.getAggregatedShare()
-			p.Logf("aggregation done")
+			//p.Logf("aggregation done")
 		} else {
 			aggOut.Error = err
 			p.Logf("aggregation error: %s", err)
@@ -277,7 +277,7 @@ func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan 
 		close(aggOutChan)
 	}()
 
-	p.Logf("[%s] aggregating shares", p.HID())
+	//p.Logf("[%s] aggregating shares", p.HID())
 
 	return aggOutChan
 }
