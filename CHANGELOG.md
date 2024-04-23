@@ -2,6 +2,12 @@
 
 This file contains a log of the main changes made to the framework. 
 
+## [v0.2.1] - 23.04.2024 
+This update is mainly aimed at triggering the archiving by Zenodo.
+
+### Changed
+- Reduced some log output
+
 ## [v0.2.0] - 22.04.2024 
 
 ### Added
