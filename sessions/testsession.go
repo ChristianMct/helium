@@ -68,10 +68,9 @@ func NewTestSessionFromParams(sp Parameters, helperID NodeID) (*TestSession, err
 	for _, nid := range sp.Nodes {
 
 		spi := sp
-		spi.Secrets = nodeSecrets[nid]
 
 		// computes the ideal secret-key for the test
-		ts.NodeSessions[nid], err = NewSession(spi, nid)
+		ts.NodeSessions[nid], err = NewSession(nid, spi, nodeSecrets[nid])
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +81,7 @@ func NewTestSessionFromParams(sp Parameters, helperID NodeID) (*TestSession, err
 		ts.RlweParams.RingQP().AtLevel(ts.SkIdeal.Value.Q.Level(), ts.SkIdeal.Value.P.Level()).Add(sk.Value, ts.SkIdeal.Value, ts.SkIdeal.Value)
 	}
 
-	ts.HelperSession, err = NewSession(sp, helperID)
+	ts.HelperSession, err = NewSession(helperID, sp, nil)
 	if err != nil {
 		return nil, err
 	}

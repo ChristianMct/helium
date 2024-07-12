@@ -33,7 +33,6 @@ import (
 //   - the peer nodes connect to the helper node and provide their protocol shares and
 //     encrypted inputs to the compuation. Peer nodes do not need to have an address.
 type Node struct {
-	addr         Address
 	id, helperID sessions.NodeID
 	nodeList     List
 
@@ -58,7 +57,7 @@ type Node struct {
 
 // New creates a new Helium node from the provided config and node list.
 // The method returns an error if the config is invalid or if the node list is empty.
-func New(config Config, nodeList List) (node *Node, err error) {
+func New(config Config, nodeList List, secretsProvider SecretProvider) (node *Node, err error) {
 	node = new(Node)
 
 	if err := ValidateConfig(config, nodeList); err != nil {
@@ -66,7 +65,6 @@ func New(config Config, nodeList List) (node *Node, err error) {
 	}
 
 	node.id = config.ID
-	node.addr = config.Address
 	node.helperID = config.HelperID
 	node.nodeList = nodeList
 
@@ -79,7 +77,7 @@ func New(config Config, nodeList List) (node *Node, err error) {
 	// session
 	node.sessStore = sessions.NewStore()
 	for _, sp := range config.SessionParameters {
-		_, err = node.createNewSession(sp)
+		_, err = node.createNewSession(sp, secretsProvider)
 		if err != nil {
 			return nil, err
 		}
@@ -256,16 +254,6 @@ func (node *Node) ID() sessions.NodeID {
 	return node.id
 }
 
-// Address returns the node's address.
-func (node *Node) Address() Address {
-	return node.addr
-}
-
-// HasAddress returns true if the node has an address.
-func (node *Node) HasAddress() bool {
-	return node.addr != ""
-}
-
 // IsHelperNode returns true if the node is the helper node.
 func (node *Node) IsHelperNode() bool {
 	return node.id == node.helperID
@@ -366,8 +354,17 @@ func (node *Node) GetDecryptor(ctx context.Context) (*rlwe.Decryptor, error) {
 	return node.compute.GetDecryptor(ctx)
 }
 
-func (node *Node) createNewSession(sessParams sessions.Parameters) (sess *sessions.Session, err error) {
-	sess, err = node.sessStore.NewRLWESession(sessParams, node.id)
+func (node *Node) createNewSession(sessParams sessions.Parameters, secrets SecretProvider) (sess *sessions.Session, err error) {
+
+	var sec *sessions.Secrets
+	if slices.Contains(sessParams.Nodes, node.id) {
+		sec, err = secrets(sessParams.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	sess, err = node.sessStore.NewRLWESession(node.id, sessParams, sec)
 	if err != nil {
 		return sess, err
 	}

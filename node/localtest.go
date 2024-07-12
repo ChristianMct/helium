@@ -71,12 +71,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	config.SessionParams.ID = "test-session"
 	config.SessionParams.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
 
-	nodeSecrets, err := sessions.GenTestSecretKeys(*config.SessionParams)
-	if err != nil {
-		return nil, err
-	}
-
-	test.SessNodeConfigs, test.HelperConfig = genNodeConfigs(config, test.List, nodeSecrets)
+	test.SessNodeConfigs, test.HelperConfig = genNodeConfigs(config, test.List)
 
 	if config.SessionParams != nil {
 		test.TestSession, err = sessions.NewTestSessionFromParams(*config.SessionParams, test.HelperConfig.ID)
@@ -85,15 +80,22 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 		}
 	}
 
+	secrets, err := sessions.GenTestSecretKeys(test.TestSession.SessParams)
+	if err != nil {
+		return nil, err
+	}
+
 	test.Nodes = make([]*Node, 1+config.PeerNodes)
-	test.HelperNode, err = New(test.HelperConfig, test.List)
+	test.HelperNode, err = New(test.HelperConfig, test.List, nil)
 	if err != nil {
 		return nil, err
 	}
 	test.Nodes[0] = test.HelperNode
 	for i, nc := range test.SessNodeConfigs {
 		var err error
-		test.Nodes[i+1], err = New(nc, test.List)
+		test.Nodes[i+1], err = New(nc, test.List, func(_ sessions.ID) (*sessions.Secrets, error) {
+			return secrets[nc.ID], nil
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -114,7 +116,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 }
 
 // genNodeConfigs generates the necessary NodeConfig for each party specified in the LocalTestConfig.
-func genNodeConfigs(config LocalTestConfig, nl List, secrets map[sessions.NodeID]*sessions.Secrets) (sessNodesConfig []Config, helperNodeConfig Config) {
+func genNodeConfigs(config LocalTestConfig, nl List) (sessNodesConfig []Config, helperNodeConfig Config) {
 
 	tlsConfigs, err := createTLSConfigs(config, nl)
 	if err != nil {
@@ -152,7 +154,6 @@ func genNodeConfigs(config LocalTestConfig, nl List, secrets map[sessions.NodeID
 				MaxCircuitEvaluation: 1,
 			},
 		}
-		sessNodesConfig[i].SessionParameters[0].Secrets = secrets[nid]
 	}
 
 	helperExecConfig := protocols.ExecutorConfig{
@@ -162,7 +163,6 @@ func genNodeConfigs(config LocalTestConfig, nl List, secrets map[sessions.NodeID
 	}
 	helperNodeConfig = Config{
 		ID:                hid,
-		Address:           "local",
 		HelperID:          hid,
 		SessionParameters: []sessions.Parameters{*sp},
 		TLSConfig:         tlsConfigs[hid],

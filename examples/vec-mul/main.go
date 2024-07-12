@@ -35,13 +35,11 @@ var (
 		Threshold:  3,                                                                                             // the number of honest nodes assumed by the system.
 		ShamirPks:  map[sessions.NodeID]mhe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
 		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                                 // the CRS
-		Secrets:    nil,                                                                                           // normally read from a file, simulated here for simplicity (see loadSecrets)
 	}
 
 	// the configuration of peer nodes
 	peerNodeConfig = node.Config{
 		ID:                "",       // read from command line args
-		Address:           "",       // read from command line args
 		HelperID:          "helper", // the node id of the helper node
 		SessionParameters: []sessions.Parameters{sessionParams},
 
@@ -56,7 +54,6 @@ var (
 	// the configuration of the helper node. Similar as for peer node, but enables multiple protocol and circuit evaluations at once.
 	helperConfig = node.Config{
 		ID:                "", // read from command line args
-		Address:           "", // read from command line args
 		HelperID:          "helper",
 		SessionParameters: []sessions.Parameters{sessionParams},
 
@@ -144,17 +141,8 @@ func main() {
 	var config node.Config
 	if nodeID == helperID {
 		config = helperConfig
-		if len(nodeAddr) == 0 {
-			log.Fatal("address of helper node not set, must provide with -address flag")
-		}
-		config.Address = nodeAddr
 	} else {
 		config = peerNodeConfig
-		secrets, err := loadSecrets(config.SessionParameters[0], nodeID) // session node must load their secrets.
-		if err != nil {
-			log.Fatalf("could not load node's secrets: %s", err)
-		}
-		config.SessionParameters[0].Secrets = secrets
 	}
 	config.ID = nodeID
 
@@ -185,7 +173,8 @@ func main() {
 	if nodeID == helperID {
 		statsProvider, cdescs, outs, err = helium.RunHeliumServer(ctx, config, nodelist, app, ip)
 	} else {
-		statsProvider, outs, err = helium.RunHeliumClient(ctx, config, nodelist, app, ip)
+		secrets := loadSecrets(config.SessionParameters[0], nodeID)
+		statsProvider, outs, err = helium.RunHeliumClient(ctx, config, nodelist, secrets, app, ip)
 	}
 	if err != nil {
 		log.Fatalf("could not run node: %s", err)
@@ -234,17 +223,26 @@ func main() {
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
-func loadSecrets(sp sessions.Parameters, nid sessions.NodeID) (secrets *sessions.Secrets, err error) {
+func loadSecrets(params sessions.Parameters, nid sessions.NodeID) node.SecretProvider {
 
-	ss, err := sessions.GenTestSecretKeys(sp)
-	if err != nil {
-		return nil, err
+	var sp node.SecretProvider = func(sid sessions.ID) (*sessions.Secrets, error) {
+
+		if sid != params.ID {
+			return nil, fmt.Errorf("no secret for session %s", sid)
+		}
+
+		ss, err := sessions.GenTestSecretKeys(params)
+		if err != nil {
+			return nil, err
+		}
+
+		secrets, ok := ss[nid]
+		if !ok {
+			return nil, fmt.Errorf("node %s not in session", nid)
+		}
+
+		return secrets, nil
 	}
 
-	secrets, ok := ss[nid]
-	if !ok {
-		return nil, fmt.Errorf("node %s not in session", nid)
-	}
-
-	return
+	return sp
 }

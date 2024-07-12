@@ -18,7 +18,6 @@ import (
 // In the current implementation, only a single session per node is supported.
 type Config struct {
 	ID                sessions.NodeID
-	Address           Address
 	HelperID          sessions.NodeID
 	SessionParameters []sessions.Parameters
 	SetupConfig       setup.ServiceConfig
@@ -118,3 +117,7 @@ type TLSConfig struct {
 	OwnPk            string                     // Own public key as a PEM encoded string
 	OwnSk            string                     // Own secret key as a PEM encoded string
 }
+
+// SecretProvider is a function that returns the secrets for a session,
+// given the session ID.
+type SecretProvider func(sessions.ID) (*sessions.Secrets, error)
