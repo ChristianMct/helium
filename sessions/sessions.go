@@ -34,6 +34,7 @@ type CiphertextID string
 // Session holds the session's critical state.
 type Session struct {
 	Parameters
+	Secrets
 	NodeID NodeID
 
 	Params FHEParameters
@@ -59,11 +60,11 @@ type Parameters struct {
 	Threshold     int
 	ShamirPks     map[NodeID]drlwe.ShamirPublicPoint
 	PublicSeed    []byte
-	*Secrets
+	//*Secrets
 }
 
 // NewSession creates a new session.
-func NewSession(sessParams Parameters, nodeID NodeID) (sess *Session, err error) {
+func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *Session, err error) {
 	sess = new(Session)
 	sess.NodeID = nodeID
 	//sess.ObjectStore = objStore
@@ -109,14 +110,13 @@ func NewSession(sessParams Parameters, nodeID NodeID) (sess *Session, err error)
 	// node re-generates its secret-key material for the session
 	if utils.NewSet(sessParams.Nodes).Contains(nodeID) {
 
-		if sessParams.Secrets == nil || len(sessParams.Secrets.PrivateSeed) == 0 {
+		if secrets == nil || len(secrets.PrivateSeed) == 0 {
 			return nil, fmt.Errorf("session nodes must specify session secrets")
 		}
 
-		sess.Secrets = new(Secrets)
-		sess.PrivateSeed = slices.Clone(sessParams.Secrets.PrivateSeed)
+		sess.PrivateSeed = slices.Clone(secrets.PrivateSeed)
 
-		sessPrng, err := sampling.NewKeyedPRNG(sessParams.Secrets.PrivateSeed)
+		sessPrng, err := sampling.NewKeyedPRNG(secrets.PrivateSeed)
 		if err != nil {
 			return nil, fmt.Errorf("could not create session PRNG: %s", err)
 		}
@@ -132,10 +132,10 @@ func NewSession(sessParams Parameters, nodeID NodeID) (sess *Session, err error)
 		}
 
 		if sessParams.Threshold < len(sessParams.Nodes) {
-			if sessParams.ThresholdSecretKey == nil {
+			if secrets.ThresholdSecretKey == nil {
 				return nil, fmt.Errorf("session nodes must specify threshold secret key when session threshold is less than the number of nodes")
 			}
-			sess.ThresholdSecretKey = &drlwe.ShamirSecretShare{Poly: *sessParams.ThresholdSecretKey.CopyNew()} // TODO: add copy method to Lattigo
+			sess.ThresholdSecretKey = &drlwe.ShamirSecretShare{Poly: *secrets.ThresholdSecretKey.CopyNew()} // TODO: add copy method to Lattigo
 		}
 	}
 

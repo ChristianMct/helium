@@ -14,14 +14,15 @@ import (
 
 func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hsv *HeliumServer, cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
 
-	helperNode, err := node.New(config, nl)
+	helperNode, err := node.New(config, nl, nil) // TODO: assumes that the helper node never has any secrets
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	hsv = NewHeliumServer(helperNode)
 
-	lis, err := net.Listen("tcp", string(config.Address))
+	bindAddress := string(nl.AddressOf(config.ID))
+	lis, err := net.Listen("tcp", bindAddress)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -37,9 +38,9 @@ func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app 
 	return
 }
 
-func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hc *HeliumClient, outs <-chan circuits.Output, err error) {
+func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, secrets node.SecretProvider, app node.App, ip compute.InputProvider) (hc *HeliumClient, outs <-chan circuits.Output, err error) {
 
-	n, err := node.New(config, nl)
+	n, err := node.New(config, nl, secrets)
 	if err != nil {
 		return nil, nil, err
 	}

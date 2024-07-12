@@ -88,7 +88,7 @@ func TestSetup(t *testing.T) {
 			helper := NewHeliumServer(lt.HelperNode)
 			clients := make([]*HeliumClient, ts.N)
 			for i := 0; i < ts.N; i++ {
-				clients[i] = NewHeliumClient(lt.PeerNodes[i], lt.HelperNode.ID(), lt.HelperNode.Address())
+				clients[i] = NewHeliumClient(lt.PeerNodes[i], lt.HelperNode.ID(), "local")
 			}
 
 			lis := bufconn.Listen(buffConBufferSize)
@@ -188,7 +188,7 @@ func TestCompute(t *testing.T) {
 			helper := NewHeliumServer(lt.HelperNode)
 			clients := make([]*HeliumClient, ts.N)
 			for i := 0; i < ts.N; i++ {
-				clients[i] = NewHeliumClient(lt.PeerNodes[i], lt.HelperNode.ID(), lt.HelperNode.Address())
+				clients[i] = NewHeliumClient(lt.PeerNodes[i], lt.HelperNode.ID(), "local")
 			}
 
 			lis := bufconn.Listen(buffConBufferSize)

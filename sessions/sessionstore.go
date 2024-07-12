@@ -22,13 +22,13 @@ func NewStore() *Store {
 	return ss
 }
 
-func (s *Store) NewRLWESession(sessParams Parameters, nodeID NodeID) (sess *Session, err error) {
+func (s *Store) NewRLWESession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *Session, err error) {
 
 	if _, exists := s.sess[sessParams.ID]; exists {
 		return nil, fmt.Errorf("session id already exists: %s", sessParams.ID)
 	}
 
-	sess, err = NewSession(sessParams, nodeID)
+	sess, err = NewSession(nodeID, sessParams, secrets)
 	if err != nil {
 		return nil, err
 	}
