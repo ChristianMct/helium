@@ -8,6 +8,7 @@ import (
 
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v5/he"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -273,4 +274,15 @@ func (sess *Session) String() string {
 		T: %d,
 		CRSKey: %v,
 	}`, sess.ID, sess.NodeID, sess.Nodes, sess.Threshold, sess.PublicSeed)
+}
+
+func NewEvaluator(p FHEParameters, ks rlwe.EvaluationKeySet) he.Evaluator {
+	switch pp := p.(type) {
+	case bgv.Parameters:
+		return bgv.NewEvaluator(pp, ks)
+	case ckks.Parameters:
+		return ckks.NewEvaluator(pp, ks)
+	default:
+		panic(fmt.Errorf("unknown FHE parameters type"))
+	}
 }

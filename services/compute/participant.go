@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/big"
 
 	"golang.org/x/exp/maps"
@@ -268,6 +269,10 @@ func (p *participantRuntime) PCKS(in circuits.Operand, rec sessions.NodeID, para
 // Parameters returns the encryption parameters for the circuit.
 func (p *participantRuntime) Parameters() sessions.FHEParameters {
 	return p.sess.Params
+}
+
+func (p *participantRuntime) Logf(msg string, v ...any) {
+	log.Printf("%s | [%s] %s\n", p.sess.NodeID, p.cd.CircuitID, fmt.Sprintf(msg, v...))
 }
 
 func isRLWEPLaintext(in interface{}) bool {

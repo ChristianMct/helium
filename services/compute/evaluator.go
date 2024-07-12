@@ -12,8 +12,6 @@ import (
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
-	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 )
 
 // KeyOperationRunner is an interface for running key operations.
@@ -99,15 +97,7 @@ func (se *evaluatorRuntime) getEvaluatorForCircuit(params sessions.FHEParameters
 		gks = append(gks, gk)
 	}
 	ks := rlwe.NewMemEvaluationKeySet(rlk, gks...)
-
-	switch pp := params.(type) {
-	case bgv.Parameters:
-		eval = bgv.NewEvaluator(pp, ks)
-	case ckks.Parameters:
-		eval = ckks.NewEvaluator(pp, ks)
-	}
-
-	return eval, nil
+	return sessions.NewEvaluator(params, ks), nil
 
 }
 
