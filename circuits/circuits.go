@@ -161,6 +161,11 @@ func IDFromProtocolDescriptor(pd protocols.Descriptor) sessions.CircuitID {
 	return opl.CircuitID()
 }
 
+// TestRuntime is an implementation of the Runtime interface for testing purposes.
+// It can be initialized from the FHE parameters and circuit inputs, then passed
+// to a Circuit to execute it. It encrypts the requested inputs on-the-fly, under
+// a test secret-key.
+// See the Runtime interface.
 type TestRuntime struct {
 	fheParams      sessions.FHEParameters
 	inputProvider  func(OperandLabel) *rlwe.Plaintext
@@ -174,6 +179,7 @@ type TestRuntime struct {
 	decryptor *rlwe.Decryptor
 }
 
+// NewTestRuntime creates a new TestRuntime instance with the given FHE parameters and input/output functions.
 func NewTestRuntime(fheParams sessions.FHEParameters, inputProvider func(OperandLabel) *rlwe.Plaintext, outputReceiver func(Output)) *TestRuntime {
 	tr := &TestRuntime{}
 	tr.fheParams = fheParams
@@ -187,6 +193,7 @@ func NewTestRuntime(fheParams sessions.FHEParameters, inputProvider func(Operand
 	tr.decryptor = rlwe.NewDecryptor(fheParams, tr.sk)
 	return tr
 }
+
 func (tr *TestRuntime) Parameters() sessions.FHEParameters {
 	return tr.fheParams
 }
