@@ -10,6 +10,7 @@ import (
 // retrieving the completed descriptor.
 type CompleteMap struct {
 	wg              sync.WaitGroup
+	completedCount  int
 	completedProtMu sync.RWMutex
 	completedProt   map[string]chan Descriptor
 	allowUnexpected bool
@@ -44,6 +45,7 @@ func (p *CompleteMap) CompletedProtocol(pd Descriptor) error {
 			return fmt.Errorf("unexpected completed descriptor for signature: %s", pd.Signature)
 		}
 	}
+	p.completedCount++
 	p.completedProtMu.Unlock()
 	pdc <- pd // TODO: will block if protocol completed two times
 	p.wg.Done()
@@ -71,6 +73,12 @@ func (p *CompleteMap) AwaitCompletedDescriptorFor(sig Signature) (pdp *Descripto
 	incDesc <- pd // TODO: haha
 	pdc := pd
 	return &pdc, nil
+}
+
+func (p *CompleteMap) IsComplete() bool {
+	p.completedProtMu.RLock()
+	defer p.completedProtMu.RUnlock()
+	return p.completedCount == len(p.completedProt)
 }
 
 // Wait waits for all protocols to complete.

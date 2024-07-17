@@ -115,28 +115,30 @@ func recoverPresentState(events <-chan Event, present int) (completePd, failPd, 
 
 // Init initializes the setup service from the current state of the protocols.
 // Completed protocols are marked as such, and running protocols are queued for execution.
-func (s *Service) init(upstreamInc <-chan Event, present int) error { // TODO: make private
+// Returns true if the setup is done.
+func (s *Service) init(upstreamInc <-chan Event, present int) (bool, error) {
 
 	var complPd, failPd, runPd, err = recoverPresentState(upstreamInc, present)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// mark completed protocols
 	for _, cpd := range complPd {
 		if err := s.completed.CompletedProtocol(cpd); err != nil {
-			return err
+			return false, err
 		}
 	}
+	setupDone := s.completed.IsComplete()
 
 	// queue running protocols
 	for _, rpd := range runPd {
 		s.incoming <- protocols.Event{EventType: protocols.Started, Descriptor: rpd} // sends a protocol started event downstream
 	}
 
-	s.Logf("service initialized with %d completed, %d failed and %d running protocols (present=%d)", len(complPd), len(failPd), len(runPd), present)
+	s.Logf("service initialized with %d completed, %d failed and %d running protocols (present=%d, setupDone=%v)", len(complPd), len(failPd), len(runPd), present, setupDone)
 
-	return nil
+	return setupDone, nil
 }
 
 // Run runs the setup service as coordinated by the given coordinator.
@@ -174,21 +176,30 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 		close(executorRunReturned)
 	}()
 
+	upstreamOrSetupDone := make(chan struct{})
+
 	// initializes the service from the current state of the protocols
-	if err = s.init(upstreamChan.Incoming, present); err != nil {
+	setupDone, err := s.init(upstreamChan.Incoming, present)
+	if err != nil {
 		return fmt.Errorf("error while initializing service: %w", err)
 	}
-
-	// processes incoming events from the coordinator
-	upstreamDone := make(chan struct{})
-	go func() {
-		for ev := range upstreamChan.Incoming {
-			s.Logf("new coordination event: %s", ev)
-			s.processEvent(ev)     // update local state
-			s.incoming <- ev.Event // pass the event downstream
-		}
-		close(upstreamDone)
-	}()
+	if setupDone {
+		close(upstreamOrSetupDone)
+	} else {
+		// processes incoming events from the coordinator
+		go func() {
+			for ev := range upstreamChan.Incoming {
+				s.Logf("new coordination event: %s", ev)
+				setupDone := s.processEvent(ev) // update local state
+				if setupDone {
+					s.Logf("setup is done")
+					break
+				}
+				s.incoming <- ev.Event // pass the event downstream
+			}
+			close(upstreamOrSetupDone)
+		}()
+	}
 
 	// process downstream outgoing events
 	downstreamDone := make(chan struct{})
@@ -200,20 +211,9 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 		close(downstreamDone)
 	}()
 
-	setupDone := make(chan struct{})
-	go func() {
-		_ = s.completed.Wait()
-		close(setupDone)
-	}()
-
-	select {
-	case <-setupDone:
-		close(s.incoming)
-		s.Logf("setup is done, closing downstream")
-	case <-upstreamDone:
-		s.Logf("upstream coordinator is done, closing downstream")
-		close(s.incoming) // closing downstream
-	}
+	<-upstreamOrSetupDone
+	s.Logf("upstream coordinator or setup is done, closing downstream")
+	close(s.incoming) // closing downstream
 
 	<-executorRunReturned
 	s.Logf("executor Run method returned")
@@ -225,7 +225,7 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 	return nil
 }
 
-func (s *Service) processEvent(ev Event) {
+func (s *Service) processEvent(ev Event) (setupDone bool) {
 
 	if !ev.IsSetupEvent() {
 		panic("non-setup event sent to setup service")
@@ -242,6 +242,8 @@ func (s *Service) processEvent(ev Event) {
 	default:
 		panic("unkown event type")
 	}
+
+	return s.completed.IsComplete()
 }
 
 // RunSignature queues the given signature for execution. This method is called by the helper.

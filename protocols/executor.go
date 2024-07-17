@@ -410,6 +410,10 @@ func (s *Executor) runAsAggregator(ctx context.Context, sess *sessions.Session, 
 			done = true
 		case participantID := <-disconnected:
 
+			if sess.Threshold == len(sess.Nodes) {
+				continue // nothing can be done if the session is full threshold
+			}
+
 			if proto.HasShareFrom(participantID) {
 				s.Logf("node %s disconnected after providing its share, protocol %s", participantID, pd.HID())
 				continue
@@ -491,10 +495,7 @@ func (s *Executor) RunDescriptorAsAggregator(ctx context.Context, pd Descriptor)
 
 	s.connectedNodesMu.Lock()
 	for _, part := range pd.Participants {
-		if pids, has := s.connectedNodes[part]; !has {
-			s.connectedNodesMu.Unlock()
-			return nil, fmt.Errorf("participant %s not registered", part)
-		} else {
+		if pids, has := s.connectedNodes[part]; has {
 			pids.Add(pd.ID())
 		}
 	}
@@ -573,7 +574,15 @@ func (s *Executor) Register(peer sessions.NodeID) error {
 		panic("attempting to register a registered node")
 	}
 
-	s.connectedNodes[peer] = make(utils.Set[ID])
+	protos := make(utils.Set[ID])
+	s.runningProtoMu.RLock()
+	for pid, proto := range s.runningProtos {
+		if slices.Contains(proto.pd.Participants, peer) {
+			protos.Add(pid)
+		}
+	}
+	s.runningProtoMu.RUnlock()
+	s.connectedNodes[peer] = protos
 	s.connectedNodesMu.Unlock()
 	s.connectedNodesCond.Broadcast()
 
@@ -604,7 +613,7 @@ func (s *Executor) Unregister(peer sessions.NodeID) error {
 	s.runningProtoMu.RUnlock()
 	s.connectedNodesMu.Unlock()
 
-	s.Logf("unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	//s.Logf("unregistered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 
@@ -620,15 +629,30 @@ func (s *Executor) getAvailable() utils.Set[sessions.NodeID] {
 
 func (s *Executor) getProtocolDescriptor(sig Signature, sess *sessions.Session) Descriptor {
 	pd := Descriptor{Signature: sig, Aggregator: s.self}
-
-	var available, selected utils.Set[sessions.NodeID]
-	switch sig.Type {
-	case DEC:
-		if sess.Contains(sessions.NodeID(sig.Args["target"])) {
-			selected = utils.NewSingletonSet(sessions.NodeID(sig.Args["target"]))
-			break
+	pd.Participants = s.getParticipants(sig, sess)
+	slices.Sort(pd.Participants)
+	for _, nid := range pd.Participants {
+		if nodeProto, isOnline := s.connectedNodes[nid]; isOnline {
+			nodeProto.Add(pd.ID())
 		}
-		fallthrough
+	}
+	return pd
+}
+
+// getParticipants returns the list of participants for the protocol.
+// If the session is full threshold, the list is the full list of nodes and the method returns immediately.
+// If the session is not full threshold, the method will wait until there are enough nodes available to
+// reach the threshold.
+// When the function returns, the connectedNodesMu lock is held.
+func (s *Executor) getParticipants(sig Signature, sess *sessions.Session) []sessions.NodeID {
+	var available, selected utils.Set[sessions.NodeID]
+
+	fullThreshold := sess.Threshold == len(sess.Nodes)
+	switch {
+	case fullThreshold:
+		selected.Add(sess.Nodes...)
+	case !fullThreshold && sig.Type == DEC && sess.Contains(sessions.NodeID(sig.Args["target"])):
+		selected = utils.NewSingletonSet(sessions.NodeID(sig.Args["target"]))
 	default:
 		selected = utils.NewEmptySet[sessions.NodeID]()
 	}
@@ -644,16 +668,7 @@ func (s *Executor) getProtocolDescriptor(sig Signature, sess *sessions.Session) 
 	}
 
 	selected.AddAll(utils.GetRandomSetOfSize(sess.Threshold-len(selected), available))
-	pd.Participants = selected.Elements()
-	slices.Sort(pd.Participants)
-	for nid := range selected {
-		nodeProto := s.connectedNodes[nid]
-		nodeProto.Add(pd.ID())
-	}
-
-	//s.connectedNodesMu.Unlock()
-
-	return pd
+	return selected.Elements()
 }
 
 func (s *Executor) Logf(msg string, v ...any) {
