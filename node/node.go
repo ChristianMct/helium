@@ -151,8 +151,28 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 	// runs the setup phase
 	if node.IsHelperNode() {
 		go func() {
-			sigList := setup.DescriptionToSignatureList(*app.SetupDescription)
-			// TODO: load and verify state from persistent storage
+
+			// loads the setup state from persistent storage and rebuilds a ("fake") event log
+			// TODO: proper log storing and loading ?
+			setupSigs := setup.DescriptionToSignatureList(*app.SetupDescription)
+			sigList := make([]protocols.Signature, 0, len(setupSigs))
+			for _, sig := range setupSigs {
+				protoCompleted, _ := node.setup.GetCompletedDescriptor(ctx, sig)
+				// TODO: error checking against a keynotfoud type of error to distinguish real failure cases from the absence of a completed descriptor
+				if protoCompleted == nil {
+					sigList = append(sigList, sig)
+				} else {
+					if sig.Type == protocols.RKG {
+						rkg1Desc := *protoCompleted
+						rkg1Desc.Type = protocols.RKG1
+						sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: rkg1Desc}}
+						sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: rkg1Desc}}
+					}
+					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: *protoCompleted}}
+					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: *protoCompleted}}
+				}
+			}
+
 			node.Logf("running setup phase: %d signatures to run", len(sigList))
 			for _, sig := range sigList {
 				sig := sig

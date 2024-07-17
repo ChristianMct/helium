@@ -23,7 +23,7 @@ func (osrb objStoreResultBackend) Has(ctx context.Context, sig protocols.Signatu
 
 	sessid, has := sessions.IDFromContext(ctx)
 	if !has {
-		return false, fmt.Errorf("session id not found in context")
+		return false, sessions.ErrIDNotFoundInContext
 	}
 
 	hasShare, err := osrb.store.IsPresent(fmt.Sprintf("%s/%s-aggshare", sessid, sig))
@@ -41,7 +41,7 @@ func (osrb objStoreResultBackend) Put(ctx context.Context, pd protocols.Descript
 
 	sessid, has := sessions.IDFromContext(ctx)
 	if !has {
-		return fmt.Errorf("session id not found in context")
+		return sessions.ErrIDNotFoundInContext
 	}
 
 	// TODO: as transaction
@@ -56,7 +56,7 @@ func (osrb objStoreResultBackend) Put(ctx context.Context, pd protocols.Descript
 func (osrb objStoreResultBackend) GetShare(ctx context.Context, sig protocols.Signature, share protocols.LattigoShare) (err error) { // TODO: replace by binary unmasharller and remove interface
 	sessid, has := sessions.IDFromContext(ctx)
 	if !has {
-		return fmt.Errorf("session id not found in context")
+		return sessions.ErrIDNotFoundInContext
 	}
 
 	err = osrb.store.Load(fmt.Sprintf("%s/%s-aggshare", sessid, sig), share)
@@ -66,8 +66,9 @@ func (osrb objStoreResultBackend) GetShare(ctx context.Context, sig protocols.Si
 func (osrb objStoreResultBackend) GetProtocolDesc(ctx context.Context, sig protocols.Signature) (pd *protocols.Descriptor, err error) {
 	sessid, has := sessions.IDFromContext(ctx)
 	if !has {
-		return nil, fmt.Errorf("session id not found in context")
+		return nil, sessions.ErrIDNotFoundInContext
 	}
+	pd = new(protocols.Descriptor)
 	err = osrb.store.Load(fmt.Sprintf("%s/%s-desc", sessid, sig), pd)
 	return
 }

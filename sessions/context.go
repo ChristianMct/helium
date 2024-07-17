@@ -1,6 +1,9 @@
 package sessions
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 type ctxKey string
 
@@ -14,6 +17,10 @@ var (
 	// The circuit ID is optional and is only present in the context
 	// of a circuit execution.
 	CtxCircuitID ctxKey = "circuit_id"
+)
+
+var (
+	ErrIDNotFoundInContext = errors.New("session id not found in context")
 )
 
 // NewContext returns a new context derived from ctx with the given session and circuit IDs.
