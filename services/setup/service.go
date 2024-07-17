@@ -61,8 +61,6 @@ func NewSetupService(ownID sessions.NodeID, sessProv sessions.Provider, conf Ser
 	}
 
 	s.resBackend = newObjStoreResultBackend(backend)
-	s.completed = protocols.NewCompletedProt(nil)
-
 	return s, nil
 }
 
@@ -144,11 +142,18 @@ func (s *Service) init(upstreamInc <-chan Event, present int) error { // TODO: m
 // Run runs the setup service as coordinated by the given coordinator.
 // It processes and forwards incoming events from upstream (coordinator) and downstream (executor).
 // It returns when the upstream coordinator is done and the downstream executor is done.
-func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport) error {
+func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport, desc Description) error {
 
 	s.Logf("starting service.Run")
 
 	s.transport = trans
+
+	sigList := DescriptionToSignatureList(desc)
+	if desc.Rlk {
+		sigList = append(sigList, protocols.Signature{Type: protocols.RKG1})
+	}
+
+	s.completed = protocols.NewCompletedProt(sigList)
 
 	runCtx, cancelRunCtx := context.WithCancel(context.WithValue(sessions.ContextWithNodeID(ctx, s.self), services.CtxKeyName, "setup"))
 	defer cancelRunCtx()
@@ -195,9 +200,20 @@ func (s *Service) Run(ctx context.Context, upstream Coordinator, trans Transport
 		close(downstreamDone)
 	}()
 
-	<-upstreamDone
-	s.Logf("upstream coordinator is done, closing downstream")
-	close(s.incoming) // closing downstream
+	setupDone := make(chan struct{})
+	go func() {
+		_ = s.completed.Wait()
+		close(setupDone)
+	}()
+
+	select {
+	case <-setupDone:
+		close(s.incoming)
+		s.Logf("setup is done, closing downstream")
+	case <-upstreamDone:
+		s.Logf("upstream coordinator is done, closing downstream")
+		close(s.incoming) // closing downstream
+	}
 
 	<-executorRunReturned
 	s.Logf("executor Run method returned")
