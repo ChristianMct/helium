@@ -261,6 +261,10 @@ func (s *Service) RunSignature(ctx context.Context, sig protocols.Signature) err
 	return nil
 }
 
+func (s *Service) GetCompletedDescriptor(ctx context.Context, sig protocols.Signature) (*protocols.Descriptor, error) {
+	return s.resBackend.GetProtocolDesc(ctx, sig)
+}
+
 // PublicKeyBackend interface implementation
 
 // GetCollectivePublicKey returns the collective public key when available.
@@ -307,7 +311,7 @@ func (s *Service) getOutputForSig(ctx context.Context, sig protocols.Signature) 
 
 	sess, has := s.sessProv.GetSessionFromContext(ctx)
 	if !has {
-		return nil, fmt.Errorf("session not found in context")
+		return nil, sessions.ErrIDNotFoundInContext
 	}
 
 	out := protocols.AllocateOutput(sig, *sess.Params.GetRLWEParameters()) // TODO cache ?
@@ -325,7 +329,7 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor)
 
 	sess, has := s.sessProv.GetSessionFromContext(ctx)
 	if !has {
-		return nil, fmt.Errorf("session not found in context")
+		return nil, sessions.ErrIDNotFoundInContext
 	}
 
 	switch pd.Signature.Type {
