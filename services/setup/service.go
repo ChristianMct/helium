@@ -354,7 +354,7 @@ func (s *Service) GetProtocolInput(ctx context.Context, pd protocols.Descriptor)
 // If the output is not available locally, it queries the protocol's aggregator.
 // If called at the aggregator, it runs the protocol and returns the output.
 func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descriptor) (out *protocols.AggregationOutput, err error) {
-	// first checks if it has the share locally
+	// first checks if it has the share locally and if so returns it
 	out, err = s.getAggregationOutputFromBackend(ctx, pd)
 	if err == nil {
 		return out, nil
@@ -374,11 +374,11 @@ func (s *Service) GetAggregationOutput(ctx context.Context, pd protocols.Descrip
 		if out.Error != nil {
 			return nil, fmt.Errorf("aggregation error for %s: %w", pd.HID(), out.Error)
 		}
-		err = s.resBackend.Put(ctx, pd, out.Share)
-		if err != nil {
-			return nil, err
-		}
+	}
 
+	// store the output in the result backend
+	if err := s.resBackend.Put(ctx, pd, out.Share); err != nil {
+		return out, fmt.Errorf("error when storing aggregation output: %w", err)
 	}
 
 	return out, nil
