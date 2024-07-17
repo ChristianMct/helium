@@ -157,19 +157,20 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 			setupSigs := setup.DescriptionToSignatureList(*app.SetupDescription)
 			sigList := make([]protocols.Signature, 0, len(setupSigs))
 			for _, sig := range setupSigs {
-				protoCompleted, _ := node.setup.GetCompletedDescriptor(ctx, sig)
+				protoCompleted, err := node.setup.GetCompletedDescriptor(ctx, sig)
 				// TODO: error checking against a keynotfoud type of error to distinguish real failure cases from the absence of a completed descriptor
-				if protoCompleted == nil {
+				if protoCompleted == nil || err != nil {
 					sigList = append(sigList, sig)
 				} else {
+					pd := *protoCompleted
 					if sig.Type == protocols.RKG {
 						rkg1Desc := *protoCompleted
 						rkg1Desc.Type = protocols.RKG1
 						sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: rkg1Desc}}
 						sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: rkg1Desc}}
 					}
-					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: *protoCompleted}}
-					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: *protoCompleted}}
+					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: pd}}
+					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: pd}}
 				}
 			}
 
