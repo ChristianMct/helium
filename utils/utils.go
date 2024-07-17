@@ -37,12 +37,14 @@ func NewSet[T comparable](els []T) Set[T] {
 	return s
 }
 
-// Add adds an element el to the receiver set.
-func (s *Set[T]) Add(el T) {
+// Add adds all elements in argument to the receiver set.
+func (s *Set[T]) Add(els ...T) {
 	if *s == nil {
 		*s = NewEmptySet[T]()
 	}
-	(*s)[el] = exists
+	for _, el := range els {
+		(*s)[el] = exists
+	}
 }
 
 // AddAll adds all elements of set els into the receiver set.
