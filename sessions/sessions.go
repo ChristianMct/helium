@@ -3,6 +3,7 @@ package sessions
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -60,7 +61,31 @@ type Parameters struct {
 	Threshold     int
 	ShamirPks     map[NodeID]drlwe.ShamirPublicPoint
 	PublicSeed    []byte
-	//*Secrets
+}
+
+func (p *Parameters) UnmarshalJSON(data []byte) error {
+	type Alias Parameters
+	aux := &struct {
+		FHEParameters json.RawMessage
+		*Alias
+	}{
+		Alias: (*Alias)(p),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	var bgvParams bgv.ParametersLiteral
+	var ckksParams ckks.ParametersLiteral
+	switch {
+	case json.Unmarshal([]byte(aux.FHEParameters), &bgvParams) == nil:
+		p.FHEParameters = bgvParams
+	case json.Unmarshal([]byte(aux.FHEParameters), &ckksParams) == nil:
+		p.FHEParameters = ckksParams
+	default:
+		return fmt.Errorf("could not unmarshal FHE parameters")
+	}
+	return nil
 }
 
 // NewSession creates a new session.
@@ -94,9 +119,10 @@ func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *S
 	sess.PublicSeed = slices.Clone(sessParams.PublicSeed)
 
 	sess.ShamirPks = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
+	needShamirPks := sess.Parameters.Threshold < len(sess.Parameters.Nodes)
 	for _, nid := range sess.Nodes {
 		var has bool
-		if sess.ShamirPks[nid], has = sessParams.ShamirPks[nid]; !has {
+		if sess.ShamirPks[nid], has = sessParams.ShamirPks[nid]; !has && needShamirPks {
 			return nil, fmt.Errorf("invalid session parameters: missing Shamir public point for node %s", nid)
 		}
 	}

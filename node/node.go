@@ -134,7 +134,7 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 		return nil, nil, fmt.Errorf("app must provide a setup description") // TODO: inference of setup description from registered circuits.
 	}
 
-	sigList := setup.DescriptionToSignatureList(*app.SetupDescription)
+	//sigList := setup.DescriptionToSignatureList(*app.SetupDescription)
 
 	cds := make(chan circuits.Descriptor)
 	or := make(chan circuits.Output)
@@ -148,29 +148,31 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 
 	// go node.sendShares(ctx)
 
-	go func() {
-		err := node.setup.Run(ctx, sc.setupCoordinator, &st.setupTransport)
-		if err != nil {
-			panic(err)
-		}
-		close(node.setupDone)
-	}()
-
 	// runs the setup phase
 	if node.IsHelperNode() {
-		// TODO: load and verify state from persistent storage
-		node.Logf("running setup phase: %d signatures to run", len(sigList))
-		for _, sig := range sigList {
-			sig := sig
-			err := node.setup.RunSignature(ctx, sig)
-			if err != nil {
-				panic(err)
+		go func() {
+			sigList := setup.DescriptionToSignatureList(*app.SetupDescription)
+			// TODO: load and verify state from persistent storage
+			node.Logf("running setup phase: %d signatures to run", len(sigList))
+			for _, sig := range sigList {
+				sig := sig
+				err := node.setup.RunSignature(ctx, sig)
+				if err != nil {
+					panic(err)
+				}
 			}
-		}
 
-		node.Logf("all signatures run, closing setup downstream")
-		close(sc.setupCoordinator.incoming)
+			node.Logf("all signatures run, closing setup downstream")
+			close(sc.setupCoordinator.incoming)
+		}()
 	}
+
+	err = node.setup.Run(ctx, sc.setupCoordinator, &st.setupTransport, *app.SetupDescription)
+	if err != nil {
+		panic(err)
+	}
+	close(node.setupDone)
+	node.Logf("setup done, starting compute phase")
 
 	go func() {
 		err := node.compute.Run(ctx, ip, or, sc.computeCoordinator, &st.computeTransport)
@@ -180,9 +182,6 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 	}()
 
 	if node.IsHelperNode() {
-		<-node.setupDone
-
-		node.Logf("setup done, starting compute phase")
 		go func() {
 			for cd := range cds {
 				node.Logf("new circuit descriptor: %s", cd)
@@ -293,25 +292,16 @@ func (node *Node) Logf(msg string, v ...any) {
 
 // GetCollectivePublicKey returns the collective public key.
 func (node *Node) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	if err := node.WaitForSetupDone(ctx); err != nil {
-		return nil, fmt.Errorf("error waiting for setup completion: %w", err)
-	}
 	return node.setup.GetCollectivePublicKey(ctx)
 }
 
 // GetGaloisKey returns the Galois keys for galois element galEl.
 func (node *Node) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	if err := node.WaitForSetupDone(ctx); err != nil {
-		return nil, fmt.Errorf("error waiting for setup completion: %w", err)
-	}
 	return node.setup.GetGaloisKey(ctx, galEl)
 }
 
 // GetRelinearizationKey returns the relinearization key.
 func (node *Node) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	if err := node.WaitForSetupDone(ctx); err != nil {
-		return nil, fmt.Errorf("error waiting for setup completion: %w", err)
-	}
 	return node.setup.GetRelinearizationKey(ctx)
 }
 
