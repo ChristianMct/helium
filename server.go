@@ -15,6 +15,7 @@ import (
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services/compute"
+	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/sessions"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -101,8 +102,13 @@ type nodeCoordinator struct {
 }
 
 func (nc *nodeCoordinator) Register(ctx context.Context) (evChan *coordinator.Channel[node.Event], present int, err error) {
-	outgoing := make(chan node.Event)
 
+	incoming := make(chan node.Event, len(nc.events))
+	for _, ev := range nc.events {
+		incoming <- ev
+	}
+
+	outgoing := make(chan node.Event)
 	go func() {
 		for ev := range outgoing {
 			ev := ev
@@ -111,7 +117,7 @@ func (nc *nodeCoordinator) Register(ctx context.Context) (evChan *coordinator.Ch
 		nc.CloseEventLog()
 	}()
 
-	return &coordinator.Channel[node.Event]{Outgoing: outgoing}, 0, nil
+	return &coordinator.Channel[node.Event]{Outgoing: outgoing, Incoming: incoming}, len(nc.events), nil
 }
 
 type nodeTransport struct {
@@ -139,19 +145,45 @@ func (nt *nodeTransport) PutCiphertext(ctx context.Context, ct sessions.Cipherte
 }
 
 func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.InputProvider) (cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
+
+	// populates a pseudo log with completed protocols
+	// TODO: proper log storing and loading
+	setupSigs := setup.DescriptionToSignatureList(*app.SetupDescription)
+	for _, sig := range setupSigs {
+		protoCompleted, err := hsv.helperNode.GetCompletedSetupDescriptor(ctx, sig)
+		// TODO: error checking against a keynotfoud type of error to distinguish real failure cases from the absence of a completed descriptor
+		if protoCompleted != nil && err == nil {
+			pd := *protoCompleted
+			if sig.Type == protocols.RKG {
+				rkg1Desc := *protoCompleted
+				rkg1Desc.Type = protocols.RKG1
+				hsv.AppendEventToLog(
+					node.Event{SetupEvent: &setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: rkg1Desc}}},
+					node.Event{SetupEvent: &setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: rkg1Desc}}},
+				)
+			}
+			hsv.AppendEventToLog(
+				node.Event{SetupEvent: &setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: pd}}},
+				node.Event{SetupEvent: &setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: pd}}},
+			)
+		}
+	}
+
 	return hsv.helperNode.Run(ctx, app, ip, &nodeCoordinator{hsv}, &nodeTransport{s: hsv})
 }
 
 // AppendEventToLog is called by the server side to append a new event to the log and send it to all connected peers.
-func (hsv *HeliumServer) AppendEventToLog(event node.Event) {
+func (hsv *HeliumServer) AppendEventToLog(events ...node.Event) {
 	hsv.mu.Lock()
-	hsv.events = append(hsv.events, event)
-	for nodeID, node := range hsv.nodes {
-		if node.sendQueue != nil {
-			select {
-			case node.sendQueue <- event:
-			default:
-				panic(fmt.Errorf("node %s has full send queue", nodeID)) // TODO: handle this by closing stream instead
+	hsv.events = append(hsv.events, events...)
+	for _, event := range events {
+		for nodeID, node := range hsv.nodes {
+			if node.sendQueue != nil {
+				select {
+				case node.sendQueue <- event:
+				default:
+					panic(fmt.Errorf("node %s has full send queue", nodeID)) // TODO: handle this by closing stream instead
+				}
 			}
 		}
 	}

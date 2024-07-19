@@ -202,7 +202,11 @@ func (tr *TestRuntime) Input(opl OperandLabel) *FutureOperand {
 	tr.l.Lock()
 	defer tr.l.Unlock()
 	fop := NewFutureOperand(opl)
-	ct, err := tr.encryptor.EncryptNew(tr.inputProvider(opl))
+	pt := tr.inputProvider(opl)
+	if pt == nil {
+		panic(fmt.Errorf("input provider returned nil input for %s", opl))
+	}
+	ct, err := tr.encryptor.EncryptNew(pt)
 	if err != nil {
 		panic(err)
 	}
