@@ -85,6 +85,14 @@ func (opl OperandLabel) CircuitID() sessions.CircuitID {
 	return sessions.CircuitID(strings.Trim(path.Dir(nopl.Path), "/"))
 }
 
+func (opl OperandLabel) CiphertextID() sessions.CiphertextID {
+	nopl, err := url.Parse(string(opl))
+	if err != nil {
+		panic(fmt.Errorf("invalid operand label: %s", opl))
+	}
+	return sessions.CiphertextID(path.Base(nopl.Path))
+}
+
 // HasNode returns true if the operand label has the given host id.
 func (opl OperandLabel) HasNode(id sessions.NodeID) bool {
 	nopl, err := url.Parse(string(opl))

@@ -84,7 +84,7 @@ type InputProvider func(context.Context, sessions.CircuitID, circuits.OperandLab
 
 // NoInput is an input provider that returns nil for all inputs.
 var NoInput InputProvider = func(_ context.Context, _ sessions.CircuitID, _ circuits.OperandLabel, _ sessions.Session) (any, error) {
-	return nil, nil
+	return nil, fmt.Errorf("node has no input")
 }
 
 // OutputReceiver is a type for receiving outputs from a circuit.

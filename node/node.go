@@ -150,29 +150,19 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 
 	// runs the setup phase
 	if node.IsHelperNode() {
-		go func() {
-
-			// loads the setup state from persistent storage and rebuilds a ("fake") event log
-			// TODO: proper log storing and loading ?
-			setupSigs := setup.DescriptionToSignatureList(*app.SetupDescription)
-			sigList := make([]protocols.Signature, 0, len(setupSigs))
-			for _, sig := range setupSigs {
-				protoCompleted, err := node.setup.GetCompletedDescriptor(ctx, sig)
-				// TODO: error checking against a keynotfoud type of error to distinguish real failure cases from the absence of a completed descriptor
-				if protoCompleted == nil || err != nil {
-					sigList = append(sigList, sig)
-				} else {
-					pd := *protoCompleted
-					if sig.Type == protocols.RKG {
-						rkg1Desc := *protoCompleted
-						rkg1Desc.Type = protocols.RKG1
-						sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: rkg1Desc}}
-						sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: rkg1Desc}}
-					}
-					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Started, Descriptor: pd}}
-					sc.setupCoordinator.outgoing <- setup.Event{Event: protocols.Event{EventType: protocols.Completed, Descriptor: pd}}
-				}
+		// loads the setup state from persistent storage and rebuilds a ("fake") event log
+		// TODO: proper log storing and loading ?
+		setupSigs := setup.DescriptionToSignatureList(*app.SetupDescription)
+		sigList := make([]protocols.Signature, 0, len(setupSigs))
+		for _, sig := range setupSigs {
+			protoCompleted, err := node.setup.GetCompletedDescriptor(ctx, sig)
+			// TODO: error checking against a keynotfoud type of error to distinguish real failure cases from the absence of a completed descriptor
+			if protoCompleted == nil || err != nil {
+				sigList = append(sigList, sig)
 			}
+		}
+
+		go func() {
 
 			node.Logf("running setup phase: %d signatures to run", len(sigList))
 			for _, sig := range sigList {
@@ -215,6 +205,10 @@ func (node *Node) Run(ctx context.Context, app App, ip compute.InputProvider, up
 	}
 
 	return cds, or, nil
+}
+
+func (node *Node) GetCompletedSetupDescriptor(ctx context.Context, sig protocols.Signature) (*protocols.Descriptor, error) {
+	return node.setup.GetCompletedDescriptor(ctx, sig)
 }
 
 // Transport interface implementation
@@ -300,14 +294,6 @@ func (node *Node) GetSessionFromContext(ctx context.Context) (*sessions.Session,
 func (node *Node) Logf(msg string, v ...any) {
 	log.Printf("%s | [node] %s\n", node.id, fmt.Sprintf(msg, v...))
 }
-
-// func (node *Node) RegisterPostsetupHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
-// 	node.postsetupHandler = h
-// }
-
-// func (node *Node) RegisterPrecomputeHandler(h func(*pkg.SessionStore, compute.PublicKeyBackend) error) {
-// 	node.precomputeHandler = h
-// }
 
 // pkg.PublicKeyBackend interface implementation
 

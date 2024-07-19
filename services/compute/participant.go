@@ -172,10 +172,10 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 		switch enc := p.Encoder.(type) {
 		case *bgv.Encoder:
 			inpt = bgv.NewPlaintext(p.sess.Params.(bgv.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
-			err = enc.Encode(in, inpt)
+			err = enc.ShallowCopy().Encode(in, inpt)
 		case *ckks.Encoder:
 			inpt = ckks.NewPlaintext(p.sess.Params.(ckks.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
-			err = p.Encoder.(*ckks.Encoder).Encode(in, inpt)
+			err = enc.ShallowCopy().Encode(in, inpt)
 		}
 		if err != nil {
 			panic(fmt.Errorf("cannot encode input: %w", err))
@@ -184,7 +184,7 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 		fallthrough
 	case isRLWEPLaintext(in):
 		inpt := in.(*rlwe.Plaintext)
-		inct, err := p.EncryptNew(inpt)
+		inct, err := p.Encryptor.ShallowCopy().EncryptNew(inpt)
 		if err != nil {
 			panic(err)
 		}

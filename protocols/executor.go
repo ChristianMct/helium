@@ -259,7 +259,7 @@ func (s *Executor) Run(ctx context.Context, trans Transport) error { // TODO: ca
 				select {
 				case qpd, more := <-s.queuedPart:
 					if !more {
-						s.Logf("closed participation queue")
+						//s.Logf("closed participation queue")
 						return nil
 					}
 					if err := s.runAsParticipant(qpd.ctx, qpd.pd); err != nil {
@@ -586,7 +586,7 @@ func (s *Executor) Register(peer sessions.NodeID) error {
 	s.connectedNodesMu.Unlock()
 	s.connectedNodesCond.Broadcast()
 
-	s.Logf("registered peer %v, %d online nodes", peer, len(s.connectedNodes))
+	//s.Logf("registered peer %v, %d online nodes", peer, len(s.connectedNodes))
 	return nil // TODO: Implement
 }
 
