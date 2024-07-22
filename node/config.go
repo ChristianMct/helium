@@ -120,4 +120,4 @@ type TLSConfig struct {
 
 // SecretProvider is a function that returns the secrets for a session,
 // given the session ID.
-type SecretProvider func(sessions.ID) (*sessions.Secrets, error)
+type SecretProvider func(sessions.ID, sessions.NodeID) (*sessions.Secrets, error)

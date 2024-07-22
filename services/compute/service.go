@@ -433,23 +433,19 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 
 			if ev.ProtocolEvent != nil {
 				pev := *ev.ProtocolEvent
-
-				s.Logf("new coordination event: PROTOCOL %s", pev)
-
+				s.Logf("PROTOCOL %s", pev)
 				s.incoming <- pev
-
 				switch pev.EventType {
 				case protocols.Completed:
 					if err := s.sendCompletedPdToCircuit(pev.Descriptor); err != nil {
 						panic(err)
 					}
 				}
-
 				continue
 			}
 
 			cev := *ev.CircuitEvent
-			s.Logf("new coordination event: CIRCUIT %s", cev)
+			s.Logf("CIRCUIT %s", cev)
 			switch ev.CircuitEvent.EventType {
 			case circuits.Started:
 				err := s.createCircuit(serviceCtx, cev.Descriptor)

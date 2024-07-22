@@ -3,7 +3,6 @@ package circuits
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"maps"
 	"sync"
 
@@ -221,5 +220,4 @@ func (e *circuitParserContext) EvalLocal(needRlk bool, galKeys []uint64, f func(
 }
 
 func (e *circuitParserContext) Logf(format string, args ...interface{}) {
-	log.Printf(format, args...)
 }

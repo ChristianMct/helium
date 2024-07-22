@@ -3,7 +3,6 @@ package protocols
 import (
 	"context"
 	"fmt"
-	"log"
 	"slices"
 	"sync"
 
@@ -672,7 +671,7 @@ func (s *Executor) getParticipants(sig Signature, sess *sessions.Session) []sess
 }
 
 func (s *Executor) Logf(msg string, v ...any) {
-	log.Printf("%s | [executor] %s\n", s.self, fmt.Sprintf(msg, v...))
+	//log.Printf("%s | [executor] %s\n", s.self, fmt.Sprintf(msg, v...))
 }
 
 func (s *Executor) NodeID() sessions.NodeID {

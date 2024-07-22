@@ -169,7 +169,7 @@ func (hc *HeliumClient) Register(ctx context.Context) (upstream *coordinator.Cha
 
 			ev := api.ToNodeEvent(apiEvent)
 			eventsStream <- ev
-			log.Printf("[client] new event: %s", ev)
+			//log.Printf("[client] new event: %s", ev)
 		}
 	}()
 

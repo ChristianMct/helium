@@ -66,17 +66,12 @@ func (sd Description) String() string {
 }
 
 // CheckTestSetup checks if a public key provider is able to produce valid keys for a given test session and setup description.
-func CheckTestSetup(ctx context.Context, t *testing.T, lt *sessions.TestSession, setup Description, n sessions.PublicKeyProvider) {
-
-	params := lt.RlweParams
-	sk := lt.SkIdeal
-	nParties := len(lt.HelperSession.Nodes)
-
+func CheckTestSetup(ctx context.Context, t *testing.T, setup Description, n sessions.PublicKeyProvider, params rlwe.Parameters, skIdeal *rlwe.SecretKey, nParties int) {
 	// check CPK
 	if setup.Cpk {
 		cpk, err := n.GetCollectivePublicKey(ctx)
 		require.NoError(t, err)
-		require.Less(t, rlwe.NoisePublicKey(cpk, sk, params), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
+		require.Less(t, rlwe.NoisePublicKey(cpk, skIdeal, params), math.Log2(math.Sqrt(float64(nParties))*params.NoiseFreshSK())+1)
 	}
 
 	// check RTG
@@ -86,7 +81,7 @@ func CheckTestSetup(ctx context.Context, t *testing.T, lt *sessions.TestSession,
 
 		decompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
-		require.Less(t, rlwe.NoiseGaloisKey(rtk, sk, params), noiseBound, "rtk for galEl %d should be correct", galEl)
+		require.Less(t, rlwe.NoiseGaloisKey(rtk, skIdeal, params), noiseBound, "rtk for galEl %d should be correct", galEl)
 
 	}
 
@@ -98,6 +93,6 @@ func CheckTestSetup(ctx context.Context, t *testing.T, lt *sessions.TestSession,
 		BaseRNSDecompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
 		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
 
-		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
+		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, skIdeal, params), noiseBound)
 	}
 }

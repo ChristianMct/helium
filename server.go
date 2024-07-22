@@ -228,7 +228,6 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 	}
 	hsv.mu.Unlock() // all events after pastEvents will go on the sendQueue
 
-	hsv.Logf("registering %s...", nodeID)
 	err := hsv.helperNode.Register(nodeID)
 	if err != nil {
 		panic(err)
@@ -249,7 +248,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 			break
 		}
 	}
-	hsv.Logf("done sending %d past events to %s, stream is live", present, nodeID)
+	//hsv.Logf("done sending %d past events to %s, stream is live", present, nodeID)
 
 	// Processes the node's sendQueue. The sendQueue channel is closed when exiting the loop
 	cancelled := stream.Context().Done()
@@ -265,7 +264,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 				//hsv.Logf("sent to node %s: %v", nodeID, evt)
 			} else {
 				done = true
-				hsv.Logf("update queue for %s closed", nodeID)
+				//hsv.Logf("update queue for %s closed", nodeID)
 			}
 
 		// stream was terminated by the node or the server
@@ -283,7 +282,6 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 	peer.sendQueue = nil
 	hsv.mu.Unlock()
 
-	hsv.Logf("unregistering %s...", nodeID)
 	err = hsv.helperNode.Unregister(nodeID)
 	if err != nil {
 		panic(err)

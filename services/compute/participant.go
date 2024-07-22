@@ -3,7 +3,6 @@ package compute
 import (
 	"context"
 	"fmt"
-	"log"
 	"math/big"
 
 	"golang.org/x/exp/maps"
@@ -272,7 +271,7 @@ func (p *participantRuntime) Parameters() sessions.FHEParameters {
 }
 
 func (p *participantRuntime) Logf(msg string, v ...any) {
-	log.Printf("%s | [%s] %s\n", p.sess.NodeID, p.cd.CircuitID, fmt.Sprintf(msg, v...))
+	//log.Printf("%s | [%s] %s\n", p.sess.NodeID, p.cd.CircuitID, fmt.Sprintf(msg, v...))
 }
 
 func isRLWEPLaintext(in interface{}) bool {

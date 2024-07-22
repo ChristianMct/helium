@@ -225,7 +225,7 @@ func main() {
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
 func loadSecrets(params sessions.Parameters, nid sessions.NodeID) node.SecretProvider {
 
-	var sp node.SecretProvider = func(sid sessions.ID) (*sessions.Secrets, error) {
+	var sp node.SecretProvider = func(sid sessions.ID, nid sessions.NodeID) (*sessions.Secrets, error) {
 
 		if sid != params.ID {
 			return nil, fmt.Errorf("no secret for session %s", sid)

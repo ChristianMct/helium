@@ -93,7 +93,7 @@ func NewLocalTest(config LocalTestConfig) (test *LocalTest, err error) {
 	test.Nodes[0] = test.HelperNode
 	for i, nc := range test.SessNodeConfigs {
 		var err error
-		test.Nodes[i+1], err = New(nc, test.List, func(_ sessions.ID) (*sessions.Secrets, error) {
+		test.Nodes[i+1], err = New(nc, test.List, func(_ sessions.ID, _ sessions.NodeID) (*sessions.Secrets, error) {
 			return secrets[nc.ID], nil
 		})
 		if err != nil {

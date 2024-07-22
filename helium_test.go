@@ -135,12 +135,12 @@ func TestSetup(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			setup.CheckTestSetup(ctx, t, lt.TestSession, *app.SetupDescription, helper)
+			setup.CheckTestSetup(ctx, t, *app.SetupDescription, helper, lt.RlweParams, lt.SkIdeal, ts.N)
 
 			for _, cli := range clients {
 				log.Println("checking setup for", cli.id)
 				resCheckCtx, runCheckCancel := context.WithTimeout(ctx, time.Second)
-				setup.CheckTestSetup(resCheckCtx, t, lt.TestSession, *app.SetupDescription, cli)
+				setup.CheckTestSetup(resCheckCtx, t, *app.SetupDescription, cli, lt.RlweParams, lt.SkIdeal, ts.N)
 				runCheckCancel()
 
 				require.NoError(t, cli.Close())

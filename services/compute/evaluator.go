@@ -220,5 +220,5 @@ func (se *evaluatorRuntime) Parameters() sessions.FHEParameters {
 }
 
 func (se *evaluatorRuntime) Logf(msg string, v ...any) {
-	log.Printf("%s | [%s] %s\n", se.cDesc.Evaluator, se.cDesc.CircuitID, fmt.Sprintf(msg, v...))
+	log.Printf("%s | [compute][%s] %s\n", se.cDesc.Evaluator, se.cDesc.CircuitID, fmt.Sprintf(msg, v...))
 }
