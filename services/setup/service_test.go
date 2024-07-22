@@ -141,7 +141,7 @@ func TestSetup(t *testing.T) {
 				require.Nil(t, err)
 
 				for _, n := range all {
-					CheckTestSetup(ctx, t, testSess, sd, n)
+					CheckTestSetup(ctx, t, sd, n, testSess.RlweParams, testSess.SkIdeal, ts.N)
 				}
 			})
 		}
@@ -207,7 +207,7 @@ func TestSetupLateConnect(t *testing.T) {
 				}
 
 				for _, n := range all {
-					CheckTestSetup(ctx, t, testSess, sd, n)
+					CheckTestSetup(ctx, t, sd, n, testSess.RlweParams, testSess.SkIdeal, ts.N)
 				}
 			})
 		}
@@ -336,6 +336,6 @@ func TestSetupRetries(t *testing.T) {
 	require.Nil(t, err)
 
 	for _, n := range all {
-		CheckTestSetup(ctx, t, testSess, Description{Cpk: true}, n)
+		CheckTestSetup(ctx, t, Description{Cpk: true}, n, testSess.RlweParams, testSess.SkIdeal, ts.N)
 	}
 }

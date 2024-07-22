@@ -355,7 +355,7 @@ func (node *Node) createNewSession(sessParams sessions.Parameters, secrets Secre
 
 	var sec *sessions.Secrets
 	if slices.Contains(sessParams.Nodes, node.id) {
-		sec, err = secrets(sessParams.ID)
+		sec, err = secrets(sessParams.ID, node.id)
 		if err != nil {
 			return nil, err
 		}

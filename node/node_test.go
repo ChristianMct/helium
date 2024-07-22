@@ -146,7 +146,7 @@ func TestNodeSetup(t *testing.T) {
 
 			for _, node := range all {
 				resCheckCtx, runCheckCancel := context.WithTimeout(ctx, time.Second)
-				setup.CheckTestSetup(resCheckCtx, t, lt.TestSession, *app.SetupDescription, node)
+				setup.CheckTestSetup(resCheckCtx, t, *app.SetupDescription, node, lt.TestSession.RlweParams, lt.TestSession.SkIdeal, ts.N)
 				runCheckCancel()
 			}
 		})
