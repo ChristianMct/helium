@@ -27,6 +27,9 @@ service Helium {
 
     /* PutCiphertext pushes the ciphertext to the callee */
     rpc PutCiphertext(Ciphertext) returns (CiphertextID) {}
+
+    /* EvalCircuit requests the evaluation of the circuit described by the CircuitDescriptor */
+    rpc EvalCircuit(CircuitDescriptor) returns (Void) {}
 }
 
 /* 
