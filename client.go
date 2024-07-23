@@ -219,6 +219,13 @@ func (hc *HeliumClient) PutCiphertext(ctx context.Context, ct sessions.Ciphertex
 	return err
 }
 
+// EvalCircuit sends a circuit to the helium server for evaluation.
+// TODO: clean the cdesc submission API (and the output one ?)
+func (hc *HeliumClient) EvalCircuit(ctx context.Context, cd circuits.Descriptor) error {
+	_, err := hc.HeliumClient.EvalCircuit(hc.outgoingContext(ctx), api.GetCircuitDesc(cd))
+	return err
+}
+
 func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {
 	ctx = sessions.ContextWithNodeID(ctx, hc.id) // TODO would be better to ensure that a node always has its id in a context
 	ctx, err := getOutgoingContext(ctx)

@@ -61,8 +61,8 @@ lint: check_reqs fmt vet staticcheck tidy ## Run all the linters
 
 ## Protocol Buffers
 gen-proto: ## Compile protobuf files
-	protoc --go_out=./transport/pb --go_opt=paths=source_relative --go-grpc_out=./transport/pb \
-		--go-grpc_opt=paths=source_relative --proto_path=./transport ./transport/*.proto
+	protoc --go_out=./api/pb --go_opt=paths=source_relative --go-grpc_out=./api/pb \
+		--go-grpc_opt=paths=source_relative --proto_path=./api ./api/*.proto
 
 ## Help:
 help: ## Show this help.

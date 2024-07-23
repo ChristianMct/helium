@@ -39,6 +39,9 @@ type HeliumServer struct {
 	id             sessions.NodeID
 	incomingShares chan protocols.Share
 
+	// channel for the EvalCircuit API method
+	cdescs chan circuits.Descriptor
+
 	// event log
 	events       coordinator.Log[node.Event]
 	eventsClosed bool
@@ -88,6 +91,8 @@ func NewHeliumServer(helperNode *node.Node) *HeliumServer {
 	}
 
 	hsv.incomingShares = make(chan protocols.Share)
+
+	hsv.cdescs = make(chan circuits.Descriptor)
 
 	return hsv
 }
@@ -169,7 +174,18 @@ func (hsv *HeliumServer) Run(ctx context.Context, app node.App, ip compute.Input
 		}
 	}
 
-	return hsv.helperNode.Run(ctx, app, ip, &nodeCoordinator{hsv}, &nodeTransport{s: hsv})
+	cdescs, outs, err = hsv.helperNode.Run(ctx, app, ip, &nodeCoordinator{hsv}, &nodeTransport{s: hsv})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	go func() {
+		for cdesc := range hsv.cdescs {
+			cdescs <- cdesc
+		}
+	}()
+
+	return
 }
 
 // AppendEventToLog is called by the server side to append a new event to the log and send it to all connected peers.
@@ -374,6 +390,13 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Cipherte
 		return nil, err
 	}
 	return &pb.CiphertextID{CiphertextId: string(ct.ID)}, nil
+}
+
+func (hsv *HeliumServer) EvalCircuit(ctx context.Context, apicd *pb.CircuitDescriptor) (*pb.Void, error) {
+	cd := api.ToCircuitDesc(apicd)
+	hsv.cdescs <- *cd
+	return &pb.Void{}, nil
+
 }
 
 func (hsv *HeliumServer) PutOperand(opl circuits.OperandLabel, op *circuits.Operand) error {

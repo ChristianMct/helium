@@ -80,6 +80,7 @@ type CircuitRuntime interface {
 // - *rlwe.Ciphertext: an encrypted input
 // - *rlwe.Plaintext: a Lattigo plaintext input, which will be encrypted by the framework
 // - []uint64: a Go plaintext input, which will be encoded and encrypted by the framework
+// TODO: should query inputs for the whole circuit at once
 type InputProvider func(context.Context, sessions.CircuitID, circuits.OperandLabel, sessions.Session) (any, error)
 
 // NoInput is an input provider that returns nil for all inputs.
