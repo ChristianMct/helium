@@ -26,6 +26,7 @@ func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app 
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	hsv.Logf("listening on %s", bindAddress)
 
 	go func() {
 		if err := hsv.Serve(lis); err != nil {
