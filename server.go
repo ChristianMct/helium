@@ -27,7 +27,7 @@ import (
 const (
 	MaxMsgSize       = 1024 * 1024 * 32
 	KeepaliveTime    = time.Second
-	KeepaliveTimeout = time.Second
+	KeepaliveTimeout = 5 * time.Second
 )
 
 // HeliumServer is the server-side of the helium transport.
@@ -78,7 +78,7 @@ func NewHeliumServer(helperNode *node.Node) *HeliumServer {
 		grpc.ChainUnaryInterceptor(interceptors...),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    KeepaliveTime,
-			Timeout: KeepaliveTime,
+			Timeout: KeepaliveTimeout,
 		}),
 	}
 
