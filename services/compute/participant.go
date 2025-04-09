@@ -265,6 +265,10 @@ func (p *participantRuntime) PCKS(in circuits.Operand, rec sessions.NodeID, para
 	panic("not implemented") // TODO: Implement
 }
 
+func (p *participantRuntime) Circuit() circuits.Descriptor {
+	return p.cd.Clone()
+}
+
 // Parameters returns the encryption parameters for the circuit.
 func (p *participantRuntime) Parameters() sessions.FHEParameters {
 	return p.sess.Params

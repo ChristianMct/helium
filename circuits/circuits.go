@@ -5,6 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/ChristianMct/helium/protocols"
@@ -23,6 +26,8 @@ type Circuit func(Runtime) error
 // Runtime defines the interface that is available to circuits to access
 // their execution context.
 type Runtime interface {
+	Circuit() Descriptor
+
 	Parameters() sessions.FHEParameters
 
 	// Input reads an input operand with the given label from the context.
@@ -87,6 +92,23 @@ type Signature struct {
 	Args map[string]string
 }
 
+// String returns a string representation of the circuit signature.
+func (s Signature) String() string {
+	args := make([]string, 0, len(s.Args))
+	for k, v := range s.Args {
+		args = append(args, fmt.Sprintf("%s=%s", k, v))
+	}
+	return fmt.Sprintf("%s(%s)", s.Name, strings.Join(args, ", "))
+}
+
+// Clone returns a deep copy of the Signature.
+func (s Signature) Clone() Signature {
+	return Signature{
+		Name: s.Name,
+		Args: maps.Clone(s.Args),
+	}
+}
+
 // Descriptor is a struct for specifying a circuit execution.
 // It holds the identification information for the circuit, as well as a concrete mapping from the
 // node ids in the circuit definition.
@@ -95,6 +117,16 @@ type Descriptor struct {
 	sessions.CircuitID
 	NodeMapping map[string]sessions.NodeID // TODO: nil node mapping is identity mapping
 	Evaluator   sessions.NodeID
+}
+
+// Clone returns a deep copy of the Descriptor.
+func (d Descriptor) Clone() Descriptor {
+	return Descriptor{
+		Signature:   d.Signature.Clone(),
+		CircuitID:   d.CircuitID,
+		NodeMapping: maps.Clone(d.NodeMapping),
+		Evaluator:   d.Evaluator,
+	}
 }
 
 // Metadata is a type for gathering information about a circuit instance.
@@ -261,4 +293,35 @@ func (tr *TestRuntime) PCKS(in Operand, rec sessions.NodeID, params map[string]s
 
 func (tr *TestRuntime) Logf(msg string, v ...any) {
 	log.Printf("[TestRuntime] %s\n", fmt.Sprintf(msg, v...))
+}
+
+// ArgumentOfType returns the argument of the given type from the signature.
+// The arguments are parsed from their string representation according to the
+// `strconv` package. Numbers are assumed to be in base 10 representation.
+// The function returns an error if the argument is not found or if the type
+// conversion fails.
+func ArgumentOfType[T any](sig Signature, argName string) (arg T, err error) {
+	argStr, has := sig.Args[argName]
+	if !has {
+		return arg, fmt.Errorf("argument %s not found in signature %s", argName, sig)
+	}
+
+	switch any(arg).(type) {
+	case string:
+		return any(argStr).(T), nil
+	case int:
+		argInt, err := strconv.Atoi(argStr)
+		return any(argInt).(T), err
+	case uint64:
+		argUint, err := strconv.ParseUint(argStr, 10, 64)
+		return any(argUint).(T), err
+	case float64:
+		argFloat, err := strconv.ParseFloat(argStr, 64)
+		return any(argFloat).(T), err
+	case bool:
+		argBool, err := strconv.ParseBool(argStr)
+		return any(argBool).(T), err
+	default:
+		return arg, fmt.Errorf("unsupported argument type %T for argument %s", arg, argName)
+	}
 }

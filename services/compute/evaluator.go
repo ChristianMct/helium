@@ -215,6 +215,10 @@ func (se *evaluatorRuntime) PCKS(in circuits.Operand, rec sessions.NodeID, param
 	return se.keyOpExec(sig, in)
 }
 
+func (se *evaluatorRuntime) Circuit() circuits.Descriptor {
+	return se.cDesc.Clone()
+}
+
 func (se *evaluatorRuntime) Parameters() sessions.FHEParameters {
 	return se.sess.Params
 }
