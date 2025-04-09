@@ -52,7 +52,7 @@ type OperandProvider interface {
 //     and recieve outputs.
 type CircuitRuntime interface {
 	// Init provides the circuit runtime with the circuit's metadata.
-	Init(ctx context.Context, md circuits.Metadata) (err error)
+	Init(ctx context.Context, md circuits.Metadata, nid sessions.NodeID) (err error)
 
 	// Eval runs the circuit evaluation, given the circuit.
 	Eval(ctx context.Context, c circuits.Circuit) (err error)
@@ -74,17 +74,18 @@ type CircuitRuntime interface {
 }
 
 // InputProvider is a type for providing input to a circuit.
-// It is generally provided by the user, and lets the framework query for
-// inputs to the circuit by their label. See circuits.OperandLabel for more information on operand labels.
-// Input providers are expected to return one of the following types:
-// - *rlwe.Ciphertext: an encrypted input
+// It is provided by the user, and is called by the framework upon circuit execution.
+// The framework expects the participant's inputs to be provided through the channel, with their full operand label set.
+// If the Input.OperandValue field is a plaintext value, the framework takes care of the encryption.
+//
+// The following types of OperandValue are supported:
+// - *rlwe.Ciphertext: an already-encrypted input
 // - *rlwe.Plaintext: a Lattigo plaintext input, which will be encrypted by the framework
 // - []uint64: a Go plaintext input, which will be encoded and encrypted by the framework
-// TODO: should query inputs for the whole circuit at once
-type InputProvider func(context.Context, sessions.CircuitID, circuits.OperandLabel, sessions.Session) (any, error)
+type InputProvider func(context.Context, sessions.Session, circuits.Descriptor) (chan circuits.Input, error)
 
 // NoInput is an input provider that returns nil for all inputs.
-var NoInput InputProvider = func(_ context.Context, _ sessions.CircuitID, _ circuits.OperandLabel, _ sessions.Session) (any, error) {
+var NoInput InputProvider = func(context.Context, sessions.Session, circuits.Descriptor) (chan circuits.Input, error) {
 	return nil, fmt.Errorf("node has no input")
 }
 
@@ -638,7 +639,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor, upstre
 		return err
 	}
 
-	err = cinst.Init(ctx, *cinf)
+	err = cinst.Init(ctx, *cinf, s.self)
 	if err != nil {
 		return fmt.Errorf("error at circuit initialization: %w", err)
 	}

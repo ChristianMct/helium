@@ -151,14 +151,17 @@ func main() {
 	if nodeID == helperID {
 		ip = compute.NoInput // the cloud has no input, the compute.NoInput InputProvider is used
 	} else {
-		ip = func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, sess sessions.Session) (any, error) {
+		ip = func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
 			bgvParams := sess.Params.(bgv.Parameters)
 			in := make([]uint64, bgvParams.MaxSlots())
 			// the session nodes create their input by replicating the user-provided input for each slot
 			for i := range in {
 				in[i] = input % bgvParams.PlaintextModulus()
 			}
-			return in, nil
+			inchan := make(chan circuits.Input, 1)
+			inchan <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nodeID, cd.CircuitID)), OperandValue: in}
+			close(inchan)
+			return inchan, nil
 		}
 	}
 

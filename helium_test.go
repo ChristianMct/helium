@@ -237,15 +237,18 @@ func TestCompute(t *testing.T) {
 
 			for _, cli := range clients {
 				cli := cli
-
+				nid := cli.id
 				g.Go(func() error {
 					err = cli.ConnectWithDialer(func(c context.Context, addr string) (net.Conn, error) { return lis.Dial() })
 					if err != nil {
 						return fmt.Errorf("node %s failed to connect: %v", cli.id, err)
 					}
 
-					ip := func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
-						return nodeIDtoTestInput(string(cli.id)), nil
+					ip := func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
+						in := make(chan circuits.Input, 1)
+						in <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nid, cd.CircuitID)), OperandValue: nodeIDtoTestInput(string(nid))}
+						close(in)
+						return in, nil
 					}
 
 					outs, err := cli.Run(runctx, app, ip)

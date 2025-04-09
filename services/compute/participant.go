@@ -44,11 +44,14 @@ type participantRuntime struct {
 	Encoder
 	*rlwe.Encryptor
 	*rlwe.Decryptor
+
+	// data
+	inputs map[circuits.OperandLabel]*circuits.FutureOperand
 }
 
 // Service interface
 
-func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata) (err error) {
+func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata, nid sessions.NodeID) (err error) {
 
 	p.Encoder, err = p.fheProvider.GetEncoder(ctx)
 	if err != nil {
@@ -66,6 +69,13 @@ func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata) (er
 	}
 
 	p.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
+
+	ownInputs := md.InputsFor[p.sess.NodeID]
+	p.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand, len(ownInputs))
+	for inLabel := range ownInputs {
+		fop := circuits.NewFutureOperand(inLabel)
+		p.inputs[inLabel] = fop
+	}
 	return
 }
 
@@ -79,7 +89,29 @@ func (p *participantRuntime) Eval(ctx context.Context, c circuits.Circuit) error
 		}
 	}()
 
-	err := c(p)
+	inChan, err := p.inputProvider(ctx, *p.sess, p.cd)
+	if err != nil {
+		return err
+	}
+	// processes the participant's inputs in a separate goroutine to
+	// let the circuit run/network transfers begin in parallel
+	go func() {
+		for inOp := range inChan {
+			fop, has := p.inputs[inOp.OperandLabel]
+			if !has {
+				p.Logf("skipping unexpected input %s", inOp.OperandLabel)
+				continue
+			}
+			inct, err := p.processParticipantInput(inOp.OperandValue)
+			if err != nil {
+				panic(err)
+			}
+
+			fop.Set(circuits.Operand{OperandLabel: inOp.OperandLabel, Ciphertext: inct})
+		}
+	}()
+
+	err = c(p)
 	if err != nil {
 		return err
 	}
@@ -159,46 +191,18 @@ func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOp
 		return circuits.NewDummyFutureOperand(opl)
 	}
 
-	in, err := p.inputProvider(p.ctx, p.cd.CircuitID, opl, *p.sess)
-	if err != nil {
-		panic(fmt.Errorf("could not get inputs from input provider: %w", err)) // TODO return error
+	fop, has := p.inputs[opl]
+	if !has {
+		panic(fmt.Errorf("called Input on non registered participant input: %s", opl))
 	}
+	op := fop.Get()
 
-	var inct sessions.Ciphertext
-	switch {
-	case isValidPlaintext(in):
-		var inpt *rlwe.Plaintext
-		switch enc := p.Encoder.(type) {
-		case *bgv.Encoder:
-			inpt = bgv.NewPlaintext(p.sess.Params.(bgv.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
-			err = enc.ShallowCopy().Encode(in, inpt)
-		case *ckks.Encoder:
-			inpt = ckks.NewPlaintext(p.sess.Params.(ckks.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
-			err = enc.ShallowCopy().Encode(in, inpt)
-		}
-		if err != nil {
-			panic(fmt.Errorf("cannot encode input: %w", err))
-		}
-		in = inpt
-		fallthrough
-	case isRLWEPLaintext(in):
-		inpt := in.(*rlwe.Plaintext)
-		inct, err := p.Encryptor.ShallowCopy().EncryptNew(inpt)
-		if err != nil {
-			panic(err)
-		}
-		in = inct
-		fallthrough
-	case isRLWECiphertext(in):
-		inct = sessions.Ciphertext{
-			Ciphertext:         *in.(*rlwe.Ciphertext),
-			CiphertextMetadata: sessions.CiphertextMetadata{ID: sessions.CiphertextID(opl)},
-		}
-	default:
-		panic(fmt.Errorf("invalid input type %T for session parameters of type %T", in, p.sess.Parameters))
-	}
-
-	err = p.trans.PutCiphertext(p.ctx, inct)
+	err := p.trans.PutCiphertext(p.ctx, sessions.Ciphertext{
+		CiphertextMetadata: sessions.CiphertextMetadata{
+			ID: sessions.CiphertextID(opl),
+		},
+		Ciphertext: *op.Ciphertext,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -276,6 +280,39 @@ func (p *participantRuntime) Parameters() sessions.FHEParameters {
 
 func (p *participantRuntime) Logf(msg string, v ...any) {
 	//log.Printf("%s | [%s] %s\n", p.sess.NodeID, p.cd.CircuitID, fmt.Sprintf(msg, v...))
+}
+
+func (p *participantRuntime) processParticipantInput(inputVal any) (inct *rlwe.Ciphertext, err error) {
+	switch {
+	case isValidPlaintext(inputVal):
+		var inpt *rlwe.Plaintext
+		switch enc := p.Encoder.(type) {
+		case *bgv.Encoder:
+			inpt = bgv.NewPlaintext(p.sess.Params.(bgv.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
+			err = enc.ShallowCopy().Encode(inputVal, inpt)
+		case *ckks.Encoder:
+			inpt = ckks.NewPlaintext(p.sess.Params.(ckks.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
+			err = enc.ShallowCopy().Encode(inputVal, inpt)
+		}
+		if err != nil {
+			panic(fmt.Errorf("cannot encode input: %w", err))
+		}
+		inputVal = inpt
+		fallthrough
+	case isRLWEPLaintext(inputVal):
+		inpt := inputVal.(*rlwe.Plaintext)
+		inct, err := p.Encryptor.ShallowCopy().EncryptNew(inpt)
+		if err != nil {
+			panic(err)
+		}
+		inputVal = inct
+		fallthrough
+	case isRLWECiphertext(inputVal):
+		inct = inputVal.(*rlwe.Ciphertext)
+	default:
+		return nil, fmt.Errorf("invalid input type %T for session parameters of type %T", inputVal, p.sess.Parameters)
+	}
+	return inct, nil
 }
 
 func isRLWEPLaintext(in interface{}) bool {

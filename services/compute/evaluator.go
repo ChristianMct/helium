@@ -53,7 +53,7 @@ type evaluatorRuntime struct {
 
 // CircuitInstance (framework-facing) API
 
-func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata) (err error) {
+func (se *evaluatorRuntime) Init(ctx context.Context, md circuits.Metadata, nid sessions.NodeID) (err error) {
 
 	se.ops = make(map[circuits.OperandLabel]*circuits.FutureOperand)
 	se.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand)
