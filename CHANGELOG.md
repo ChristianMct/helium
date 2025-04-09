@@ -1,6 +1,10 @@
 # Changelog
 
 This file contains a log of the main changes made to the framework. 
+## [unreleased] 
+
+### Added
+- Circuit runtime can now access circuit Descriptor information such as signature arguments.
 
 ## [v0.2.1] - 23.04.2024 
 This update is mainly aimed at triggering the archiving by Zenodo.
