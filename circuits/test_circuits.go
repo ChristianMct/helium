@@ -1,6 +1,8 @@
 package circuits
 
 import (
+	"fmt"
+
 	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
@@ -15,10 +17,45 @@ var TestCircuits map[Name]Circuit = map[Name]Circuit{
 		in1, in2 := ec.Input("//p1/in"), ec.Input("//p2/in")
 
 		opRes := ec.NewOperand("//eval/sum")
-		ec.EvalLocal(false, nil, func(eval he.Evaluator) error {
+		err := ec.EvalLocal(false, nil, func(eval he.Evaluator) error {
 			opRes.Ciphertext = bgv.NewCiphertext(params, 1, params.MaxLevel())
 			return eval.Add(in1.Get().Ciphertext, in2.Get().Ciphertext, opRes.Ciphertext)
 		})
+		if err != nil {
+			return err
+		}
+
+		return ec.DEC(*opRes, "rec", map[string]string{
+			"smudging": "40.0",
+		})
+	},
+
+	"bgv-add-n-dec": func(ec Runtime) error {
+
+		n, err := ArgumentOfType[int](ec.Circuit().Signature, "n")
+		if err != nil {
+			return err
+		}
+		params := ec.Parameters().(bgv.Parameters)
+
+		in := make([]*FutureOperand, n)
+		for i := 0; i < n; i++ {
+			in[i] = ec.Input(OperandLabel(fmt.Sprintf("//p%d/in", i+1)))
+		}
+
+		opRes := ec.NewOperand("//eval/sum")
+		err = ec.EvalLocal(false, nil, func(eval he.Evaluator) error {
+			opRes.Ciphertext = bgv.NewCiphertext(params, 1, params.MaxLevel())
+			for i := 0; i < n; i++ {
+				if err := eval.Add(in[i].Get().Ciphertext, opRes.Ciphertext, opRes.Ciphertext); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 
 		return ec.DEC(*opRes, "rec", map[string]string{
 			"smudging": "40.0",
@@ -52,10 +89,13 @@ var TestCircuits map[Name]Circuit = map[Name]Circuit{
 		in1, in2 := ec.Input("//p1/in"), ec.Input("//p2/in")
 
 		opRes := ec.NewOperand("//eval/sum")
-		ec.EvalLocal(false, nil, func(eval he.Evaluator) error {
+		err := ec.EvalLocal(false, nil, func(eval he.Evaluator) error {
 			opRes.Ciphertext = ckks.NewCiphertext(params, 1, params.MaxLevel())
 			return eval.Add(in1.Get().Ciphertext, in2.Get().Ciphertext, opRes.Ciphertext)
 		})
+		if err != nil {
+			return err
+		}
 
 		return ec.DEC(*opRes, "rec", map[string]string{
 			"smudging": "40.0",

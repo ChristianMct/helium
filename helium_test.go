@@ -47,17 +47,25 @@ var testSetupDescription = setup.Description{
 	Gks: []uint64{5, 25, 125},
 }
 
-var testCircuits = []TestCircuitSig{
+var testCircuits2P = []TestCircuitSig{
 	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
 	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
+	{Signature: circuits.Signature{Name: "bgv-add-n-dec", Args: map[string]string{"n": "2"}}, ExpResult: 1},
+}
+
+var testCircuits3P = []TestCircuitSig{
+	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
+	{Signature: circuits.Signature{Name: "bgv-add-n-dec", Args: map[string]string{"n": "2"}}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-add-n-dec", Args: map[string]string{"n": "3"}}, ExpResult: 3},
 }
 
 var testSettings = []testSetting{
-	{N: 2, CircuitSigs: testCircuits, Reciever: "peer-0"},
-	{N: 2, CircuitSigs: testCircuits, Reciever: "helper"},
-	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "peer-0"},
-	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper"},
-	{N: 3, T: 2, CircuitSigs: testCircuits, Reciever: "helper", Rep: 10},
+	{N: 2, CircuitSigs: testCircuits2P, Reciever: "peer-0"},
+	{N: 2, CircuitSigs: testCircuits2P, Reciever: "helper"},
+	{N: 3, T: 2, CircuitSigs: testCircuits3P, Reciever: "peer-0"},
+	{N: 3, T: 2, CircuitSigs: testCircuits3P, Reciever: "helper"},
+	{N: 3, T: 2, CircuitSigs: testCircuits3P, Reciever: "helper", Rep: 10},
 }
 
 const buffConBufferSize = 65 * 1024 * 1024
@@ -160,12 +168,12 @@ func TestCompute(t *testing.T) {
 			ts.Rep = 1
 		}
 
-		nodemap := map[string]sessions.NodeID{"p1": "peer-0", "p2": "peer-1", "eval": "helper", "rec": ts.Reciever}
+		nodemap := map[string]sessions.NodeID{"p1": "peer-0", "p2": "peer-1", "p3": "peer-2", "eval": "helper", "rec": ts.Reciever}
 
 		expResult := make(map[sessions.CircuitID]uint64)
-		for _, tc := range ts.CircuitSigs {
-			for i := 0; i < ts.Rep; i++ {
-				cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
+		for i, tc := range ts.CircuitSigs {
+			for rep := 0; rep < ts.Rep; rep++ {
+				cid := sessions.CircuitID(fmt.Sprintf("%s-%d-%d", tc.Name, i, rep))
 				expResult[cid] = tc.ExpResult
 			}
 		}
@@ -208,10 +216,10 @@ func TestCompute(t *testing.T) {
 				}
 
 				go func() {
-					for _, tc := range ts.CircuitSigs {
-						for i := 0; i < ts.Rep; i++ {
-							cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, i))
-							cdescs <- circuits.Descriptor{Signature: circuits.Signature{Name: tc.Name}, CircuitID: cid, NodeMapping: nodemap, Evaluator: helper.id}
+					for i, tc := range ts.CircuitSigs {
+						for rep := 0; rep < ts.Rep; rep++ {
+							cid := sessions.CircuitID(fmt.Sprintf("%s-%d-%d", tc.Name, i, rep))
+							cdescs <- circuits.Descriptor{Signature: tc.Signature, CircuitID: cid, NodeMapping: nodemap, Evaluator: helper.id}
 						}
 					}
 					close(cdescs)
@@ -266,7 +274,9 @@ func TestCompute(t *testing.T) {
 				err = encoder.Decode(pt, res)
 				//fmt.Println(out.OperandLabel, res[:10])
 				require.NoError(t, err)
-				require.Equal(t, expResult[out.CircuitID], res[0])
+				exp, has := expResult[out.CircuitID]
+				require.True(t, has, "unexpected result for %s", out.CircuitID)
+				require.Equal(t, exp, res[0])
 				delete(expResult, out.CircuitID)
 			}
 

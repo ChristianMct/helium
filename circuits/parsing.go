@@ -205,6 +205,12 @@ func (e *circuitParserContext) PCKS(in Operand, rec sessions.NodeID, params map[
 	return nil
 }
 
+func (e *circuitParserContext) Circuit() Descriptor {
+	e.l.Lock()
+	defer e.l.Unlock()
+	return e.cd.Clone()
+}
+
 func (e *circuitParserContext) Parameters() sessions.FHEParameters {
 	e.l.Lock()
 	defer e.l.Unlock()
