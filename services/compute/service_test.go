@@ -130,8 +130,11 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 				}
 
 				require.Nil(t, err)
-				cli.InputProvider = func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
-					return nodeIDtoTestInput(string(nid)), nil
+				cli.InputProvider = func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
+					in := make(chan circuits.Input, 1)
+					in <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nid, cd.CircuitID)), OperandValue: nodeIDtoTestInput(string(nid))}
+					close(in)
+					return in, nil
 				}
 				cli.OutputReceiver = make(chan circuits.Output)
 				cli.Outputs = make(map[sessions.CircuitID]circuits.Output)
@@ -298,8 +301,11 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 				}
 
 				require.Nil(t, err)
-				cli.InputProvider = func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
-					return nodeIDtoTestInput(string(nid)), nil
+				cli.InputProvider = func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
+					in := make(chan circuits.Input, 1)
+					in <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nid, cd.CircuitID)), OperandValue: nodeIDtoTestInput(string(nid))}
+					close(in)
+					return in, nil
 				}
 				cli.OutputReceiver = make(chan circuits.Output)
 				cli.Outputs = make(map[sessions.CircuitID]circuits.Output)

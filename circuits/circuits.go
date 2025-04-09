@@ -140,6 +140,11 @@ type Metadata struct {
 	GaloisKeys               utils.Set[uint64]
 }
 
+type Input struct { // TODO move to circuit ?
+	OperandLabel
+	OperandValue any
+}
+
 // Event is a type for circuit-related events.
 type Event struct {
 	EventType

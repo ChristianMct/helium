@@ -176,9 +176,12 @@ func TestNodeCompute(t *testing.T) {
 			all, clients, cloud := NewTestNodes(lt)
 
 			for _, cli := range clients {
-				cid := cli.id
-				cli.InputProvider = func(ctx context.Context, _ sessions.CircuitID, ol circuits.OperandLabel, _ sessions.Session) (any, error) {
-					return NodeIDtoTestInput(string(cid)), nil
+				nid := cli.id
+				cli.InputProvider = func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
+					in := make(chan circuits.Input, 1)
+					in <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nid, cd.CircuitID)), OperandValue: NodeIDtoTestInput(string(nid))}
+					close(in)
+					return in, nil
 				}
 			}
 
