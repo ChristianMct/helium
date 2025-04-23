@@ -158,11 +158,11 @@ func (se *evaluatorRuntime) InputSum(opl circuits.OperandLabel, nids ...sessions
 		panic(err)
 	}
 
-	opl = opl.SetNode(se.cd.Evaluator) // set the node id to the evaluator
+	opl = opl.ForCircuit(se.cd.CircuitID)
 	fopOut := circuits.NewFutureOperand(opl)
 
 	opOut := se.NewOperand(opl) // register the operand in the circuit
-	opOut.Ciphertext = rlwe.NewCiphertext(se.sess.Params, 1)
+	opOut.Ciphertext = sessions.NewCiphertext(se.sess.Params, 1)
 
 	rq := se.sess.Params.GetRLWEParameters().RingQ()
 

@@ -312,3 +312,22 @@ func NewEvaluator(p FHEParameters, ks rlwe.EvaluationKeySet) he.Evaluator {
 		panic(fmt.Errorf("unknown FHE parameters type"))
 	}
 }
+
+func NewCiphertext(p FHEParameters, degree int, level ...int) *rlwe.Ciphertext {
+	switch pp := p.(type) {
+	case bgv.Parameters:
+		llevel := pp.MaxLevel()
+		if len(level) > 0 {
+			llevel = level[0]
+		}
+		return bgv.NewCiphertext(pp, degree, llevel)
+	case ckks.Parameters:
+		llevel := pp.MaxLevel()
+		if len(level) > 0 {
+			llevel = level[0]
+		}
+		return ckks.NewCiphertext(pp, degree, llevel)
+	default:
+		panic(fmt.Errorf("unknown FHE parameters type"))
+	}
+}

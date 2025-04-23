@@ -89,16 +89,12 @@ func (e *circuitParserContext) Input(in OperandLabel) *FutureOperand {
 
 func ExpandInputSumLabels(in OperandLabel, sess *sessions.Session, cid sessions.CircuitID, nids ...sessions.NodeID) (opls []OperandLabel, err error) {
 
-	if len(in.NodeID()) > 0 {
-		return nil, fmt.Errorf("InputSum should not have specified node id in the label, but got: %s", in)
-	}
-
 	if len(nids) > 0 && len(nids) < sess.Threshold {
 		return nil, fmt.Errorf("InputSum requires at least %d nodes, but only %d were provided", sess.Threshold, len(nids))
 	}
 
 	if len(nids) == 0 {
-		nids = make([]sessions.NodeID, 0, len(sess.Nodes))
+		nids = make([]sessions.NodeID, len(sess.Nodes))
 		copy(nids, sess.Nodes)
 	}
 
@@ -136,6 +132,7 @@ func (e *circuitParserContext) InputSum(in OperandLabel, nids ...sessions.NodeID
 	}
 
 	for _, opl := range opls {
+		e.md.InputSet.Add(opl)
 		inset, exists := e.md.InputsFor[opl.NodeID()]
 		if !exists {
 			inset = utils.NewEmptySet[OperandLabel]()
@@ -146,7 +143,7 @@ func (e *circuitParserContext) InputSum(in OperandLabel, nids ...sessions.NodeID
 
 	c := make(chan struct{})
 	close(c)
-	return &FutureOperand{Operand: Operand{OperandLabel: in.SetNode(e.cd.Evaluator)}, c: c}
+	return &FutureOperand{Operand: Operand{OperandLabel: in}, c: c}
 }
 
 func (e *circuitParserContext) Load(in OperandLabel) *Operand {
