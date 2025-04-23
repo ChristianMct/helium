@@ -82,6 +82,16 @@ var TestCircuits map[Name]Circuit = map[Name]Circuit{
 			"smudging": "40.0",
 		})
 	},
+
+	"bgv-add-all-dec": func(ec Runtime) error {
+		fopIn := ec.InputSum("//eval/sum")
+		opRes := ec.NewOperand("//eval/res")
+		opRes.Ciphertext = fopIn.Get().Ciphertext
+		return ec.DEC(*opRes, "rec", map[string]string{
+			"smudging": "40.0",
+		})
+	},
+
 	"ckks-add-2-dec": func(ec Runtime) error {
 
 		params := ec.Parameters().(ckks.Parameters)

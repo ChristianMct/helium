@@ -20,10 +20,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type TestCircuitSig struct {
-	circuits.Signature
-	ExpResult interface{}
-}
+var testCircuits = circuits.TestCircuits
 
 type testSetting struct {
 	N        int // N - total parties
@@ -60,9 +57,26 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 		PlaintextModulus: 65537,
 	}
 
-	var testCircuitSigs = []TestCircuitSig{
-		{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: uint64(3)},
-		{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: uint64(2)},
+	var testCircuitSigs = []circuits.Signature{
+		{Name: "bgv-add-2-dec", Args: nil},
+		{Name: "bgv-mul-2-dec", Args: nil},
+		{Name: "bgv-add-all-dec", Args: nil},
+	}
+
+	expRes := func(tc testSetting, sig circuits.Signature) uint64 {
+		switch sig.Name {
+		case "bgv-add-2-dec":
+			return 3
+		case "bgv-add-all-dec":
+			if tc.N == 2 {
+				return 3
+			}
+			return 6
+		case "bgv-mul-2-dec":
+			return 2
+		default:
+			panic("unknown signature")
+		}
 	}
 
 	nodeIDtoTestInput := func(nid string) []uint64 {
@@ -131,8 +145,17 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 
 				require.Nil(t, err)
 				cli.InputProvider = func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
+					var opl circuits.OperandLabel
+					switch cd.Signature.Name {
+					case "bgv-add-all-dec":
+						opl = circuits.OperandLabel(fmt.Sprintf("//%s/%s/sum", nid, cd.CircuitID))
+					case "bgv-add-2-dec", "bgv-mul-2-dec":
+						opl = circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nid, cd.CircuitID))
+					default:
+						return nil, fmt.Errorf("unknown signature %s", cd.Signature.Name)
+					}
 					in := make(chan circuits.Input, 1)
-					in <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nid, cd.CircuitID)), OperandValue: nodeIDtoTestInput(string(nid))}
+					in <- circuits.Input{OperandLabel: opl, OperandValue: nodeIDtoTestInput(string(nid))}
 					close(in)
 					return in, nil
 				}
@@ -144,7 +167,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 			}
 
 			for _, n := range all {
-				err = n.RegisterCircuits(circuits.TestCircuits)
+				err = n.RegisterCircuits(testCircuits)
 				require.Nil(t, err)
 			}
 
@@ -171,18 +194,18 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 
 			cds := make([]circuits.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
 			expResult := make(map[sessions.CircuitID]uint64)
-			for _, tc := range testCircuitSigs {
+			for _, tsig := range testCircuitSigs {
 				for r := 0; r < ts.Rep; r++ {
-					cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
+					cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tsig.Name, r))
 					cd := circuits.Descriptor{
-						Signature:   tc.Signature,
+						Signature:   tsig,
 						CircuitID:   cid,
 						NodeMapping: testNodeMapping,
 						Evaluator:   "helper",
 					}
 					cd.NodeMapping["rec"] = ts.Reciever
 					cds = append(cds, cd)
-					expResult[cid] = tc.ExpResult.(uint64)
+					expResult[cid] = expRes(ts, tsig)
 				}
 			}
 
@@ -231,9 +254,21 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 		LogDefaultScale: 32,
 	}
 
-	var testCircuitSigs = []TestCircuitSig{
-		{Signature: circuits.Signature{Name: "ckks-add-2-dec", Args: nil}, ExpResult: 1.0},
-		{Signature: circuits.Signature{Name: "ckks-mul-2-dec", Args: nil}, ExpResult: 0.2222222222222222},
+	var testCircuitSigs = []circuits.Signature{
+		circuits.Signature{Name: "ckks-add-2-dec", Args: nil},
+		circuits.Signature{Name: "ckks-mul-2-dec", Args: nil},
+	}
+
+	// TODO: improve test-to-result mapping
+	expRes := func(tc testSetting, sig circuits.Signature) float64 {
+		switch sig.Name {
+		case "ckks-add-2-dec":
+			return 1.0
+		case "ckks-mul-2-dec":
+			return 0.2222222222222222
+		default:
+			panic("unknown signature")
+		}
 	}
 
 	nodeIDtoTestInput := func(nid string) []float64 {
@@ -315,7 +350,7 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 			}
 
 			for _, n := range all {
-				err = n.RegisterCircuits(circuits.TestCircuits)
+				err = n.RegisterCircuits(testCircuits)
 				require.Nil(t, err)
 			}
 
@@ -342,18 +377,18 @@ func TestCloudAssistedComputeCKKS(t *testing.T) {
 
 			cds := make([]circuits.Descriptor, 0, len(testCircuitSigs)*ts.Rep)
 			expResult := make(map[sessions.CircuitID]float64)
-			for _, tc := range testCircuitSigs {
+			for _, tsig := range testCircuitSigs {
 				for r := 0; r < ts.Rep; r++ {
-					cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tc.Name, r))
+					cid := sessions.CircuitID(fmt.Sprintf("%s-%d", tsig.Name, r))
 					cd := circuits.Descriptor{
-						Signature:   tc.Signature,
+						Signature:   tsig,
 						CircuitID:   cid,
 						NodeMapping: testNodeMapping,
 						Evaluator:   "helper",
 					}
 					cd.NodeMapping["rec"] = ts.Reciever
 					cds = append(cds, cd)
-					expResult[cid] = tc.ExpResult.(float64)
+					expResult[cid] = expRes(ts, tsig)
 				}
 			}
 

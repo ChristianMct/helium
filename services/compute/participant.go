@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/big"
 	"slices"
 
@@ -203,6 +204,8 @@ func (p *participantRuntime) waitForInputAndSend(opl circuits.OperandLabel, encr
 	if err != nil {
 		panic(err)
 	}
+
+	p.Logf("sent input %s", opl)
 }
 
 // Input reads an input operand with the given label from the context.
@@ -224,6 +227,13 @@ func (p *participantRuntime) InputSum(opl circuits.OperandLabel, nids ...session
 		panic(err)
 	}
 
+	if len(nids) == 0 {
+		nids = make([]sessions.NodeID, len(p.sess.Nodes))
+		copy(nids, p.sess.Nodes)
+	}
+
+	opl = opl.ForCircuit(p.cd.CircuitID)
+
 	if slices.Contains(nids, p.sess.NodeID) {
 		sk, err := p.sess.GetSecretKeyForGroup(nids)
 		if err != nil {
@@ -236,10 +246,11 @@ func (p *participantRuntime) InputSum(opl circuits.OperandLabel, nids ...session
 		if err != nil {
 			panic(err)
 		}
-		p.waitForInputAndSend(opl, p.Encryptor.ShallowCopy().WithKey(sk).WithPRNG(prng)) // TODO: remove second element
+
+		p.waitForInputAndSend(opl.SetNode(p.sess.NodeID), p.Encryptor.ShallowCopy().WithKey(sk).WithPRNG(prng)) // TODO: remove second element
 	}
 
-	return circuits.NewDummyFutureOperand(opl.ForCircuit(p.cd.CircuitID).SetNode(p.Circuit().Evaluator))
+	return circuits.NewDummyFutureOperand(opl)
 }
 
 // Load reads an existing ciphertext in the session
@@ -311,7 +322,7 @@ func (p *participantRuntime) Parameters() sessions.FHEParameters {
 }
 
 func (p *participantRuntime) Logf(msg string, v ...any) {
-	//log.Printf("%s | [%s] %s\n", p.sess.NodeID, p.cd.CircuitID, fmt.Sprintf(msg, v...))
+	log.Printf("%s | [%s] %s\n", p.sess.NodeID, p.cd.CircuitID, fmt.Sprintf(msg, v...))
 }
 
 func (p *participantRuntime) processParticipantInput(inputVal any, encryptor *rlwe.Encryptor) (inct *rlwe.Ciphertext, err error) {
