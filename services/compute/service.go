@@ -388,9 +388,7 @@ func (s *Service) Run(ctx context.Context, ip InputProvider, or OutputReceiver, 
 					panic(fmt.Errorf("could not retrieve session from the context"))
 				}
 
-				params := sess.Params
-
-				cinf, err := circuits.Parse(c, cd, params)
+				cinf, err := circuits.Parse(c, cd, sess)
 				if err != nil {
 					panic(err)
 				}
@@ -578,7 +576,7 @@ func (s *Service) createCircuit(ctx context.Context, cd circuits.Descriptor) (er
 	if s.isEvaluator(cd) {
 		cr = &evaluatorRuntime{
 			ctx:         ctx,
-			cDesc:       cd,
+			cd:          cd,
 			sess:        sess,
 			pkProvider:  s.pubkeyBackend,
 			protoExec:   s,
@@ -632,9 +630,7 @@ func (s *Service) runCircuit(ctx context.Context, cd circuits.Descriptor, upstre
 		return fmt.Errorf("could not retrieve session from the context")
 	}
 
-	params := sess.Params
-
-	cinf, err := circuits.Parse(c, cd, params)
+	cinf, err := circuits.Parse(c, cd, sess)
 	if err != nil {
 		return err
 	}

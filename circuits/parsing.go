@@ -14,8 +14,8 @@ import (
 
 // Parse parses a circuit and returns its metadata.
 // The parsing is done by symbolic execution of the circuit.
-func Parse(c Circuit, cd Descriptor, params sessions.FHEParameters) (*Metadata, error) {
-	dummyCtx := newCircuitParserCtx(cd, params)
+func Parse(c Circuit, cd Descriptor, sess *sessions.Session) (*Metadata, error) {
+	dummyCtx := newCircuitParserCtx(cd, sess)
 	if err := c(dummyCtx); err != nil {
 		return nil, fmt.Errorf("error while parsing circuit: %w", err)
 	}
@@ -26,12 +26,13 @@ type circuitParserContext struct {
 	//dummyEvaluator
 	cd     Descriptor
 	md     Metadata
+	sess   *sessions.Session
 	SubCtx map[sessions.CircuitID]*circuitParserContext
 	params sessions.FHEParameters
 	l      sync.Mutex
 }
 
-func newCircuitParserCtx(cd Descriptor, params sessions.FHEParameters) *circuitParserContext {
+func newCircuitParserCtx(cd Descriptor, sess *sessions.Session) *circuitParserContext {
 	cpc := &circuitParserContext{
 		cd: cd,
 		md: Metadata{
@@ -45,8 +46,10 @@ func newCircuitParserCtx(cd Descriptor, params sessions.FHEParameters) *circuitP
 			GaloisKeys:   make(utils.Set[uint64]),
 		},
 		SubCtx: make(map[sessions.CircuitID]*circuitParserContext, 0),
-		params: params,
+		sess:   sess,
+		params: sess.Params,
 	}
+
 	//cpc.dummyEvaluator.ctx = cpc
 	return cpc
 }
@@ -82,6 +85,68 @@ func (e *circuitParserContext) Input(in OperandLabel) *FutureOperand {
 	c := make(chan struct{})
 	close(c)
 	return &FutureOperand{Operand: Operand{OperandLabel: in}, c: c}
+}
+
+func ExpandInputSumLabels(in OperandLabel, sess *sessions.Session, cid sessions.CircuitID, nids ...sessions.NodeID) (opls []OperandLabel, err error) {
+
+	if len(in.NodeID()) > 0 {
+		return nil, fmt.Errorf("InputSum should not have specified node id in the label, but got: %s", in)
+	}
+
+	if len(nids) > 0 && len(nids) < sess.Threshold {
+		return nil, fmt.Errorf("InputSum requires at least %d nodes, but only %d were provided", sess.Threshold, len(nids))
+	}
+
+	if len(nids) == 0 {
+		nids = make([]sessions.NodeID, 0, len(sess.Nodes))
+		copy(nids, sess.Nodes)
+	}
+
+	for _, nid := range nids {
+		opls = append(opls, in.ForCircuit(cid).SetNode(nid))
+	}
+
+	return opls, nil
+}
+
+func ApplyNodeMapping(nm map[string]sessions.NodeID, nids ...sessions.NodeID) (mappedNodeIds []sessions.NodeID, err error) {
+	mappedNodeIds = make([]sessions.NodeID, 0, len(nids))
+	for _, nid := range nids {
+		mappedNid, has := nm[string(nid)]
+		if !has {
+			return nil, fmt.Errorf("unknown node mapping for node id \"%s\"", nid)
+		}
+		mappedNodeIds = append(mappedNodeIds, mappedNid)
+	}
+	return mappedNodeIds, nil
+}
+
+func (e *circuitParserContext) InputSum(in OperandLabel, nids ...sessions.NodeID) *FutureOperand {
+	e.l.Lock()
+	defer e.l.Unlock()
+
+	nids, err := ApplyNodeMapping(e.cd.NodeMapping, nids...)
+	if err != nil {
+		panic(err)
+	}
+
+	opls, err := ExpandInputSumLabels(in, e.sess, e.cd.CircuitID, nids...)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, opl := range opls {
+		inset, exists := e.md.InputsFor[opl.NodeID()]
+		if !exists {
+			inset = utils.NewEmptySet[OperandLabel]()
+			e.md.InputsFor[opl.NodeID()] = inset
+		}
+		inset.Add(opl)
+	}
+
+	c := make(chan struct{})
+	close(c)
+	return &FutureOperand{Operand: Operand{OperandLabel: in.SetNode(e.cd.Evaluator)}, c: c}
 }
 
 func (e *circuitParserContext) Load(in OperandLabel) *Operand {

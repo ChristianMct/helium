@@ -239,3 +239,28 @@ func ByteCountIEC(b uint64) string {
 	return fmt.Sprintf("%.1f %ciB",
 		float64(b)/float64(div), "KMGTPE"[exp])
 }
+
+type Future[T any] struct {
+	val T
+	c   chan struct{}
+}
+
+func NewFuture[T any]() *Future[T] {
+	return &Future[T]{c: make(chan struct{})}
+}
+
+func NewDummyFuture[T any]() *Future[T] {
+	c := make(chan struct{})
+	close(c)
+	return &Future[T]{c: c}
+}
+
+func (f *Future[T]) Set(val T) {
+	f.val = val
+	close(f.c)
+}
+
+func (fo *Future[T]) Get() T {
+	<-fo.c
+	return fo.val
+}

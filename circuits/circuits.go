@@ -36,6 +36,16 @@ type Runtime interface {
 	//  - can omit the session-id part as it wil be automatically resolved by the runtime.
 	Input(OperandLabel) *FutureOperand
 
+	// InputSum reads a multiparty input operand with the given label from the context.
+	// It is a special case of Input, where the input is a sum of multiple inputs from at least T parties,
+	// where T is the session threshold.
+	// When specifying the label, the user:
+	//  - must not specify a node id; it will be automatically resolved by the runtime.
+	//  - can omit the session-id part as it wil be automatically resolved by the runtime.
+	// The node id list must be either empty or contain at least T node ids. An empty list is equivalent to
+	// all the nodes in the session. Placeholder ids are allowed.
+	InputSum(OperandLabel, ...sessions.NodeID) *FutureOperand
+
 	// Load reads an existing ciphertext in the session
 	// When specifying the label, the user:
 	//  - can use a placeholder id for the node, the mapping for which is provided in the Signature.
@@ -140,7 +150,7 @@ type Metadata struct {
 	GaloisKeys               utils.Set[uint64]
 }
 
-type Input struct { // TODO move to circuit ?
+type Input struct {
 	OperandLabel
 	OperandValue any
 }

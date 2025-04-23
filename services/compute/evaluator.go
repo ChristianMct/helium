@@ -12,6 +12,8 @@ import (
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
+	"github.com/tuneinsight/lattigo/v5/ring"
+	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
 
 // KeyOperationRunner is an interface for running key operations.
@@ -31,8 +33,8 @@ type KeyOperationRunner interface {
 type evaluatorRuntime struct {
 
 	// init
-	ctx   context.Context // TODO: check if storing this context this way is a problem
-	cDesc circuits.Descriptor
+	ctx context.Context // TODO: check if storing this context this way is a problem
+	cd  circuits.Descriptor
 	//c      circuits.Circuit
 	//params bgv.Parameters
 	sess        *sessions.Session
@@ -137,11 +139,58 @@ func (se *evaluatorRuntime) GetFutureOperand(_ context.Context, opl circuits.Ope
 
 func (se *evaluatorRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 	opl = se.getOperandLabelForRuntime(opl)
-	op, has := se.inputs[opl]
+	fop, has := se.inputs[opl]
 	if !has {
 		panic(fmt.Errorf("non registered input: %s", opl))
 	}
-	return op
+	return fop
+}
+
+func (se *evaluatorRuntime) InputSum(opl circuits.OperandLabel, nids ...sessions.NodeID) *circuits.FutureOperand {
+
+	nids, err := circuits.ApplyNodeMapping(se.cd.NodeMapping, nids...)
+	if err != nil {
+		panic(err)
+	}
+
+	opls, err := circuits.ExpandInputSumLabels(opl, se.sess, se.cd.CircuitID, nids...)
+	if err != nil {
+		panic(err)
+	}
+
+	opl = opl.SetNode(se.cd.Evaluator) // set the node id to the evaluator
+	fopOut := circuits.NewFutureOperand(opl)
+
+	opOut := se.NewOperand(opl) // register the operand in the circuit
+	opOut.Ciphertext = rlwe.NewCiphertext(se.sess.Params, 1)
+
+	rq := se.sess.Params.GetRLWEParameters().RingQ()
+
+	var crs []byte
+	crs = append(crs, se.sess.PublicSeed...)
+	crs = append(crs, opl...)
+	prng, err := sampling.NewKeyedPRNG(crs)
+	if err != nil {
+		panic(err)
+	}
+	sampler := ring.NewUniformSampler(prng, rq)
+	sampler.Read(opOut.Ciphertext.Value[1])
+
+	// TODO: parallel waiting/aggregating
+	for _, opl := range opls {
+		fop, exists := se.inputs[opl]
+		if !exists {
+			panic(fmt.Errorf("non registered input: %s", opl))
+		}
+		op := fop.Get()
+
+		rq.Add(op.Ciphertext.Value[0], opOut.Ciphertext.Value[0], opOut.Ciphertext.Value[0])
+	}
+
+	fopOut.Set(*opOut)
+
+	return fopOut
+
 }
 
 func (se *evaluatorRuntime) Load(opl circuits.OperandLabel) *circuits.Operand {
@@ -167,7 +216,7 @@ func (se *evaluatorRuntime) keyOpSig(pt protocols.Type, in circuits.Operand, par
 
 func (se *evaluatorRuntime) keyOpExec(sig protocols.Signature, in circuits.Operand) (err error) {
 
-	ctx := sessions.NewBackgroundContext(se.sess.ID, se.cDesc.CircuitID)
+	ctx := sessions.NewBackgroundContext(se.sess.ID, se.cd.CircuitID)
 
 	if err := se.protoExec.RunKeyOperation(ctx, sig); err != nil {
 		return err
@@ -186,7 +235,7 @@ func keyOpOutputLabel(inLabel circuits.OperandLabel, sig protocols.Signature) ci
 }
 
 func (se *evaluatorRuntime) getOperandLabelForRuntime(cOpLabel circuits.OperandLabel) circuits.OperandLabel {
-	return cOpLabel.ForCircuit(se.cDesc.CircuitID).ForMapping(se.cDesc.NodeMapping)
+	return cOpLabel.ForCircuit(se.cd.CircuitID).ForMapping(se.cd.NodeMapping)
 }
 
 func (se *evaluatorRuntime) DEC(in circuits.Operand, rec sessions.NodeID, params map[string]string) (err error) {
@@ -199,7 +248,7 @@ func (se *evaluatorRuntime) DEC(in circuits.Operand, rec sessions.NodeID, params
 	fop.Set(in)
 
 	pparams := maps.Clone(params)
-	pparams["target"] = string(se.cDesc.NodeMapping[string(rec)])
+	pparams["target"] = string(se.cd.NodeMapping[string(rec)])
 	pparams["op"] = string(in.OperandLabel)
 	sig := se.keyOpSig(protocols.DEC, in, pparams)
 	return se.keyOpExec(sig, in)
@@ -216,7 +265,7 @@ func (se *evaluatorRuntime) PCKS(in circuits.Operand, rec sessions.NodeID, param
 }
 
 func (se *evaluatorRuntime) Circuit() circuits.Descriptor {
-	return se.cDesc.Clone()
+	return se.cd.Clone()
 }
 
 func (se *evaluatorRuntime) Parameters() sessions.FHEParameters {
@@ -224,5 +273,5 @@ func (se *evaluatorRuntime) Parameters() sessions.FHEParameters {
 }
 
 func (se *evaluatorRuntime) Logf(msg string, v ...any) {
-	log.Printf("%s | [compute][%s] %s\n", se.cDesc.Evaluator, se.cDesc.CircuitID, fmt.Sprintf(msg, v...))
+	log.Printf("%s | [compute][%s] %s\n", se.cd.Evaluator, se.cd.CircuitID, fmt.Sprintf(msg, v...))
 }
