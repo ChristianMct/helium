@@ -102,6 +102,17 @@ func (opl OperandLabel) HasNode(id sessions.NodeID) bool {
 	return nopl.Host == string(id)
 }
 
+// SetNode sets the node id part of the operand label to the given node id.
+// It returns a new operand label with the node id part replaced by the given node id.
+func (opl OperandLabel) SetNode(id sessions.NodeID) OperandLabel {
+	nopl, err := url.Parse(string(opl))
+	if err != nil {
+		panic(fmt.Errorf("invalid operand label: %s", opl))
+	}
+	nopl.Host = string(id)
+	return OperandLabel(nopl.String())
+}
+
 // ForCircuit returns a new operand label for the given circuit id, with
 // the circuit id part set to cid.
 func (opl OperandLabel) ForCircuit(cid sessions.CircuitID) OperandLabel {

@@ -4,17 +4,20 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"slices"
 
 	"golang.org/x/exp/maps"
 
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 	"github.com/tuneinsight/lattigo/v5/utils/bignum"
+	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
 
 // participantRuntime is a runtime for a participant (a non-evaluator node) in a computation.
@@ -46,7 +49,7 @@ type participantRuntime struct {
 	*rlwe.Decryptor
 
 	// data
-	inputs map[circuits.OperandLabel]*circuits.FutureOperand
+	inputs map[circuits.OperandLabel]*utils.Future[circuits.Input]
 }
 
 // Service interface
@@ -71,10 +74,9 @@ func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata, nid
 	p.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
 
 	ownInputs := md.InputsFor[p.sess.NodeID]
-	p.inputs = make(map[circuits.OperandLabel]*circuits.FutureOperand, len(ownInputs))
+	p.inputs = make(map[circuits.OperandLabel]*utils.Future[circuits.Input], len(ownInputs))
 	for inLabel := range ownInputs {
-		fop := circuits.NewFutureOperand(inLabel)
-		p.inputs[inLabel] = fop
+		p.inputs[inLabel] = utils.NewFuture[circuits.Input]()
 	}
 	return
 }
@@ -93,21 +95,18 @@ func (p *participantRuntime) Eval(ctx context.Context, c circuits.Circuit) error
 	if err != nil {
 		return err
 	}
+
 	// processes the participant's inputs in a separate goroutine to
 	// let the circuit run/network transfers begin in parallel
 	go func() {
 		for inOp := range inChan {
-			fop, has := p.inputs[inOp.OperandLabel]
+			fin, has := p.inputs[inOp.OperandLabel]
 			if !has {
 				p.Logf("skipping unexpected input %s", inOp.OperandLabel)
 				continue
 			}
-			inct, err := p.processParticipantInput(inOp.OperandValue)
-			if err != nil {
-				panic(err)
-			}
 
-			fop.Set(circuits.Operand{OperandLabel: inOp.OperandLabel, Ciphertext: inct})
+			fin.Set(inOp)
 		}
 	}()
 
@@ -182,32 +181,65 @@ func isValidCKKSPlaintextType(in interface{}) bool {
 	}
 }
 
+func (p *participantRuntime) waitForInputAndSend(opl circuits.OperandLabel, encryptor *rlwe.Encryptor) {
+	fin, has := p.inputs[opl]
+	if !has {
+		panic(fmt.Errorf("called Input on non registered participant input: %s", opl))
+	}
+
+	// TODO: do rest in go routine (requires parallel encoders/encryptors)
+	in := fin.Get()
+	inct, err := p.processParticipantInput(in.OperandValue, encryptor)
+	if err != nil {
+		panic(err)
+	}
+
+	err = p.trans.PutCiphertext(p.ctx, sessions.Ciphertext{
+		CiphertextMetadata: sessions.CiphertextMetadata{
+			ID: sessions.CiphertextID(opl),
+		},
+		Ciphertext: *inct,
+	})
+	if err != nil {
+		panic(err)
+	}
+}
+
 // Input reads an input operand with the given label from the context.
 func (p *participantRuntime) Input(opl circuits.OperandLabel) *circuits.FutureOperand {
 
 	opl = opl.ForCircuit(p.cd.CircuitID).ForMapping(p.cd.NodeMapping)
 
-	if opl.NodeID() != p.sess.NodeID {
-		return circuits.NewDummyFutureOperand(opl)
+	if opl.NodeID() == p.sess.NodeID {
+		p.waitForInputAndSend(opl, p.Encryptor.ShallowCopy())
 	}
 
-	fop, has := p.inputs[opl]
-	if !has {
-		panic(fmt.Errorf("called Input on non registered participant input: %s", opl))
-	}
-	op := fop.Get()
+	return circuits.NewDummyFutureOperand(opl)
+}
 
-	err := p.trans.PutCiphertext(p.ctx, sessions.Ciphertext{
-		CiphertextMetadata: sessions.CiphertextMetadata{
-			ID: sessions.CiphertextID(opl),
-		},
-		Ciphertext: *op.Ciphertext,
-	})
+func (p *participantRuntime) InputSum(opl circuits.OperandLabel, nids ...sessions.NodeID) *circuits.FutureOperand {
+
+	nids, err := circuits.ApplyNodeMapping(p.cd.NodeMapping, nids...)
 	if err != nil {
 		panic(err)
 	}
 
-	return circuits.NewDummyFutureOperand(opl)
+	if slices.Contains(nids, p.sess.NodeID) {
+		sk, err := p.sess.GetSecretKeyForGroup(nids)
+		if err != nil {
+			panic(err)
+		}
+		var crs []byte
+		crs = append(crs, p.sess.PublicSeed...)
+		crs = append(crs, opl...)
+		prng, err := sampling.NewKeyedPRNG(crs)
+		if err != nil {
+			panic(err)
+		}
+		p.waitForInputAndSend(opl, p.Encryptor.ShallowCopy().WithKey(sk).WithPRNG(prng)) // TODO: remove second element
+	}
+
+	return circuits.NewDummyFutureOperand(opl.ForCircuit(p.cd.CircuitID).SetNode(p.Circuit().Evaluator))
 }
 
 // Load reads an existing ciphertext in the session
@@ -282,17 +314,17 @@ func (p *participantRuntime) Logf(msg string, v ...any) {
 	//log.Printf("%s | [%s] %s\n", p.sess.NodeID, p.cd.CircuitID, fmt.Sprintf(msg, v...))
 }
 
-func (p *participantRuntime) processParticipantInput(inputVal any) (inct *rlwe.Ciphertext, err error) {
+func (p *participantRuntime) processParticipantInput(inputVal any, encryptor *rlwe.Encryptor) (inct *rlwe.Ciphertext, err error) {
 	switch {
 	case isValidPlaintext(inputVal):
 		var inpt *rlwe.Plaintext
 		switch enc := p.Encoder.(type) {
 		case *bgv.Encoder:
 			inpt = bgv.NewPlaintext(p.sess.Params.(bgv.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
-			err = enc.ShallowCopy().Encode(inputVal, inpt)
+			err = enc.Encode(inputVal, inpt)
 		case *ckks.Encoder:
 			inpt = ckks.NewPlaintext(p.sess.Params.(ckks.Parameters), p.sess.Params.GetRLWEParameters().MaxLevel())
-			err = enc.ShallowCopy().Encode(inputVal, inpt)
+			err = enc.Encode(inputVal, inpt)
 		}
 		if err != nil {
 			panic(fmt.Errorf("cannot encode input: %w", err))
@@ -301,7 +333,7 @@ func (p *participantRuntime) processParticipantInput(inputVal any) (inct *rlwe.C
 		fallthrough
 	case isRLWEPLaintext(inputVal):
 		inpt := inputVal.(*rlwe.Plaintext)
-		inct, err := p.Encryptor.ShallowCopy().EncryptNew(inpt)
+		inct, err := encryptor.EncryptNew(inpt)
 		if err != nil {
 			panic(err)
 		}
