@@ -11,6 +11,7 @@ import (
 
 type TestSession struct {
 	SessParams    Parameters
+	FHEParameters FHEParameters
 	RlweParams    rlwe.Parameters
 	SkIdeal       *rlwe.SecretKey
 	NodeSessions  map[NodeID]*Session
@@ -21,11 +22,12 @@ type TestSession struct {
 
 	// lattigo helpers
 	//Encoder   *bgv.Encoder
+	KeyGen    *rlwe.KeyGenerator
 	Encryptor *rlwe.Encryptor
-	Decrpytor *rlwe.Decryptor
+	Decryptor *rlwe.Decryptor
 }
 
-func NewTestSession(N, T int, rlweparams FHEParamerersLiteralProvider, helperID NodeID) (*TestSession, error) {
+func NewTestSession(N, T int, fheParamLitteral FHEParamerersLiteralProvider, helperID NodeID) (*TestSession, error) {
 	nids := make([]NodeID, N)
 	nspk := make(map[NodeID]drlwe.ShamirPublicPoint)
 	for i := range nids {
@@ -35,7 +37,7 @@ func NewTestSession(N, T int, rlweparams FHEParamerersLiteralProvider, helperID 
 
 	var sessParams = Parameters{
 		ID:            "testsess",
-		FHEParameters: rlweparams,
+		FHEParameters: fheParamLitteral,
 		Threshold:     T,
 		Nodes:         nids,
 		ShamirPks:     nspk,
@@ -52,10 +54,11 @@ func NewTestSessionFromParams(sp Parameters, helperID NodeID) (*TestSession, err
 	ts.SessParams = sp
 
 	var err error
-	ts.RlweParams, err = rlwe.NewParametersFromLiteral(sp.FHEParameters.GetRLWEParametersLiteral())
+	ts.FHEParameters, err = NewFHEParameters(sp.FHEParameters)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
+	ts.RlweParams = *ts.FHEParameters.GetRLWEParameters()
 
 	// Generates test session secrets for the nodes
 	nodeSecrets, err := GenTestSecretKeys(sp)
@@ -88,8 +91,9 @@ func NewTestSessionFromParams(sp Parameters, helperID NodeID) (*TestSession, err
 
 	ts.CachedKeyBackend = NewCachedPublicKeyBackend(NewTestKeyBackend(ts.RlweParams, ts.SkIdeal))
 
+	ts.KeyGen = rlwe.NewKeyGenerator(ts.RlweParams)
 	ts.Encryptor = rlwe.NewEncryptor(ts.RlweParams, ts.SkIdeal)
-	ts.Decrpytor = rlwe.NewDecryptor(ts.RlweParams, ts.SkIdeal)
+	ts.Decryptor = rlwe.NewDecryptor(ts.RlweParams, ts.SkIdeal)
 	return ts, nil
 }
 

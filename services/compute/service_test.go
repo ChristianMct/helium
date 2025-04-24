@@ -63,6 +63,7 @@ func TestCloudAssistedComputeBGV(t *testing.T) {
 		{Name: "bgv-add-all-dec", Args: nil},
 	}
 
+	// TODO: improve test-to-result mapping
 	expRes := func(tc testSetting, sig circuits.Signature) uint64 {
 		switch sig.Name {
 		case "bgv-add-2-dec":
