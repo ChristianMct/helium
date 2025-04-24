@@ -4,19 +4,15 @@ package circuits
 import (
 	"context"
 	"fmt"
-	"log"
 	"maps"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
-	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 )
 
 // Circuit is a type for representing circuits, which are Go functions interacting with
@@ -206,108 +202,6 @@ func IDFromProtocolDescriptor(pd protocols.Descriptor) sessions.CircuitID {
 	}
 	opl := OperandLabel(opls)
 	return opl.CircuitID()
-}
-
-// TestRuntime is an implementation of the Runtime interface for testing purposes.
-// It can be initialized from the FHE parameters and circuit inputs, then passed
-// to a Circuit to execute it. It encrypts the requested inputs on-the-fly, under
-// a test secret-key.
-// See the Runtime interface.
-type TestRuntime struct {
-	fheParams      sessions.FHEParameters
-	inputProvider  func(OperandLabel) *rlwe.Plaintext
-	outputReceiver func(Output)
-
-	l         sync.Mutex
-	sk        *rlwe.SecretKey
-	keygen    *rlwe.KeyGenerator
-	encryptor *rlwe.Encryptor
-	evaluator he.Evaluator
-	decryptor *rlwe.Decryptor
-}
-
-// NewTestRuntime creates a new TestRuntime instance with the given FHE parameters and input/output functions.
-func NewTestRuntime(fheParams sessions.FHEParameters, inputProvider func(OperandLabel) *rlwe.Plaintext, outputReceiver func(Output)) *TestRuntime {
-	tr := &TestRuntime{}
-	tr.fheParams = fheParams
-	tr.inputProvider = inputProvider
-	tr.outputReceiver = outputReceiver
-
-	tr.keygen = rlwe.NewKeyGenerator(fheParams)
-	tr.sk = tr.keygen.GenSecretKeyNew()
-	tr.encryptor = rlwe.NewEncryptor(fheParams, tr.sk)
-	tr.evaluator = sessions.NewEvaluator(fheParams, nil)
-	tr.decryptor = rlwe.NewDecryptor(fheParams, tr.sk)
-	return tr
-}
-
-func (tr *TestRuntime) Parameters() sessions.FHEParameters {
-	return tr.fheParams
-}
-
-func (tr *TestRuntime) Input(opl OperandLabel) *FutureOperand {
-	tr.l.Lock()
-	defer tr.l.Unlock()
-	fop := NewFutureOperand(opl)
-	pt := tr.inputProvider(opl)
-	if pt == nil {
-		panic(fmt.Errorf("input provider returned nil input for %s", opl))
-	}
-	ct, err := tr.encryptor.EncryptNew(pt)
-	if err != nil {
-		panic(err)
-	}
-	fop.Set(Operand{Ciphertext: ct, OperandLabel: opl})
-	return fop
-}
-
-func (tr *TestRuntime) Load(_ OperandLabel) *Operand {
-	panic("not implemented") // TODO: Implement
-}
-
-func (tr *TestRuntime) NewOperand(opl OperandLabel) *Operand {
-	return &Operand{OperandLabel: opl}
-}
-
-func (tr *TestRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error {
-
-	var rlk *rlwe.RelinearizationKey
-	gks := make([]*rlwe.GaloisKey, len(galKeys))
-
-	if needRlk {
-		rlk = tr.keygen.GenRelinearizationKeyNew(tr.sk)
-	}
-	for i, gk := range galKeys {
-		gks[i] = tr.keygen.GenGaloisKeyNew(gk, tr.sk)
-	}
-
-	evks := rlwe.NewMemEvaluationKeySet(rlk, gks...)
-	var ev he.Evaluator
-	switch sev := tr.evaluator.(type) {
-	case *bgv.Evaluator:
-		ev = sev.WithKey(evks)
-	case *ckks.Evaluator:
-		ev = sev.WithKey(evks)
-	default:
-		panic("unsupported evaluator type")
-	}
-	return f(ev)
-}
-
-func (tr *TestRuntime) DEC(in Operand, rec sessions.NodeID, params map[string]string) error {
-	tr.l.Lock()
-	defer tr.l.Unlock()
-	pt := tr.decryptor.DecryptNew(in.Ciphertext)
-	tr.outputReceiver(Output{Operand: Operand{OperandLabel: OperandLabel(fmt.Sprintf("%s-dec", in.OperandLabel)), Ciphertext: &rlwe.Ciphertext{Element: pt.Element}}, CircuitID: "test"})
-	return nil
-}
-
-func (tr *TestRuntime) PCKS(in Operand, rec sessions.NodeID, params map[string]string) error {
-	panic("not implemented") // TODO: Implement
-}
-
-func (tr *TestRuntime) Logf(msg string, v ...any) {
-	log.Printf("[TestRuntime] %s\n", fmt.Sprintf(msg, v...))
 }
 
 // ArgumentOfType returns the argument of the given type from the signature.

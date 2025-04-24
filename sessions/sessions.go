@@ -302,6 +302,17 @@ func (sess *Session) String() string {
 	}`, sess.ID, sess.NodeID, sess.Nodes, sess.Threshold, sess.PublicSeed)
 }
 
+func NewFHEParameters(p FHEParamerersLiteralProvider) (FHEParameters, error) {
+	switch pp := p.(type) {
+	case bgv.ParametersLiteral:
+		return bgv.NewParametersFromLiteral(pp)
+	case ckks.ParametersLiteral:
+		return ckks.NewParametersFromLiteral(pp)
+	default:
+		return nil, fmt.Errorf("unknown FHE parameters litteral type")
+	}
+}
+
 func NewEvaluator(p FHEParameters, ks rlwe.EvaluationKeySet) he.Evaluator {
 	switch pp := p.(type) {
 	case bgv.Parameters:
@@ -309,7 +320,7 @@ func NewEvaluator(p FHEParameters, ks rlwe.EvaluationKeySet) he.Evaluator {
 	case ckks.Parameters:
 		return ckks.NewEvaluator(pp, ks)
 	default:
-		panic(fmt.Errorf("unknown FHE parameters type"))
+		panic(fmt.Errorf("unknown FHE parameters type: %T", pp))
 	}
 }
 
