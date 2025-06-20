@@ -118,10 +118,11 @@ Feel free to contact me if you are interested in the project and would like to c
 
 ## Citing Helium
 ```
-@article{mouchet2024helium,
-  title={Helium: Scalable MPC among Lightweight Participants and under Churn},
+@inproceedings{mouchet2024helium,
+  title={Helium: Scalable MPC among lightweight participants and under churn},
   author={Mouchet, Christian and Chatel, Sylvain and Pyrgelis, Apostolos and Troncoso, Carmela},
-  journal={Cryptology ePrint Archive},
+  booktitle={Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security},
+  pages={3038--3052},
   year={2024}
 }
 ```
