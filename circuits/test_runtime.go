@@ -41,7 +41,7 @@ func NewTestRuntime(tsess *sessions.TestSession, cd Descriptor, inputProvider fu
 	return tr
 }
 
-func (tr *TestRuntime) Circuit() Descriptor {
+func (tr *TestRuntime) CircuitDescriptor() Descriptor {
 	return tr.cd
 }
 

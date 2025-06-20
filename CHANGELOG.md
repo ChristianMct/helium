@@ -1,7 +1,10 @@
 # Changelog
 
 This file contains a log of the main changes made to the framework. 
-## [unreleased] 
+## [v0.3.0] - 20.06.2025 
+
+This update packages various features introduced in the last year, mostly to support
+project using Helium.
 
 ### Added
 
@@ -11,6 +14,12 @@ This file contains a log of the main changes made to the framework.
   test purposes. It provides a simplified setup/input/evaluation/output to test circuits
   locally without instantiating a full set of service.
 - The `circuits.Input` type to represent circuit inputs.
+- The `circuits.Runtime.CircuitDescriptor` method for accessing a running circuits'
+  metadata (esp. its signature's arguments). 
+- The `circuits.Runtime.InputSum` method for efficient handling of directly-summed inputs
+  from the session's threshold-number of parties.
+- Client nodes can now submit circuit-evaluation requests.
+- The `node.SecretProvider` interface for provisioning of the node's secret-keys.
 
 ### Changed 
 

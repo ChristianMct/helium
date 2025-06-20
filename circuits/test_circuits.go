@@ -32,7 +32,7 @@ var TestCircuits map[Name]Circuit = map[Name]Circuit{
 
 	"bgv-add-n-dec": func(ec Runtime) error {
 
-		n, err := ArgumentOfType[int](ec.Circuit().Signature, "n")
+		n, err := ArgumentOfType[int](ec.CircuitDescriptor().Signature, "n")
 		if err != nil {
 			return err
 		}
