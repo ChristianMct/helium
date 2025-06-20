@@ -26,6 +26,8 @@ func TestTestCircuitRuntime(t *testing.T) {
 
 	params := ts.FHEParameters.(bgv.Parameters)
 
+	// TODO: this test should check the operand labels
+
 	ip := func(label OperandLabel) *rlwe.Plaintext {
 		pt := bgv.NewPlaintext(params, params.MaxLevel())
 		err := bgv.NewEncoder(params).Encode([]uint64{1}, pt)

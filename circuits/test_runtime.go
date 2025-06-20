@@ -52,6 +52,7 @@ func (tr *TestRuntime) Parameters() sessions.FHEParameters {
 func (tr *TestRuntime) Input(opl OperandLabel) *FutureOperand {
 	tr.l.Lock()
 	defer tr.l.Unlock()
+	opl = opl.ForCircuit(tr.cd.CircuitID)
 	fop := NewFutureOperand(opl)
 	pt := tr.inputProvider(opl)
 	if pt == nil {
@@ -98,7 +99,7 @@ func (tr *TestRuntime) Load(_ OperandLabel) *Operand {
 }
 
 func (tr *TestRuntime) NewOperand(opl OperandLabel) *Operand {
-	return &Operand{OperandLabel: opl}
+	return &Operand{OperandLabel: opl.ForCircuit(tr.cd.CircuitID)}
 }
 
 func (tr *TestRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error {
@@ -130,7 +131,7 @@ func (tr *TestRuntime) DEC(in Operand, rec sessions.NodeID, params map[string]st
 	tr.l.Lock()
 	defer tr.l.Unlock()
 	pt := tr.Decryptor.DecryptNew(in.Ciphertext)
-	tr.outputReceiver(Output{Operand: Operand{OperandLabel: OperandLabel(fmt.Sprintf("%s-dec", in.OperandLabel)), Ciphertext: &rlwe.Ciphertext{Element: pt.Element}}, CircuitID: "test"})
+	tr.outputReceiver(Output{Operand: Operand{OperandLabel: OperandLabel(fmt.Sprintf("%s-dec", in.OperandLabel)), Ciphertext: &rlwe.Ciphertext{Element: pt.Element}}, CircuitID: tr.cd.CircuitID})
 	return nil
 }
 
