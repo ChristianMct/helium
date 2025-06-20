@@ -312,7 +312,7 @@ func (p *participantRuntime) PCKS(in circuits.Operand, rec sessions.NodeID, para
 	panic("not implemented") // TODO: Implement
 }
 
-func (p *participantRuntime) Circuit() circuits.Descriptor {
+func (p *participantRuntime) CircuitDescriptor() circuits.Descriptor {
 	return p.cd.Clone()
 }
 

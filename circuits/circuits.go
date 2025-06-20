@@ -22,7 +22,7 @@ type Circuit func(Runtime) error
 // Runtime defines the interface that is available to circuits to access
 // their execution context.
 type Runtime interface {
-	Circuit() Descriptor
+	CircuitDescriptor() Descriptor
 
 	Parameters() sessions.FHEParameters
 
