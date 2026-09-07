@@ -282,6 +282,40 @@ func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan 
 	return aggOutChan
 }
 
+// PutShare aggregates a single share into the protocol's aggregate. It is the synchronous
+// counterpart of Aggregate, meant for callers that drive the aggregation as a state machine.
+// It returns whether the aggregation is complete after this share, and an error if the share
+// cannot be aggregated (in which case the aggregation state is unchanged).
+// The method panics if called by a non-aggregator node.
+func (p *Protocol) PutShare(share Share) (complete bool, err error) {
+	if !p.IsAggregator() {
+		panic(fmt.Errorf("node is not the aggregator"))
+	}
+	return p.agg.put(share)
+}
+
+// AggregatedShare returns the current aggregated share, with its metadata set.
+// The share is complete only if PutShare has returned complete=true.
+// The method panics if called by a non-aggregator node.
+func (p *Protocol) AggregatedShare() Share {
+	if !p.IsAggregator() {
+		panic(fmt.Errorf("node is not the aggregator"))
+	}
+	agg := p.agg.getAggregatedShare()
+	agg.ProtocolID = p.id
+	agg.ProtocolType = p.pd.Type
+	return agg
+}
+
+// Missing returns the set of participants whose share has not been aggregated yet.
+// The method panics if called by a non-aggregator node.
+func (p *Protocol) Missing() utils.Set[sessions.NodeID] {
+	if !p.IsAggregator() {
+		panic(fmt.Errorf("node is not the aggregator"))
+	}
+	return p.agg.missing()
+}
+
 // Output computes the output of the protocol from the input and aggregation output, storing the result in out.
 // Out must be a pointer to the type of the protocol's output, see AllocateOutput.
 func (p *Protocol) Output(in Input, agg AggregationOutput, out interface{}) error {
