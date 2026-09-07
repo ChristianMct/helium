@@ -8,18 +8,17 @@ import (
 	"net"
 
 	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/services/compute"
 )
 
-func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app node.App, ip compute.InputProvider) (hsv *HeliumServer, cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
+// RunHeliumServer creates a helium server (helper node) from the config, starts serving on
+// the helper's address from the node list, and runs the app on it (see HeliumServer.Run).
+func RunHeliumServer(ctx context.Context, config Config, nl List, app App, ip compute.InputProvider) (hsv *HeliumServer, cdescs chan<- circuits.Descriptor, outs <-chan circuits.Output, err error) {
 
-	helperNode, err := node.New(config, nl, nil) // TODO: assumes that the helper node never has any secrets
+	hsv, err = NewHeliumServer(config, nl)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	hsv = NewHeliumServer(helperNode)
 
 	bindAddress := string(nl.AddressOf(config.ID))
 	lis, err := net.Listen("tcp", bindAddress)
@@ -39,14 +38,14 @@ func RunHeliumServer(ctx context.Context, config node.Config, nl node.List, app 
 	return
 }
 
-func RunHeliumClient(ctx context.Context, config node.Config, nl node.List, secrets node.SecretProvider, app node.App, ip compute.InputProvider) (hc *HeliumClient, outs <-chan circuits.Output, err error) {
+// RunHeliumClient creates a helium client (peer node) from the config, connects it to the
+// helper and runs the app on it (see HeliumClient.Run).
+func RunHeliumClient(ctx context.Context, config Config, nl List, secrets SecretProvider, app App, ip compute.InputProvider) (hc *HeliumClient, outs <-chan circuits.Output, err error) {
 
-	n, err := node.New(config, nl, secrets)
+	hc, err = NewHeliumClient(config, nl, secrets)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	hc = NewHeliumClient(n, config.HelperID, nl.AddressOf(config.HelperID))
 
 	log.Println("[client] connecting to helper...")
 	if err := hc.Connect(); err != nil {

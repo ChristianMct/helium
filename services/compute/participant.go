@@ -26,7 +26,7 @@ import (
 // This implementation:
 //   - only resolves this node's input, by calling the user-proved InputProvider, then it encrypts and sends them to the evaluator,
 //   - only performs symbolic execution of the circuit
-//   - participates to key operation protocols by querying the evaluator for input operands, and track the protocols' completion.
+//   - waits for the completion of the key operation protocols through the ProtocolEngine,
 //   - resolves outputs by querying them from the evaluator.
 //
 // The participantRuntime is a stateful object that is created and used for a single evaluation of a single circuit.
@@ -40,11 +40,10 @@ type participantRuntime struct {
 	inputProvider InputProvider
 	trans         Transport
 	or            OutputReceiver
+	engine        ProtocolEngine
 	fheProvider   FHEProvider
-	incpd         chan protocols.Descriptor // buffer for pd incoming before Init
 
 	// init
-	*protocols.CompleteMap
 	Encoder
 	*rlwe.Encryptor
 	*rlwe.Decryptor
@@ -72,8 +71,6 @@ func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata, nid
 		return err
 	}
 
-	p.CompleteMap = protocols.NewCompletedProt(maps.Values(md.KeySwitchOps))
-
 	ownInputs := md.InputsFor[p.sess.NodeID]
 	p.inputs = make(map[circuits.OperandLabel]*utils.Future[circuits.Input], len(ownInputs))
 	for inLabel := range ownInputs {
@@ -83,14 +80,6 @@ func (p *participantRuntime) Init(ctx context.Context, md circuits.Metadata, nid
 }
 
 func (p *participantRuntime) Eval(ctx context.Context, c circuits.Circuit) error {
-
-	go func() {
-		for pd := range p.incpd {
-			if err := p.CompleteMap.CompletedProtocol(pd); err != nil {
-				panic(err)
-			}
-		}
-	}()
 
 	inChan, err := p.inputProvider(ctx, *p.sess, p.cd)
 	if err != nil {
@@ -111,19 +100,7 @@ func (p *participantRuntime) Eval(ctx context.Context, c circuits.Circuit) error
 		}
 	}()
 
-	err = c(p)
-	if err != nil {
-		return err
-	}
-
-	err = p.Wait()
-	if err != nil {
-		return err
-	}
-
-	close(p.incpd)
-
-	return nil
+	return c(p)
 }
 
 func (p *participantRuntime) IncomingOperand(_ circuits.Operand) error {
@@ -149,11 +126,6 @@ func (p *participantRuntime) GetFutureOperand(ctx context.Context, opl circuits.
 	}()
 
 	return fop, true
-}
-
-func (p *participantRuntime) CompletedProtocol(pd protocols.Descriptor) error {
-	p.incpd <- pd
-	return nil
 }
 
 // Circuit Interface
@@ -280,7 +252,7 @@ func (p *participantRuntime) DEC(in circuits.Operand, rec sessions.NodeID, param
 	pparams["op"] = string(in.OperandLabel)
 	sig := protocols.Signature{Type: protocols.DEC, Args: pparams}
 
-	pd, err := p.AwaitCompletedDescriptorFor(sig)
+	pd, err := p.engine.AwaitCompleted(p.ctx, sig)
 	if err != nil {
 		return err
 	}

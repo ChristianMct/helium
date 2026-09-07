@@ -1,4 +1,4 @@
-package node
+package helium
 
 import (
 	"encoding/json"
@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/ChristianMct/helium/objectstore"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services/compute"
-	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/sessions"
 )
 
@@ -20,7 +20,8 @@ type Config struct {
 	ID                sessions.NodeID
 	HelperID          sessions.NodeID
 	SessionParameters []sessions.Parameters
-	SetupConfig       setup.ServiceConfig
+	ProtocolsConfig   protocols.Config            // configuration of the node's protocol engine
+	CoordinatorConfig protocols.CoordinatorConfig // configuration of the coordinator (helper only)
 	ComputeConfig     compute.ServiceConfig
 	ObjectStoreConfig objectstore.Config
 	TLSConfig         TLSConfig
@@ -49,6 +50,16 @@ func (nl List) AddressOf(id sessions.NodeID) Address {
 		}
 	}
 	return ""
+}
+
+// Contains returns whether the list contains the node with the given ID.
+func (nl List) Contains(id sessions.NodeID) bool {
+	for _, node := range nl {
+		if node.NodeID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // String returns a string representation of the list of nodes.
@@ -94,6 +105,9 @@ func ValidateConfig(config Config, nl List) error {
 	if len(config.HelperID) == 0 {
 		return fmt.Errorf("config must specify a helper ID")
 	}
+	if len(config.SessionParameters) != 1 {
+		return fmt.Errorf("config must specify exactly one session, got %d", len(config.SessionParameters))
+	}
 	if len(nl) == 0 {
 		return fmt.Errorf("node list is empty or nil")
 	}
@@ -118,6 +132,6 @@ type TLSConfig struct {
 	OwnSk            string                     // Own secret key as a PEM encoded string
 }
 
-// SecretProvider is a function that returns the secrets for a session,
-// given the session ID.
+// SecretProvider is a function that returns the secrets of a node for a session,
+// given the session ID and the node ID.
 type SecretProvider func(sessions.ID, sessions.NodeID) (*sessions.Secrets, error)

@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/node"
+	"github.com/ChristianMct/helium/objectstore"
+	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services/compute"
-	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/test/bufconn"
@@ -41,7 +42,7 @@ type testSetting struct {
 	Rep         int // numer of repetition for each circuit
 }
 
-var testSetupDescription = setup.Description{
+var testSetupDescription = SetupDescription{
 	Cpk: true,
 	Rlk: true,
 	Gks: []uint64{5, 25, 125},
@@ -70,6 +71,100 @@ var testSettings = []testSetting{
 
 const buffConBufferSize = 65 * 1024 * 1024
 
+// localTest is a helper + N peers test setting.
+type localTest struct {
+	*sessions.TestSession
+	params   bgv.Parameters
+	helperID sessions.NodeID
+	peerIDs  []sessions.NodeID
+	nl       List
+	configs  map[sessions.NodeID]Config
+	secrets  map[sessions.NodeID]*sessions.Secrets
+}
+
+func newLocalTest(t *testing.T, N, T int) *localTest {
+	lt := &localTest{helperID: "helper", configs: make(map[sessions.NodeID]Config)}
+
+	sp := testSessionParameters
+	sp.Threshold = T
+	sp.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
+	sp.ShamirPks = make(map[sessions.NodeID]drlwe.ShamirPublicPoint, N)
+	lt.nl = List{{NodeID: lt.helperID, Address: "local"}}
+	for i := 0; i < N; i++ {
+		nid := sessions.NodeID("peer-" + strconv.Itoa(i))
+		lt.peerIDs = append(lt.peerIDs, nid)
+		sp.Nodes = append(sp.Nodes, nid)
+		sp.ShamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
+		lt.nl = append(lt.nl, Info{NodeID: nid})
+	}
+
+	var err error
+	lt.TestSession, err = sessions.NewTestSessionFromParams(sp, lt.helperID)
+	require.NoError(t, err)
+	lt.secrets, err = sessions.GenTestSecretKeys(sp)
+	require.NoError(t, err)
+
+	var ok bool
+	lt.params, ok = lt.FHEParameters.(bgv.Parameters)
+	require.True(t, ok)
+
+	objStore := objectstore.Config{BackendName: "mem"}
+	lt.configs[lt.helperID] = Config{
+		ID:                lt.helperID,
+		HelperID:          lt.helperID,
+		SessionParameters: []sessions.Parameters{sp},
+		CoordinatorConfig: protocols.CoordinatorConfig{MaxProtoPerNode: 1},
+		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 1},
+		ObjectStoreConfig: objStore,
+		TLSConfig:         TLSConfig{InsecureChannels: true},
+	}
+	for _, nid := range lt.peerIDs {
+		lt.configs[nid] = Config{
+			ID:                nid,
+			HelperID:          lt.helperID,
+			SessionParameters: []sessions.Parameters{sp},
+			ProtocolsConfig:   protocols.Config{MaxParticipation: 1},
+			ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 1},
+			ObjectStoreConfig: objStore,
+			TLSConfig:         TLSConfig{InsecureChannels: true},
+		}
+	}
+	return lt
+}
+
+func (lt *localTest) secretProvider(sid sessions.ID, nid sessions.NodeID) (*sessions.Secrets, error) {
+	if sid != lt.SessParams.ID {
+		return nil, fmt.Errorf("unknown session %s", sid)
+	}
+	sec, has := lt.secrets[nid]
+	if !has {
+		return nil, fmt.Errorf("no secrets for node %s", nid)
+	}
+	return sec, nil
+}
+
+func (lt *localTest) newServer(t *testing.T) (*HeliumServer, *bufconn.Listener) {
+	helper, err := NewHeliumServer(lt.configs[lt.helperID], lt.nl)
+	require.NoError(t, err)
+	lis := bufconn.Listen(buffConBufferSize)
+	go func() {
+		if err := helper.Serve(lis); err != nil {
+			log.Printf("server error: %s", err)
+		}
+	}()
+	return helper, lis
+}
+
+func (lt *localTest) newClient(t *testing.T, nid sessions.NodeID) *HeliumClient {
+	cli, err := NewHeliumClient(lt.configs[nid], lt.nl, lt.secretProvider)
+	require.NoError(t, err)
+	return cli
+}
+
+func bufconnDialer(lis *bufconn.Listener) Dialer {
+	return func(context.Context, string) (net.Conn, error) { return lis.Dial() }
+}
+
 func TestSetup(t *testing.T) {
 	for _, ts := range testSettings {
 		if ts.T == 0 {
@@ -81,28 +176,19 @@ func TestSetup(t *testing.T) {
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
-			sessParams := testSessionParameters
-			sessParams.Threshold = ts.T
-			lt, err := node.NewLocalTest(node.LocalTestConfig{
-				PeerNodes:     ts.N,
-				SessionParams: &sessParams,
-			})
-			require.Nil(t, err)
+			lt := newLocalTest(t, ts.N, ts.T)
 
-			app := node.App{
+			app := App{
 				SetupDescription: &testSetupDescription,
 			}
 
-			helper := NewHeliumServer(lt.HelperNode)
+			helper, lis := lt.newServer(t)
 			clients := make([]*HeliumClient, ts.N)
-			for i := 0; i < ts.N; i++ {
-				clients[i] = NewHeliumClient(lt.PeerNodes[i], lt.HelperNode.ID(), "local")
+			for i, nid := range lt.peerIDs {
+				clients[i] = lt.newClient(t, nid)
 			}
 
-			lis := bufconn.Listen(buffConBufferSize)
-			go helper.Serve(lis)
-
-			ctx := sessions.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(lt.SessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			g.Go(func() error {
 				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
@@ -121,7 +207,7 @@ func TestSetup(t *testing.T) {
 				cli := cli
 
 				g.Go(func() error {
-					err = cli.ConnectWithDialer(func(c context.Context, addr string) (net.Conn, error) { return lis.Dial() })
+					err := cli.ConnectWithDialer(bufconnDialer(lis))
 					if err != nil {
 						return fmt.Errorf("node %s failed to connect: %v", cli.id, err)
 					}
@@ -138,17 +224,14 @@ func TestSetup(t *testing.T) {
 				})
 			}
 
-			err = g.Wait()
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, g.Wait())
 
-			setup.CheckTestSetup(ctx, t, *app.SetupDescription, helper, lt.RlweParams, lt.SkIdeal, ts.N)
+			CheckTestSetup(ctx, t, *app.SetupDescription, helper, lt.RlweParams, lt.SkIdeal, ts.N)
 
 			for _, cli := range clients {
 				log.Println("checking setup for", cli.id)
 				resCheckCtx, runCheckCancel := context.WithTimeout(ctx, time.Second)
-				setup.CheckTestSetup(resCheckCtx, t, *app.SetupDescription, cli, lt.RlweParams, lt.SkIdeal, ts.N)
+				CheckTestSetup(resCheckCtx, t, *app.SetupDescription, cli, lt.RlweParams, lt.SkIdeal, ts.N)
 				runCheckCancel()
 
 				require.NoError(t, cli.Close())
@@ -157,6 +240,62 @@ func TestSetup(t *testing.T) {
 			helper.Server.GracefulStop()
 		})
 	}
+}
+
+// TestLateJoiner checks that a peer connecting after the helper has terminated the
+// coordination catches up from the event log and obtains the setup keys.
+func TestLateJoiner(t *testing.T) {
+	ts := testSetting{N: 3, T: 2}
+	lt := newLocalTest(t, ts.N, ts.T)
+	app := App{SetupDescription: &testSetupDescription}
+
+	helper, lis := lt.newServer(t)
+	early := []*HeliumClient{lt.newClient(t, lt.peerIDs[0]), lt.newClient(t, lt.peerIDs[1])}
+	late := lt.newClient(t, lt.peerIDs[2])
+
+	ctx := sessions.NewBackgroundContext(lt.SessParams.ID)
+	g, runctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
+		if err != nil {
+			return err
+		}
+		close(cdescs)
+		for range outs {
+		}
+		return nil
+	})
+	for _, cli := range early {
+		cli := cli
+		g.Go(func() error {
+			if err := cli.ConnectWithDialer(bufconnDialer(lis)); err != nil {
+				return err
+			}
+			outs, err := cli.Run(runctx, app, compute.NoInput)
+			if err != nil {
+				return err
+			}
+			for range outs {
+			}
+			return nil
+		})
+	}
+	require.NoError(t, g.Wait())
+
+	// the late peer connects after the coordination is done
+	require.NoError(t, late.ConnectWithDialer(bufconnDialer(lis)))
+	outs, err := late.Run(ctx, app, compute.NoInput)
+	require.NoError(t, err)
+	_, has := <-outs
+	require.False(t, has)
+
+	resCheckCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for _, cli := range append(early, late) {
+		CheckTestSetup(resCheckCtx, t, *app.SetupDescription, cli, lt.RlweParams, lt.SkIdeal, ts.N)
+		require.NoError(t, cli.Close())
+	}
+	helper.Server.GracefulStop()
 }
 
 func TestCompute(t *testing.T) {
@@ -180,34 +319,25 @@ func TestCompute(t *testing.T) {
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
-			sessParams := testSessionParameters
-			sessParams.Threshold = ts.T
-			lt, err := node.NewLocalTest(node.LocalTestConfig{
-				PeerNodes:     ts.N,
-				SessionParams: &sessParams,
-			})
-			require.Nil(t, err)
+			lt := newLocalTest(t, ts.N, ts.T)
 
-			app := node.App{
+			app := App{
 				SetupDescription: &testSetupDescription,
 				Circuits:         circuits.TestCircuits,
 			}
 
-			helper := NewHeliumServer(lt.HelperNode)
+			helper, lis := lt.newServer(t)
 			clients := make([]*HeliumClient, ts.N)
-			for i := 0; i < ts.N; i++ {
-				clients[i] = NewHeliumClient(lt.PeerNodes[i], lt.HelperNode.ID(), "local")
+			for i, nid := range lt.peerIDs {
+				clients[i] = lt.newClient(t, nid)
 			}
-
-			lis := bufconn.Listen(buffConBufferSize)
-			go helper.Serve(lis)
 
 			testOuts := make(chan struct {
 				sessions.NodeID
 				circuits.Output
 			}, len(expResult))
 
-			ctx := sessions.NewBackgroundContext(sessParams.ID)
+			ctx := sessions.NewBackgroundContext(lt.SessParams.ID)
 			g, runctx := errgroup.WithContext(ctx)
 			g.Go(func() error {
 				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
@@ -239,7 +369,7 @@ func TestCompute(t *testing.T) {
 				cli := cli
 				nid := cli.id
 				g.Go(func() error {
-					err = cli.ConnectWithDialer(func(c context.Context, addr string) (net.Conn, error) { return lis.Dial() })
+					err := cli.ConnectWithDialer(bufconnDialer(lis))
 					if err != nil {
 						return fmt.Errorf("node %s failed to connect: %v", cli.id, err)
 					}
@@ -266,16 +396,16 @@ func TestCompute(t *testing.T) {
 				})
 			}
 
-			err = g.Wait()
+			err := g.Wait()
 			close(testOuts)
+			require.NoError(t, err)
 
-			encoder := bgv.NewEncoder(lt.Params)
+			encoder := bgv.NewEncoder(lt.params)
 			for out := range testOuts {
 				require.Equal(t, out.NodeID, ts.Reciever)
 				pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
-				res := make([]uint64, lt.Params.MaxSlots())
+				res := make([]uint64, lt.params.MaxSlots())
 				err = encoder.Decode(pt, res)
-				//fmt.Println(out.OperandLabel, res[:10])
 				require.NoError(t, err)
 				exp, has := expResult[out.CircuitID]
 				require.True(t, has, "unexpected result for %s", out.CircuitID)
@@ -285,10 +415,9 @@ func TestCompute(t *testing.T) {
 
 			require.Empty(t, expResult, "not all expected results were received")
 
-			if err != nil {
-				t.Fatal(err)
+			for _, cli := range clients {
+				require.NoError(t, cli.Close())
 			}
-
 			helper.Server.GracefulStop()
 		})
 	}

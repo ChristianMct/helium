@@ -16,14 +16,15 @@ The code is expected to evolve without guaranteeing backward compatibility and i
 
 ## Synopsis
 Helium is a Go package that provides the types and methods to implement an end-to-end MHE application.
-Helium's two main types are:
-- The `node.App` type which lets the user define an application by specifying the circuits to be run.
-- The `node.Node` type which runs `node.App` applications by running the MHE setup phase and letting the user trigger circuit evaluations.
+Helium's main types are:
+- The `helium.App` type which lets the user define an application by specifying the circuits to be run.
+- The `helium.HeliumServer` (helper node) and `helium.HeliumClient` (peer node) types which run `helium.App` applications by running the MHE setup phase and letting the user trigger circuit evaluations.
+- Under the hood, the `protocols.MHEMPC` type executes the MHE protocols as a state machine driven by the coordination events of a `protocols.Coordinator`, whose helper-assisted implementation is `protocols.CentralCoordinator`.
 
 Here is an overview of an Helium application:
 ```go
   // declares an helium application
-  app = node.App{
+  app = helium.App{
 
     // describes the required MHE setup
     SetupDescription: &setup.Description{ Cpk: true, Rlk: true},
@@ -63,7 +64,7 @@ Here is an overview of an Helium application:
 	var outs <-chan circuit.Output
 	if nodeID == helperID {
     // the helper runs the server-side of helium
-		cdescs, outs, err = centralized.RunHeliumServer(ctx, config, nodelist, app, inputProvider)
+		_, cdescs, outs, err = helium.RunHeliumServer(ctx, config, nodelist, app, inputProvider)
     
     // cdesc is a channel to send circuit evaluation request(s)
     cdescs <- circuits.Descriptor{
@@ -73,7 +74,7 @@ Here is an overview of an Helium application:
       }
 	} else {
     // non-helper nodes run the client side
-		outs, err = centralized.RunHeliumClient(ctx, config, nodelist, app, inputProvider)
+		_, outs, err = helium.RunHeliumClient(ctx, config, nodelist, secrets, app, inputProvider)
 	}
   // outs is a channel to recieve the evaluation(s) output(s)
   out <- outs 

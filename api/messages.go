@@ -6,10 +6,7 @@ import (
 
 	"github.com/ChristianMct/helium/api/pb"
 	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/services/compute"
-	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 )
@@ -28,74 +25,18 @@ func ToProtocolEvent(apiEvent *pb.ProtocolEvent) protocols.Event {
 	}
 }
 
-func GetSetupEvent(event setup.Event) *pb.SetupEvent {
-	return &pb.SetupEvent{
-		ProtocolEvent: GetProtocolEvent(event.Event),
+func GetCircuitEvent(event circuits.Event) *pb.CircuitEvent {
+	return &pb.CircuitEvent{
+		Type:        pb.EventType(event.EventType),
+		Descriptor_: GetCircuitDesc(event.Descriptor),
 	}
 }
 
-func ToSetupEvent(apiEvent *pb.SetupEvent) setup.Event {
-	return setup.Event{
-		Event: ToProtocolEvent(apiEvent.ProtocolEvent),
+func ToCircuitEvent(apiEvent *pb.CircuitEvent) circuits.Event {
+	return circuits.Event{
+		EventType:  circuits.EventType(apiEvent.Type),
+		Descriptor: *ToCircuitDesc(apiEvent.Descriptor_),
 	}
-}
-
-func GetComputeEvent(event compute.Event) *pb.ComputeEvent {
-	apiEvent := &pb.ComputeEvent{}
-	if event.CircuitEvent != nil {
-		apiEvent.CircuitEvent = &pb.CircuitEvent{
-			Type:        pb.EventType(event.CircuitEvent.EventType),
-			Descriptor_: GetCircuitDesc(event.CircuitEvent.Descriptor),
-		}
-	}
-	if event.ProtocolEvent != nil {
-		apiEvent.ProtocolEvent = &pb.ProtocolEvent{
-			Type:        pb.EventType(event.ProtocolEvent.EventType),
-			Descriptor_: GetProtocolDesc(&event.ProtocolEvent.Descriptor),
-		}
-	}
-	return apiEvent
-}
-
-func ToComputeEvent(apiEvent *pb.ComputeEvent) compute.Event {
-	event := compute.Event{}
-	if apiEvent.CircuitEvent != nil {
-		event.CircuitEvent = &circuits.Event{
-			EventType:  circuits.EventType(apiEvent.CircuitEvent.Type),
-			Descriptor: *ToCircuitDesc(apiEvent.CircuitEvent.Descriptor_),
-		}
-	}
-	if apiEvent.ProtocolEvent != nil {
-		event.ProtocolEvent = &protocols.Event{
-			EventType:  protocols.EventType(apiEvent.ProtocolEvent.Type),
-			Descriptor: *ToProtocolDesc(apiEvent.ProtocolEvent.Descriptor_),
-		}
-	}
-	return event
-}
-
-func GetNodeEvent(event node.Event) *pb.NodeEvent {
-	apiEvent := &pb.NodeEvent{}
-	if event.IsSetup() {
-		apiEvent.Event = &pb.NodeEvent_SetupEvent{SetupEvent: GetSetupEvent(*event.SetupEvent)}
-	}
-	if event.IsCompute() {
-		apiEvent.Event = &pb.NodeEvent_ComputeEvent{ComputeEvent: GetComputeEvent(*event.ComputeEvent)}
-	}
-	return apiEvent
-}
-
-func ToNodeEvent(apiEvent *pb.NodeEvent) node.Event {
-	event := node.Event{}
-	switch e := apiEvent.Event.(type) {
-	case *pb.NodeEvent_SetupEvent:
-		ev := ToSetupEvent(e.SetupEvent)
-		event.SetupEvent = &ev
-	case *pb.NodeEvent_ComputeEvent:
-		ev := ToComputeEvent(e.ComputeEvent)
-		event.ComputeEvent = &ev
-	}
-	return event
 }
 
 func GetProtocolDesc(pd *protocols.Descriptor) *pb.ProtocolDescriptor {
@@ -116,12 +57,15 @@ func GetProtocolDesc(pd *protocols.Descriptor) *pb.ProtocolDescriptor {
 
 func ToProtocolDesc(apiPD *pb.ProtocolDescriptor) *protocols.Descriptor {
 	desc := &protocols.Descriptor{
-		Signature:    protocols.Signature{Type: protocols.Type(apiPD.ProtocolType), Args: make(map[string]string)},
+		Signature:    protocols.Signature{Type: protocols.Type(apiPD.ProtocolType)},
 		Aggregator:   sessions.NodeID(apiPD.Aggregator.NodeId),
 		Participants: make([]sessions.NodeID, 0, len(apiPD.Participants)),
 	}
-	for k, v := range apiPD.Args {
-		desc.Signature.Args[k] = v
+	if len(apiPD.Args) > 0 {
+		desc.Signature.Args = make(map[string]string, len(apiPD.Args))
+		for k, v := range apiPD.Args {
+			desc.Signature.Args[k] = v
+		}
 	}
 	for _, p := range apiPD.Participants {
 		desc.Participants = append(desc.Participants, sessions.NodeID(p.NodeId))

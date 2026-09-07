@@ -9,11 +9,9 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/services/compute"
-	"github.com/ChristianMct/helium/services/setup"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
@@ -38,42 +36,42 @@ var (
 	}
 
 	// the configuration of peer nodes
-	peerNodeConfig = node.Config{
+	peerNodeConfig = helium.Config{
 		ID:                "",       // read from command line args
 		HelperID:          "helper", // the node id of the helper node
 		SessionParameters: []sessions.Parameters{sessionParams},
 
 		// in this example, peer node can only participate in one protocol and one circuit at a time
-		SetupConfig:   setup.ServiceConfig{Protocols: protocols.ExecutorConfig{MaxParticipation: 1}},
-		ComputeConfig: compute.ServiceConfig{MaxCircuitEvaluation: 1, Protocols: protocols.ExecutorConfig{MaxParticipation: 1}},
+		ProtocolsConfig: protocols.Config{MaxParticipation: 1},
+		ComputeConfig:   compute.ServiceConfig{MaxCircuitEvaluation: 1},
 
-		ObjectStoreConfig: objectstore.Config{BackendName: "mem"}, // use a volatile in-memory store for state
-		TLSConfig:         node.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
+		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},   // use a volatile in-memory store for state
+		TLSConfig:         helium.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
 	}
 
-	// the configuration of the helper node. Similar as for peer node, but enables multiple protocol and circuit evaluations at once.
-	helperConfig = node.Config{
+	// the configuration of the helper node. Similar as for peer node, but enables multiple circuit evaluations at once.
+	helperConfig = helium.Config{
 		ID:                "", // read from command line args
 		HelperID:          "helper",
 		SessionParameters: []sessions.Parameters{sessionParams},
 
-		// allows 16 parallel protocol aggregation and each node is not chosen as participant for more than one protocol at the time.
-		SetupConfig:       setup.ServiceConfig{Protocols: protocols.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
-		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16, Protocols: protocols.ExecutorConfig{MaxAggregation: 16, MaxProtoPerNode: 1}},
+		// each node is not chosen as participant for more than one protocol at the time.
+		CoordinatorConfig: protocols.CoordinatorConfig{MaxProtoPerNode: 1},
+		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16},
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
-		TLSConfig:         node.TLSConfig{InsecureChannels: true},
+		TLSConfig:         helium.TLSConfig{InsecureChannels: true},
 	}
 
 	// the node list for the example system
-	nodelist = node.List{
-		node.Info{NodeID: "helper", Address: "helper:40000"},
-		node.Info{NodeID: "node-1"}, node.Info{NodeID: "node-2"},
-		node.Info{NodeID: "node-3"}, node.Info{NodeID: "node-4"},
+	nodelist = helium.List{
+		helium.Info{NodeID: "helper", Address: "helper:40000"},
+		helium.Info{NodeID: "node-1"}, helium.Info{NodeID: "node-2"},
+		helium.Info{NodeID: "node-3"}, helium.Info{NodeID: "node-4"},
 	}
 
 	// the application defines the MHE circuit to be evaluated and its required setup
-	app = node.App{
-		SetupDescription: &setup.Description{
+	app = helium.App{
+		SetupDescription: &helium.SetupDescription{
 			Cpk: true,       // the circuit requires the collective public-key (for encryption)
 			Rlk: true,       // the circuit requires the relinearization key (for homomorphic multiplication)
 			Gks: []uint64{}, // the circuit does not require any galois keys (for homomorphic rotation)
@@ -115,7 +113,7 @@ var (
 
 var (
 	nodeID   sessions.NodeID
-	nodeAddr node.Address
+	nodeAddr helium.Address
 	helperID sessions.NodeID = "helper"
 	input    uint64
 )
@@ -138,7 +136,7 @@ func main() {
 	log.Printf("%s | [main] started\n", nodeID)
 
 	// completes the config according to the node id
-	var config node.Config
+	var config helium.Config
 	if nodeID == helperID {
 		config = helperConfig
 	} else {
@@ -226,9 +224,9 @@ func main() {
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
-func loadSecrets(params sessions.Parameters, nid sessions.NodeID) node.SecretProvider {
+func loadSecrets(params sessions.Parameters, nid sessions.NodeID) helium.SecretProvider {
 
-	var sp node.SecretProvider = func(sid sessions.ID, nid sessions.NodeID) (*sessions.Secrets, error) {
+	var sp helium.SecretProvider = func(sid sessions.ID, nid sessions.NodeID) (*sessions.Secrets, error) {
 
 		if sid != params.ID {
 			return nil, fmt.Errorf("no secret for session %s", sid)

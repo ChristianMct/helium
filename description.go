@@ -1,4 +1,4 @@
-package setup
+package helium
 
 import (
 	"context"
@@ -14,12 +14,12 @@ import (
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 )
 
-// Description is a struct for specifying an MHE setup phase.
+// SetupDescription is a struct for specifying an MHE setup phase.
 // It contains the information about the keys that should be generated:
 // - Cpk: The collective public key
 // - Rlk: The relinearization key
 // - Gks: The Galois keys, identified by their Galois elements
-type Description struct {
+type SetupDescription struct {
 	Cpk bool
 	Rlk bool
 	Gks []uint64
@@ -28,8 +28,8 @@ type Description struct {
 // SignatureList provides utility functions for a list of signatures.
 type SignatureList []protocols.Signature
 
-// DescriptionToSignatureList converts a Description to a list of protocol signatures to be executed.
-func DescriptionToSignatureList(sd Description) SignatureList {
+// SetupDescriptionToSignatureList converts a Description to a list of protocol signatures to be executed.
+func SetupDescriptionToSignatureList(sd SetupDescription) SignatureList {
 	sl := make(SignatureList, 0, 3+len(sd.Gks))
 	if sd.Cpk {
 		sign := protocols.Signature{Type: protocols.CKG}
@@ -56,7 +56,7 @@ func (sl SignatureList) Contains(other protocols.Signature) bool {
 }
 
 // String returns a string representation of the Description.
-func (sd Description) String() string {
+func (sd SetupDescription) String() string {
 	return fmt.Sprintf(`
 	{
 		Cpk: %v,
@@ -66,7 +66,7 @@ func (sd Description) String() string {
 }
 
 // CheckTestSetup checks if a public key provider is able to produce valid keys for a given test session and setup description.
-func CheckTestSetup(ctx context.Context, t *testing.T, setup Description, n sessions.PublicKeyProvider, params rlwe.Parameters, skIdeal *rlwe.SecretKey, nParties int) {
+func CheckTestSetup(ctx context.Context, t *testing.T, setup SetupDescription, n sessions.PublicKeyProvider, params rlwe.Parameters, skIdeal *rlwe.SecretKey, nParties int) {
 	// check CPK
 	if setup.Cpk {
 		cpk, err := n.GetCollectivePublicKey(ctx)

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 )
@@ -76,10 +77,8 @@ type CentralCoordinator struct {
 	status AggregationStatus
 
 	mu      sync.Mutex
-	cond    *sync.Cond // signalled on log append and on close
-	log     []Event
+	log     *coordinator.Log[Event]
 	closing bool // Close was called: the log closes once idle
-	closed  bool
 
 	online    map[sessions.NodeID]utils.Set[ID] // connected peers -> running protocols they participate in
 	queued    []*sigRequest                     // requests waiting for available participants
@@ -103,12 +102,12 @@ func NewCentralCoordinator(self sessions.NodeID, sess *sessions.Session, conf Co
 		sess:      sess,
 		conf:      conf,
 		status:    status,
+		log:       coordinator.NewLog[Event](),
 		online:    make(map[sessions.NodeID]utils.Set[ID]),
 		running:   make(map[ID]*scheduled),
 		completed: make(map[ID]Descriptor),
 		failed:    make(map[ID]Descriptor),
 	}
-	c.cond = sync.NewCond(&c.mu)
 	return c, nil
 }
 
@@ -116,47 +115,8 @@ func NewCentralCoordinator(self sessions.NodeID, sess *sessions.Session, conf Co
 
 // Register implements Coordinator. It can be called by the local engine and on behalf of remote peers.
 func (c *CentralCoordinator) Register(ctx context.Context) (past []Event, live <-chan Event, err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	past = slices.Clone(c.log)
-	ch := make(chan Event)
-	if c.closed {
-		close(ch)
-		return past, ch, nil
-	}
-	go c.forward(ctx, len(c.log), ch)
-	return past, ch, nil
-}
-
-// forward sends the log events from cursor onward to live, and closes it when the log is closed
-// and fully delivered, or when ctx is cancelled.
-func (c *CentralCoordinator) forward(ctx context.Context, cursor int, live chan<- Event) {
-	defer close(live)
-	stop := context.AfterFunc(ctx, func() {
-		c.mu.Lock()
-		c.cond.Broadcast()
-		c.mu.Unlock()
-	})
-	defer stop()
-	for {
-		c.mu.Lock()
-		for cursor == len(c.log) && !c.closed && ctx.Err() == nil {
-			c.cond.Wait()
-		}
-		if ctx.Err() != nil || cursor == len(c.log) { // cancelled, or closed and drained
-			c.mu.Unlock()
-			return
-		}
-		ev := c.log[cursor]
-		cursor++
-		c.mu.Unlock()
-
-		select {
-		case live <- ev:
-		case <-ctx.Done():
-			return
-		}
-	}
+	past, live = c.log.Register(ctx)
+	return past, live, nil
 }
 
 // Publish implements Coordinator. Engines may publish Executing and Completed events for
@@ -165,7 +125,7 @@ func (c *CentralCoordinator) forward(ctx context.Context, cursor int, live chan<
 func (c *CentralCoordinator) Publish(_ context.Context, ev Event) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.log.Closed() {
 		return ErrCoordinatorClosed
 	}
 
@@ -212,7 +172,7 @@ func (c *CentralCoordinator) RunSignature(ctx context.Context, sig Signature) er
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.log.Closed() {
 		return ErrCoordinatorClosed
 	}
 	c.queued = append(c.queued, &sigRequest{ctx: ctx, sig: sig})
@@ -230,7 +190,7 @@ func (c *CentralCoordinator) RunDescriptor(_ context.Context, pd Descriptor) err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.log.Closed() {
 		return ErrCoordinatorClosed
 	}
 	pid := pd.ID()
@@ -329,9 +289,7 @@ func (c *CentralCoordinator) Close() {
 
 // Log returns a copy of the event log.
 func (c *CentralCoordinator) Log() []Event {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return slices.Clone(c.log)
+	return c.log.Events()
 }
 
 // Logf logs a message with the coordinator's prefix.
@@ -349,8 +307,9 @@ func (c *CentralCoordinator) fullThreshold() bool {
 }
 
 func (c *CentralCoordinator) append(ev Event) {
-	c.log = append(c.log, ev)
-	c.cond.Broadcast()
+	if err := c.log.Append(ev); err != nil {
+		c.Logf("cannot append %s: %s", ev, err)
+	}
 }
 
 // start records pd as running and appends the Started event.
@@ -475,9 +434,8 @@ func (c *CentralCoordinator) reconcile() {
 		c.queued = remaining
 	}
 
-	if c.closing && !c.closed && len(c.queued) == 0 && len(c.running) == 0 {
-		c.closed = true
-		c.cond.Broadcast()
+	if c.closing && !c.log.Closed() && len(c.queued) == 0 && len(c.running) == 0 {
+		c.log.Close()
 		c.Logf("log closed")
 	}
 }
