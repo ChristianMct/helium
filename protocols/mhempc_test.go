@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"golang.org/x/sync/errgroup"
@@ -18,14 +18,18 @@ import (
 
 const testEngineTimeout = 2 * time.Minute
 
-var testEngineConf = Config{MaxParticipation: 1, MaxProtoPerNode: 1}
+var (
+	testEngineConf = Config{MaxParticipation: 1}
+	testCoordConf  = CoordinatorConfig{MaxProtoPerNode: 1}
+)
 
-// testEngines is a helper + N session nodes setting on an in-memory transport.
+// testEngines is a helper + N session nodes setting on an in-memory transport,
+// coordinated by the helper.
 type testEngines struct {
 	sess   *sessions.TestSession
 	hid    sessions.NodeID
 	trans  *TestEngineTransport
-	coord  *coordinator.TestCoordinator[Event]
+	coord  *CentralCoordinator
 	helper *MHEMPC
 	nodes  map[sessions.NodeID]*MHEMPC
 	nids   []sessions.NodeID // sorted session node ids
@@ -44,7 +48,6 @@ func newTestEngines(t *testing.T, N, T int) *testEngines {
 		sess:  testSess,
 		hid:   hid,
 		trans: NewTestEngineTransport(),
-		coord: coordinator.NewTestCoordinator[Event](hid),
 		nodes: make(map[sessions.NodeID]*MHEMPC, N),
 		ksin: func(ctx context.Context, pd Descriptor) (*KeySwitchInput, error) {
 			return &KeySwitchInput{OutputKey: zeroKey, InpuCt: ct}, nil
@@ -59,6 +62,8 @@ func newTestEngines(t *testing.T, N, T int) *testEngines {
 	}
 
 	te.helper = te.newEngine(t, hid, testSess.HelperSession)
+	te.coord, err = NewCentralCoordinator(hid, testSess.HelperSession, testCoordConf, te.helper)
+	require.NoError(t, err)
 	for nid, nsess := range testSess.NodeSessions {
 		te.nodes[nid] = te.newEngine(t, nid, nsess)
 		te.nids = append(te.nids, nid)
@@ -75,12 +80,10 @@ func (te *testEngines) newEngine(t *testing.T, nid sessions.NodeID, sess *sessio
 	return e
 }
 
-// run registers e to the coordinator and runs it in g.
-func (te *testEngines) run(t *testing.T, g *errgroup.Group, ctx context.Context, e *MHEMPC) {
-	ch, _, err := te.coord.Register(sessions.ContextWithNodeID(ctx, e.NodeID()))
-	require.NoError(t, err)
+// run runs e in g, driven by the test coordinator.
+func (te *testEngines) run(g *errgroup.Group, ctx context.Context, e *MHEMPC) {
 	g.Go(func() error {
-		if err := e.Run(ctx, ch); err != nil {
+		if err := e.Run(ctx, te.coord); err != nil {
 			return fmt.Errorf("error at node %s: %w", e.NodeID(), err)
 		}
 		return nil
@@ -119,14 +122,14 @@ func TestMHEMPCSetupAndDec(t *testing.T) {
 			te := newTestEngines(t, ts.N, ts.T)
 
 			g, gctx := errgroup.WithContext(ctx)
-			te.run(t, g, gctx, te.helper)
+			te.run(g, gctx, te.helper)
 			for _, nid := range te.nids {
-				te.run(t, g, gctx, te.nodes[nid])
-				te.helper.PeerConnected(nid)
+				te.run(g, gctx, te.nodes[nid])
+				te.coord.PeerConnected(nid)
 			}
 
 			for _, sig := range te.sigs {
-				require.NoError(t, te.helper.RunSignature(ctx, sig))
+				require.NoError(t, te.coord.RunSignature(ctx, sig))
 			}
 			te.coord.Close()
 			require.NoError(t, g.Wait())
@@ -137,7 +140,7 @@ func TestMHEMPCSetupAndDec(t *testing.T) {
 			}
 
 			// the key view works at every node
-			for _, e := range append([]*MHEMPC{te.helper}, te.nodes[te.nids[0]]) {
+			for _, e := range []*MHEMPC{te.helper, te.nodes[te.nids[0]]} {
 				kp := NewKeyProvider(e)
 				_, err := kp.GetCollectivePublicKey(ctx)
 				require.NoError(t, err)
@@ -145,6 +148,24 @@ func TestMHEMPCSetupAndDec(t *testing.T) {
 				require.NoError(t, err)
 				_, err = kp.GetRelinearizationKey(ctx)
 				require.NoError(t, err)
+			}
+
+			// the log is causally ordered: Started, Executing, Completed for each protocol
+			seen := make(map[ID]EventType)
+			for _, ev := range te.coord.Log() {
+				pid := ev.Descriptor.ID()
+				switch ev.EventType {
+				case Started:
+					_, has := seen[pid]
+					require.False(t, has)
+				case Executing:
+					require.Equal(t, Started, seen[pid])
+				case Completed:
+					require.Equal(t, Executing, seen[pid])
+				default:
+					t.Fatalf("unexpected event %s", ev)
+				}
+				seen[pid] = ev.EventType
 			}
 		})
 	}
@@ -163,13 +184,13 @@ func TestMHEMPCLateJoiner(t *testing.T) {
 			early, late := te.nids[:ts.T], te.nids[ts.T:]
 
 			g, gctx := errgroup.WithContext(ctx)
-			te.run(t, g, gctx, te.helper)
+			te.run(g, gctx, te.helper)
 			for _, nid := range early {
-				te.run(t, g, gctx, te.nodes[nid])
-				te.helper.PeerConnected(nid)
+				te.run(g, gctx, te.nodes[nid])
+				te.coord.PeerConnected(nid)
 			}
 			for _, sig := range te.sigs {
-				require.NoError(t, te.helper.RunSignature(ctx, sig))
+				require.NoError(t, te.coord.RunSignature(ctx, sig))
 			}
 			te.coord.Close()
 			require.NoError(t, g.Wait())
@@ -181,14 +202,11 @@ func TestMHEMPCLateJoiner(t *testing.T) {
 			// late nodes catch up from the log
 			for _, nid := range late {
 				e := te.nodes[nid]
-				ch, present, err := te.coord.Register(sessions.ContextWithNodeID(ctx, nid))
+				past, live, err := te.coord.Register(ctx)
 				require.NoError(t, err)
-				log := make([]Event, 0, present)
-				for ev := range ch.Incoming {
-					log = append(log, ev)
-				}
-				require.Len(t, log, present)
-				require.NoError(t, e.Init(ctx, log))
+				_, more := <-live
+				require.False(t, more, "the coordinator is closed")
+				require.NoError(t, e.Init(ctx, past))
 				te.checkOutputs(t, ctx, e)
 			}
 		})
@@ -206,11 +224,11 @@ func TestMHEMPCRetry(t *testing.T) {
 	release := te.trans.GateShares(n1.NodeID())
 	defer release()
 
-	spectator, _, err := te.coord.Register(sessions.ContextWithNodeID(ctx, "spectator"))
+	_, spectator, err := te.coord.Register(ctx)
 	require.NoError(t, err)
 	nextEvent := func() Event {
 		select {
-		case ev := <-spectator.Incoming:
+		case ev := <-spectator:
 			return ev
 		case <-ctx.Done():
 			t.Fatal("timeout waiting for event")
@@ -219,25 +237,27 @@ func TestMHEMPCRetry(t *testing.T) {
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
-	te.run(t, g, gctx, te.helper)
-	te.run(t, g, gctx, n0)
-	te.run(t, g, gctx, n1)
-	te.helper.PeerConnected(n0.NodeID())
-	te.helper.PeerConnected(n1.NodeID())
+	te.run(g, gctx, te.helper)
+	te.run(g, gctx, n0)
+	te.run(g, gctx, n1)
+	te.coord.PeerConnected(n0.NodeID())
+	te.coord.PeerConnected(n1.NodeID())
 
-	require.NoError(t, te.helper.RunSignature(ctx, sig))
+	require.NoError(t, te.coord.RunSignature(ctx, sig))
 
 	pd1 := Descriptor{Signature: sig, Participants: []sessions.NodeID{"node-0", "node-1"}, Aggregator: te.hid}
 	require.Equal(t, Event{EventType: Started, Descriptor: pd1}, nextEvent())
+	require.Equal(t, Event{EventType: Executing, Descriptor: pd1}, nextEvent())
 
-	te.helper.PeerDisconnected(n1.NodeID())
+	te.coord.PeerDisconnected(n1.NodeID())
 	require.Equal(t, Event{EventType: Failed, Descriptor: pd1}, nextEvent())
 
-	te.run(t, g, gctx, n2)
-	te.helper.PeerConnected(n2.NodeID())
+	te.run(g, gctx, n2)
+	te.coord.PeerConnected(n2.NodeID())
 
 	pd2 := Descriptor{Signature: sig, Participants: []sessions.NodeID{"node-0", "node-2"}, Aggregator: te.hid}
 	require.Equal(t, Event{EventType: Started, Descriptor: pd2}, nextEvent())
+	require.Equal(t, Event{EventType: Executing, Descriptor: pd2}, nextEvent())
 	require.Equal(t, Event{EventType: Completed, Descriptor: pd2}, nextEvent())
 
 	release()
@@ -291,6 +311,10 @@ func TestMHEMPCStateMachine(t *testing.T) {
 
 	pdCkg := Descriptor{Signature: Signature{Type: CKG}, Participants: nids, Aggregator: hid}
 	pdRtg := Descriptor{Signature: Signature{Type: RTG, Args: map[string]string{"GalEl": "5"}}, Participants: nids, Aggregator: hid}
+	started := func(pd Descriptor) Event { return Event{EventType: Started, Descriptor: pd} }
+	executing := func(pd Descriptor) Event { return Event{EventType: Executing, Descriptor: pd} }
+	completed := func(pd Descriptor) Event { return Event{EventType: Completed, Descriptor: pd} }
+	failed := func(pd Descriptor) Event { return Event{EventType: Failed, Descriptor: pd} }
 
 	newNode := func(nid sessions.NodeID) (*MHEMPC, *recordingTransport) {
 		rt := &recordingTransport{}
@@ -303,19 +327,25 @@ func TestMHEMPCStateMachine(t *testing.T) {
 	t.Run("participant", func(t *testing.T) {
 		e, rt := newNode(nids[0])
 
-		// Started -> one share is generated and sent
-		require.NoError(t, e.HandleEvent(ctx, Event{EventType: Started, Descriptor: pdCkg}))
+		// Started alone -> registered, no share yet
+		require.NoError(t, e.HandleEvent(ctx, started(pdCkg)))
 		require.True(t, e.IsRunning(pdCkg))
+		e.genWg.Wait()
+		require.Empty(t, rt.sent())
+
+		// Executing -> one share is generated and sent
+		require.NoError(t, e.HandleEvent(ctx, executing(pdCkg)))
 		e.genWg.Wait()
 		require.Equal(t, []Descriptor{pdCkg}, rt.sent())
 
-		// duplicated Started is ignored
-		require.NoError(t, e.HandleEvent(ctx, Event{EventType: Started, Descriptor: pdCkg}))
+		// duplicated events are ignored
+		require.NoError(t, e.HandleEvent(ctx, started(pdCkg)))
+		require.NoError(t, e.HandleEvent(ctx, executing(pdCkg)))
 		e.genWg.Wait()
 		require.Len(t, rt.sent(), 1)
 
 		// Completed -> not running, completion is observable
-		require.NoError(t, e.HandleEvent(ctx, Event{EventType: Completed, Descriptor: pdCkg}))
+		require.NoError(t, e.HandleEvent(ctx, completed(pdCkg)))
 		require.False(t, e.IsRunning(pdCkg))
 		require.True(t, e.IsCompleted(pdCkg))
 		pd, err := e.AwaitCompleted(ctx, pdCkg.Signature)
@@ -323,31 +353,41 @@ func TestMHEMPCStateMachine(t *testing.T) {
 		require.Equal(t, pdCkg, pd)
 
 		// Failed -> not running, and a re-Started identical descriptor is processed again
-		require.NoError(t, e.HandleEvent(ctx, Event{EventType: Started, Descriptor: pdRtg}))
+		require.NoError(t, e.HandleEvent(ctx, started(pdRtg)))
+		require.NoError(t, e.HandleEvent(ctx, executing(pdRtg)))
 		e.genWg.Wait() // otherwise the failure may (legitimately) cancel the share generation
-		require.NoError(t, e.HandleEvent(ctx, Event{EventType: Failed, Descriptor: pdRtg}))
+		require.NoError(t, e.HandleEvent(ctx, failed(pdRtg)))
 		require.False(t, e.IsRunning(pdRtg))
-		require.NoError(t, e.HandleEvent(ctx, Event{EventType: Started, Descriptor: pdRtg}))
+		require.NoError(t, e.HandleEvent(ctx, started(pdRtg)))
+		require.NoError(t, e.HandleEvent(ctx, executing(pdRtg)))
 		require.True(t, e.IsRunning(pdRtg))
 		e.genWg.Wait()
 		require.Equal(t, []Descriptor{pdCkg, pdRtg, pdRtg}, rt.sent())
 
-		// no outgoing events are emitted by a pure participant
+		// a pure participant does not know the aggregation state
+		_, known := e.MissingShares(pdRtg)
+		require.False(t, known)
+
+		// no events are emitted by a pure participant
 		require.Empty(t, e.outbox)
 	})
 
 	t.Run("init", func(t *testing.T) {
 		e, rt := newNode(nids[1])
 		log := []Event{
-			{EventType: Started, Descriptor: pdCkg},
-			{EventType: Completed, Descriptor: pdCkg},
-			{EventType: Started, Descriptor: pdRtg},
+			started(pdCkg), executing(pdCkg), completed(pdCkg),
+			started(pdRtg),
 		}
 		require.NoError(t, e.Init(ctx, log))
 		e.genWg.Wait()
-		require.Equal(t, []Descriptor{pdRtg}, rt.sent(), "only the still-running protocol gets a share")
+		require.Empty(t, rt.sent(), "no share before the aggregator is executing")
 		require.True(t, e.IsCompleted(pdCkg))
 		require.True(t, e.IsRunning(pdRtg))
+
+		e, rt = newNode(nids[2])
+		require.NoError(t, e.Init(ctx, append(log, executing(pdRtg))))
+		e.genWg.Wait()
+		require.Equal(t, []Descriptor{pdRtg}, rt.sent(), "only the still-executing protocol gets a share")
 	})
 
 	t.Run("aggregator", func(t *testing.T) {
@@ -356,13 +396,19 @@ func TestMHEMPCStateMachine(t *testing.T) {
 			NewObjectStoreResultBackend(objectstore.NewMemObjectStore(), testSess.SessParams.ID), nil)
 		require.NoError(t, err)
 
-		require.NoError(t, helper.RunDescriptor(ctx, pdCkg))
-		require.True(t, helper.IsRunning(pdCkg))
-		require.Equal(t, []Event{{EventType: Started, Descriptor: pdCkg}}, helper.outbox)
-		require.Error(t, helper.RunDescriptor(ctx, pdCkg), "cannot start a running protocol twice")
-
 		// unknown protocol
-		require.ErrorIs(t, helper.HandleShare(ctx, Share{ShareMetadata: ShareMetadata{ProtocolID: pdRtg.ID()}}), ErrProtocolNotRunning)
+		_, known := helper.MissingShares(pdCkg)
+		require.False(t, known)
+		require.ErrorIs(t, helper.HandleShare(ctx, Share{ShareMetadata: ShareMetadata{ProtocolID: pdCkg.ID()}}), ErrProtocolNotRunning)
+
+		// Started -> aggregation state is created and Executing is emitted, once
+		require.NoError(t, helper.HandleEvent(ctx, started(pdCkg)))
+		require.NoError(t, helper.HandleEvent(ctx, started(pdCkg)))
+		require.True(t, helper.IsRunning(pdCkg))
+		require.Equal(t, []Event{executing(pdCkg)}, helper.outbox)
+		missing, known := helper.MissingShares(pdCkg)
+		require.True(t, known)
+		require.True(t, missing.Equals(utils.NewSet(nids)))
 
 		// feeds the shares of all participants, generated by hand
 		for i, nid := range nids {
@@ -375,16 +421,17 @@ func TestMHEMPCStateMachine(t *testing.T) {
 			share := p.AllocateShare()
 			require.NoError(t, p.GenShare(sk, in, &share))
 			require.NoError(t, helper.HandleShare(ctx, share))
+			missing, known := helper.MissingShares(pdCkg)
+			require.True(t, known)
+			require.Len(t, missing, len(nids)-i-1)
 			if i < len(nids)-1 {
 				require.True(t, helper.IsRunning(pdCkg))
 			}
 		}
 		require.False(t, helper.IsRunning(pdCkg))
 		require.True(t, helper.IsCompleted(pdCkg))
-		require.Equal(t, []Event{
-			{EventType: Started, Descriptor: pdCkg},
-			{EventType: Completed, Descriptor: pdCkg},
-		}, helper.outbox)
+		require.Equal(t, []Event{executing(pdCkg), completed(pdCkg)}, helper.outbox)
+		require.Empty(t, rt.sent(), "the helper is not a participant")
 
 		out, err := helper.GetOutput(ctx, pdCkg)
 		require.NoError(t, err)

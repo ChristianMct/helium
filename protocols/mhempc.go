@@ -8,15 +8,11 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 )
 
-const (
-	defaultEngineMaxParticipation = 8 // max number of concurrent share generations
-	defaultEngineMaxProtoPerNode  = 8 // as aggregator, max number of concurrent protocols per participant
-)
+const defaultEngineMaxParticipation = 8 // max number of concurrent share generations
 
 // ErrProtocolNotRunning is returned when an input (e.g., a share) refers to a
 // protocol that is not currently running at this node.
@@ -26,27 +22,19 @@ var ErrProtocolNotRunning = errors.New("protocol is not running")
 type Config struct {
 	// MaxParticipation is the maximum number of shares generated concurrently by this node.
 	MaxParticipation int
-	// MaxProtoPerNode is, as aggregator, the maximum number of concurrent protocols a
-	// given participant is selected in.
-	MaxProtoPerNode int
 }
 
 // ShareTransport is the transport interface required by the MHEMPC engine.
 // Shares and result queries are routed by the transport from the protocol
 // descriptor (e.g., to pd.Aggregator), so that the engine is agnostic of
-// the network topology.
+// the network topology. Incoming shares are delivered to the engine by
+// calling its HandleShare method.
 type ShareTransport interface {
 	// PutShare sends the node's share in protocol pd to the protocol's aggregator(s).
 	PutShare(ctx context.Context, pd Descriptor, share Share) error
 	// GetAggregationOutput queries the aggregated share of protocol pd from its aggregator(s).
 	GetAggregationOutput(ctx context.Context, pd Descriptor) (Share, error)
 }
-
-// // ShareReceiver is the interface through which a transport delivers incoming
-// // shares to the engine. It is implemented by MHEMPC.
-// type ShareReceiver interface {
-// 	HandleShare(ctx context.Context, share Share) error
-// }
 
 // KeySwitchInputProvider provides the inputs of the key-switching protocols (DEC, CKS, PCKS),
 // for which the engine cannot derive the input on its own. It is called at both the
@@ -55,16 +43,19 @@ type KeySwitchInputProvider func(ctx context.Context, pd Descriptor) (*KeySwitch
 
 // MHEMPC is the state of a node in the MHE-based MPC protocol, for a single session.
 //
-// The type is a state machine: its inputs are coordination events (HandleEvent),
-// incoming shares (PutShare), peer connectivity changes (PeerConnected, PeerDisconnected)
-// and protocol execution requests (RunSignature, RunDescriptor). Its outputs are
-// coordination events (see Run) and shares sent through the ShareTransport.
+// The type is a state machine driven by the coordination events of a Coordinator
+// (HandleEvent) and by incoming shares (HandleShare). It executes the protocols
+// described by the events, in the roles the descriptors assign to the node, and
+// publishes its progress back to the coordinator:
+//   - Started: the protocol is registered; as aggregator, the aggregation state is
+//     created and an Executing event is published,
+//   - Executing: as participant, the node's share is generated and sent,
+//   - Completed: the protocol result is available (published by the aggregator),
+//   - Failed: the protocol is dropped.
+//
 // All inputs are processed synchronously under a single lock; the only asynchronous
 // work is the share generation, which runs in a bounded pool of goroutines.
-//
-// For each protocol, the node's roles (aggregator, participant, key-switch receiver)
-// are derived from the protocol descriptor only, so that the same type is used
-// for helper and peer nodes, and by any node in a peer-to-peer setting.
+// The engine takes no coordination decision (see CentralCoordinator).
 //
 // Completed protocols' results are held in a ResultBackend and are fetched lazily
 // from the aggregator when not available locally (see GetAggregationOutput, GetOutput).
@@ -77,34 +68,26 @@ type MHEMPC struct {
 	ksInput KeySwitchInputProvider
 
 	mu        sync.Mutex
-	online    map[sessions.NodeID]utils.Set[ID] // connected peers -> running protocols they participate in
-	queued    []*sigRequest                     // signatures to run as aggregator, waiting for participants
 	running   map[ID]*runningProto
 	completed map[ID]Descriptor
 	bySig     map[string]Descriptor // signature string -> last completed descriptor
 	failed    map[ID]Descriptor
 	waiters   map[string][]chan Descriptor // AwaitCompleted waiters, by signature string
 	outputs   map[ID]Output                // cache of finalized outputs
-	outbox    []Event
+	outbox    []Event                      // events to publish
 	notify    chan struct{}
 
 	genSem chan struct{}
 	genWg  sync.WaitGroup
 }
 
-// sigRequest is a request to execute a signature as aggregator.
-type sigRequest struct {
-	ctx context.Context
-	sig Signature
-}
-
 // runningProto is the engine state for a running protocol.
 type runningProto struct {
 	pd    Descriptor
 	ctx   context.Context
-	proto *Protocol   // aggregation state, nil if this node is not an aggregator for pd
-	req   *sigRequest // the request that started this protocol, if any (aggregator only)
+	proto *Protocol // aggregation state, nil if this node is not an aggregator for pd
 
+	executing      bool          // whether the aggregator is ready to receive shares
 	shareScheduled bool          // participant: whether the share generation has been scheduled
 	done           chan struct{} // closed when the protocol leaves the running state
 }
@@ -124,9 +107,6 @@ func NewMHEMPC(self sessions.NodeID, sess *sessions.Session, conf Config, trans 
 	if conf.MaxParticipation <= 0 {
 		conf.MaxParticipation = defaultEngineMaxParticipation
 	}
-	if conf.MaxProtoPerNode <= 0 {
-		conf.MaxProtoPerNode = defaultEngineMaxProtoPerNode
-	}
 
 	return &MHEMPC{
 		self:      self,
@@ -135,7 +115,6 @@ func NewMHEMPC(self sessions.NodeID, sess *sessions.Session, conf Config, trans 
 		trans:     trans,
 		results:   results,
 		ksInput:   ksInput,
-		online:    make(map[sessions.NodeID]utils.Set[ID]),
 		running:   make(map[ID]*runningProto),
 		completed: make(map[ID]Descriptor),
 		bySig:     make(map[string]Descriptor),
@@ -175,10 +154,6 @@ func (e *MHEMPC) isKeySwitchReceiver(pd Descriptor) bool {
 	return false
 }
 
-func (e *MHEMPC) fullThreshold() bool {
-	return e.sess.Threshold == len(e.sess.Nodes)
-}
-
 // shareProviders returns the set of nodes expected to provide a share in pd:
 // the participants, minus the receiver in the DEC protocol.
 func shareProviders(pd Descriptor) utils.Set[sessions.NodeID] {
@@ -193,7 +168,7 @@ func shareProviders(pd Descriptor) utils.Set[sessions.NodeID] {
 
 // Init initializes the engine state from a log of past coordination events
 // (catch-up). The events are applied without side effects; the actions required
-// by the resulting state (e.g., sending shares in still-running protocols) are
+// by the resulting state (e.g., sending shares in still-executing protocols) are
 // then taken at once.
 func (e *MHEMPC) Init(ctx context.Context, events []Event) error {
 	e.mu.Lock()
@@ -221,7 +196,8 @@ func (e *MHEMPC) HandleEvent(ctx context.Context, ev Event) error {
 }
 
 // HandleShare processes a share sent by a participant in a protocol for which
-// this node is an aggregator. It implements ShareReceiver.
+// this node is an aggregator. It returns ErrProtocolNotRunning if the protocol
+// is not running at this node.
 func (e *MHEMPC) HandleShare(ctx context.Context, share Share) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -246,102 +222,25 @@ func (e *MHEMPC) HandleShare(ctx context.Context, share Share) error {
 		return fmt.Errorf("cannot store aggregation output for %s: %w", rp.pd.HID(), err)
 	}
 
-	e.completeLocal(rp)
+	e.markCompleted(rp.pd)
+	e.emit(Event{EventType: Completed, Descriptor: rp.pd})
+	e.Logf("completed aggregation for %s", rp.pd.HID())
 	e.reconcile()
 	return nil
 }
 
-// PeerConnected informs the engine that peer nid is now reachable. As aggregator,
-// the engine only selects connected peers as participants.
-func (e *MHEMPC) PeerConnected(nid sessions.NodeID) {
+// MissingShares implements AggregationStatus.
+func (e *MHEMPC) MissingShares(pd Descriptor) (missing utils.Set[sessions.NodeID], known bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
-	if _, has := e.online[nid]; has {
-		return
-	}
-	pids := utils.NewEmptySet[ID]()
-	for pid, rp := range e.running {
-		if rp.proto != nil && slices.Contains(rp.pd.Participants, nid) {
-			pids.Add(pid)
-		}
-	}
-	e.online[nid] = pids
-	e.reconcile()
-}
-
-// PeerDisconnected informs the engine that peer nid is not reachable anymore.
-// As aggregator, running protocols in which nid has not yet provided its share
-// are failed (and retried if requested through RunSignature), unless the
-// session is full-threshold, in which case nothing can be done but wait.
-func (e *MHEMPC) PeerDisconnected(nid sessions.NodeID) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	pids, has := e.online[nid]
-	if !has {
-		return
-	}
-	delete(e.online, nid)
-
-	if !e.fullThreshold() {
-		for pid := range pids {
-			rp, running := e.running[pid]
-			if !running || rp.proto == nil || rp.proto.HasShareFrom(nid) {
-				continue
-			}
-			e.Logf("node %s disconnected before providing its share, aborting protocol %s", nid, rp.pd.HID())
-			e.failLocal(rp)
-		}
-	}
-	e.reconcile()
-}
-
-// RunSignature requests the execution of a protocol with the given signature,
-// with this node as aggregator. The method returns immediately: the protocol
-// starts as soon as enough participants are connected, and is retried with
-// other participants if it fails. Completion can be awaited with AwaitCompleted.
-func (e *MHEMPC) RunSignature(ctx context.Context, sig Signature) error {
-	if err := e.validateSignature(sig); err != nil {
-		return fmt.Errorf("invalid signature %s: %w", sig, err)
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.queued = append(e.queued, &sigRequest{ctx: ctx, sig: sig})
-	e.reconcile()
-	return nil
-}
-
-// RunDescriptor starts the execution of the protocol described by pd, with this
-// node as aggregator. Unlike RunSignature, the protocol is not retried on failure.
-// The method returns an error if a participant is not connected (non-full-threshold
-// sessions only) or if the protocol is already running or completed.
-func (e *MHEMPC) RunDescriptor(ctx context.Context, pd Descriptor) error {
-	if !e.isAggregator(pd) {
-		return fmt.Errorf("node %s is not the aggregator of %s", e.self, pd.HID())
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	pid := pd.ID()
-	if _, running := e.running[pid]; running {
-		return fmt.Errorf("protocol %s is already running", pd.HID())
+	if rp, has := e.running[pid]; has && rp.proto != nil {
+		return rp.proto.Missing(), true
 	}
-	if _, completed := e.completed[pid]; completed {
-		return fmt.Errorf("protocol %s is already completed", pd.HID())
+	if _, has := e.completed[pid]; has {
+		return utils.NewEmptySet[sessions.NodeID](), true
 	}
-	if !e.fullThreshold() {
-		for _, nid := range pd.Participants {
-			if _, online := e.online[nid]; !online && nid != e.self {
-				return fmt.Errorf("participant %s is not connected", nid)
-			}
-		}
-	}
-	if err := e.startAsAggregator(ctx, pd, nil); err != nil {
-		return err
-	}
-	e.reconcile()
-	return nil
+	return nil, false
 }
 
 // ---- state transitions (caller holds e.mu)
@@ -358,8 +257,19 @@ func (e *MHEMPC) apply(ctx context.Context, ev Event) error {
 		if _, has := e.running[pid]; has {
 			return nil
 		}
-		_, err := e.newRunning(ctx, pd, nil)
-		return err
+		rp := &runningProto{pd: pd, ctx: ctx, done: make(chan struct{})}
+		if e.isAggregator(pd) {
+			var err error
+			if rp.proto, err = NewProtocol(pd, e.sess); err != nil {
+				return fmt.Errorf("cannot create protocol %s: %w", pd.HID(), err)
+			}
+		}
+		delete(e.failed, pid)
+		e.running[pid] = rp
+	case Executing:
+		if rp, has := e.running[pid]; has {
+			rp.executing = true
+		}
 	case Completed:
 		e.markCompleted(pd)
 	case Failed:
@@ -367,43 +277,15 @@ func (e *MHEMPC) apply(ctx context.Context, ev Event) error {
 			e.dropRunning(rp)
 		}
 		e.failed[pid] = pd
-	case Executing:
 	default:
 		return fmt.Errorf("unknown event type: %d", ev.EventType)
 	}
 	return nil
 }
 
-// newRunning registers pd as running. If this node is an aggregator for pd, the
-// aggregation state is created.
-func (e *MHEMPC) newRunning(ctx context.Context, pd Descriptor, req *sigRequest) (*runningProto, error) {
-	pid := pd.ID()
-	rp := &runningProto{pd: pd, ctx: ctx, req: req, done: make(chan struct{})}
-	if e.isAggregator(pd) {
-		var err error
-		if rp.proto, err = NewProtocol(pd, e.sess); err != nil {
-			return nil, fmt.Errorf("cannot create protocol %s: %w", pd.HID(), err)
-		}
-		for _, nid := range pd.Participants {
-			if pids, online := e.online[nid]; online {
-				pids.Add(pid)
-			}
-		}
-	}
-	delete(e.failed, pid) // TODO: is this enough to just retry ?
-	e.running[pid] = rp
-	return rp, nil
-}
-
 // dropRunning removes rp from the running protocols.
 func (e *MHEMPC) dropRunning(rp *runningProto) {
-	pid := rp.pd.ID()
-	delete(e.running, pid)
-	for _, nid := range rp.pd.Participants {
-		if pids, online := e.online[nid]; online {
-			pids.Remove(pid)
-		}
-	}
+	delete(e.running, rp.pd.ID())
 	close(rp.done)
 }
 
@@ -423,140 +305,24 @@ func (e *MHEMPC) markCompleted(pd Descriptor) {
 	delete(e.waiters, key)
 }
 
-// completeLocal terminates a protocol aggregated by this node, emitting the Completed
-// event and starting the next round if the protocol was requested as part of a
-// multi-round signature (RKG).
-func (e *MHEMPC) completeLocal(rp *runningProto) {
-	e.markCompleted(rp.pd)
-	e.emit(Event{EventType: Completed, Descriptor: rp.pd})
-	e.Logf("completed aggregation for %s", rp.pd.HID())
-
-	if rp.req != nil && rp.req.sig.Type == RKG && rp.pd.Signature.Type == RKG1 {
-		pd := Descriptor{Signature: rp.req.sig, Participants: rp.pd.Participants, Aggregator: e.self}
-		if err := e.startAsAggregator(rp.req.ctx, pd, rp.req); err != nil {
-			e.Logf("cannot start second round of %s: %s, retrying", rp.req.sig, err)
-			e.queued = append(e.queued, rp.req)
-		}
-	}
-}
-
-// failLocal terminates a protocol aggregated by this node with a failure, emitting
-// the Failed event and re-queuing the originating request, if any.
-func (e *MHEMPC) failLocal(rp *runningProto) {
-	e.dropRunning(rp)
-	e.failed[rp.pd.ID()] = rp.pd
-	e.emit(Event{EventType: Failed, Descriptor: rp.pd})
-	if rp.req != nil {
-		e.queued = append(e.queued, rp.req)
-	}
-}
-
-// startAsAggregator registers pd as running with this node as aggregator and emits
-// the Started event.
-func (e *MHEMPC) startAsAggregator(ctx context.Context, pd Descriptor, req *sigRequest) error {
-	if !e.isAggregator(pd) {
-		return fmt.Errorf("node %s is not the aggregator of %s", e.self, pd.HID())
-	}
-	if _, err := e.newRunning(ctx, pd, req); err != nil {
-		return err
-	}
-	e.emit(Event{EventType: Started, Descriptor: pd})
-	e.Logf("started protocol %s", pd)
-	return nil
-}
-
-// tryStart attempts to start the protocol for the request, returning whether it
-// could be started. An error means the request cannot be satisfied and is dropped.
-func (e *MHEMPC) tryStart(req *sigRequest) (bool, error) {
-	sig := req.sig
-	if sig.Type == RKG {
-		sig = Signature{Type: RKG1, Args: sig.Args} // runs the first round first
-	}
-
-	parts, ok := e.selectParticipants(sig)
-	if !ok {
-		return false, nil
-	}
-
-	pd := Descriptor{Signature: sig, Participants: parts, Aggregator: e.self}
-	pid := pd.ID()
-	if _, running := e.running[pid]; running {
-		return false, nil // waits for the running instance to terminate
-	}
-	if _, completed := e.completed[pid]; completed {
-		// the exact same protocol has already completed, the request is satisfied.
-		if req.sig.Type == RKG {
-			if _, r2completed := e.completed[Descriptor{Signature: req.sig, Participants: parts, Aggregator: e.self}.ID()]; !r2completed {
-				pd2 := Descriptor{Signature: req.sig, Participants: parts, Aggregator: e.self}
-				return true, e.startAsAggregator(req.ctx, pd2, req)
-			}
-		}
-		return true, nil
-	}
-
-	return true, e.startAsAggregator(req.ctx, pd, req)
-}
-
-// selectParticipants selects the participants for a protocol with signature sig,
-// from the connected peers. It returns false if there are not enough available
-// peers. In full-threshold sessions, all session nodes are selected.
-func (e *MHEMPC) selectParticipants(sig Signature) ([]sessions.NodeID, bool) {
-	selected := utils.NewEmptySet[sessions.NodeID]()
-	if e.fullThreshold() {
-		selected.Add(e.sess.Nodes...)
-	} else {
-		if sig.Type == DEC {
-			if target := sessions.NodeID(sig.Args["target"]); e.sess.Contains(target) {
-				selected.Add(target)
-			}
-		}
-		available := utils.NewEmptySet[sessions.NodeID]()
-		for nid, protos := range e.online {
-			if e.sess.Contains(nid) && !selected.Contains(nid) && len(protos) < e.conf.MaxProtoPerNode {
-				available.Add(nid)
-			}
-		}
-		needed := e.sess.Threshold - len(selected)
-		if len(available) < needed {
-			return nil, false
-		}
-		selected.AddAll(utils.GetRandomSetOfSize(needed, available))
-	}
-	parts := selected.Elements()
-	slices.Sort(parts)
-	return parts, true
-}
-
 // reconcile derives the actions required by the current state:
-//   - as aggregator, starts the queued requests for which enough participants are available,
-//   - as participant, schedules the generation of the node's share in running protocols.
+//   - as aggregator, publishes Executing for newly registered protocols,
+//   - as participant, schedules the generation of the node's share in executing protocols.
 //
 // It is the only place where side effects are decided.
 func (e *MHEMPC) reconcile() {
-	if len(e.queued) > 0 {
-		var remaining []*sigRequest
-		for _, req := range e.queued {
-			started, err := e.tryStart(req)
-			if err != nil {
-				e.Logf("dropping request for %s: %s", req.sig, err)
-				continue
-			}
-			if !started {
-				remaining = append(remaining, req)
-			}
-		}
-		e.queued = remaining
-	}
-
 	for _, rp := range e.running {
-		if rp.shareScheduled || !e.isParticipant(rp.pd) || e.isKeySwitchReceiver(rp.pd) {
+		if rp.proto != nil && !rp.executing {
+			rp.executing = true
+			e.emit(Event{EventType: Executing, Descriptor: rp.pd})
+		}
+		if !rp.executing || rp.shareScheduled || !e.isParticipant(rp.pd) || e.isKeySwitchReceiver(rp.pd) {
 			continue
 		}
 		rp.shareScheduled = true
 		e.genWg.Add(1)
 		go e.generateShare(rp)
 	}
-
 	e.changed()
 }
 
@@ -611,19 +377,6 @@ func (e *MHEMPC) sendShare(ctx context.Context, pd Descriptor) error {
 	return nil
 }
 
-func (e *MHEMPC) validateSignature(sig Signature) error {
-	switch sig.Type {
-	case CKG, RTG, RKG, DEC:
-	default:
-		return fmt.Errorf("unsupported protocol type %s", sig.Type)
-	}
-	if sig.Type == DEC && len(sig.Args["target"]) == 0 {
-		return fmt.Errorf("should provide argument: target")
-	}
-	_, err := newMHEProtocol(sig, *e.sess.Params.GetRLWEParameters())
-	return err
-}
-
 // ---- outputs
 
 func (e *MHEMPC) emit(ev Event) {
@@ -639,65 +392,55 @@ func (e *MHEMPC) changed() {
 	}
 }
 
-// flush sends the emitted events to out. Events are dropped if out is nil.
-func (e *MHEMPC) flush(out chan<- Event) {
+// publish sends the emitted events to the coordinator, outside of the lock.
+func (e *MHEMPC) publish(ctx context.Context, coord Coordinator) error {
 	e.mu.Lock()
 	evs := e.outbox
 	e.outbox = nil
 	e.mu.Unlock()
-	if out == nil {
-		return
-	}
 	for _, ev := range evs {
-		out <- ev
-	}
-}
-
-// aggregatorIdle returns whether the node has no pending work as aggregator.
-func (e *MHEMPC) aggregatorIdle() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if len(e.queued) > 0 {
-		return false
-	}
-	for _, rp := range e.running {
-		if rp.proto != nil {
-			return false
+		if err := coord.Publish(ctx, ev); err != nil {
+			return fmt.Errorf("cannot publish %s: %w", ev, err)
 		}
 	}
-	return true
+	return nil
 }
 
-// Run connects the engine to a coordination channel: incoming events are processed
-// with HandleEvent and emitted events are sent to the outgoing channel. The method
-// returns when the incoming channel is closed and the node has no pending work as
-// aggregator, or when the context is cancelled. It closes the outgoing channel
-// before returning.
-func (e *MHEMPC) Run(ctx context.Context, ch *coordinator.Channel[Event]) (err error) {
-	incoming := ch.Incoming
+// Run connects the engine to a coordinator: the engine catches up with the past
+// events, processes the live ones with HandleEvent and publishes its own events.
+// The method returns when the coordinator closes the live channel, when publishing
+// fails, or when the context is cancelled.
+func (e *MHEMPC) Run(ctx context.Context, coord Coordinator) (err error) {
+	past, live, err := coord.Register(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot register to coordinator: %w", err)
+	}
+	if err = e.Init(ctx, past); err != nil {
+		return err
+	}
+
 	for done := false; !done; {
 		select {
-		case ev, more := <-incoming:
+		case ev, more := <-live:
 			if !more {
-				incoming = nil
-				done = e.aggregatorIdle()
+				done = true
 				continue
 			}
 			if err = e.HandleEvent(ctx, ev); err != nil {
 				done = true
 			}
 		case <-e.notify:
-			e.flush(ch.Outgoing)
-			done = incoming == nil && e.aggregatorIdle()
+			if err = e.publish(ctx, coord); err != nil {
+				done = true
+			}
 		case <-ctx.Done():
 			err = ctx.Err()
 			done = true
 		}
 	}
 	e.genWg.Wait()
-	e.flush(ch.Outgoing)
-	if ch.Outgoing != nil {
-		close(ch.Outgoing)
+	if perr := e.publish(ctx, coord); err == nil {
+		err = perr
 	}
 	return err
 }
