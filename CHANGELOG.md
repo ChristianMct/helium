@@ -19,20 +19,44 @@ This update collapses the MHE-MPC protocol logic, previously spread over the `no
   shares; participants send their share only after this event.
 - The `protocols.KeyProvider` view, returning the setup keys from an `MHEMPC` engine.
 - The `coordinator.Log` generic event log.
+- The `circuits.Engine` type: a state machine evaluating circuits as protocols between the
+  input-providing nodes and an evaluator (`Started` → `Executing` → inputs → `Completed`), driven by
+  the events of a `circuits.Coordinator`, and holding the outputs (fetched lazily from the evaluator).
+  The `circuits` package now mirrors the `protocols` package: definitions and engine in one package.
+- The `circuits.Interface` type describing a circuit's inputs, summed inputs, outputs and required
+  keys; it is either declared explicitly (`circuits.Circuit.Interface`) or derived by symbolic execution
+  of the evaluation function (`circuits.Parse`, `circuits.FromFunc`): the function is run end to end
+  with placeholder ciphertexts and a recording evaluator, from which the required relinearization
+  and Galois keys are inferred.
+- The `circuits.Evaluator` interface: Lattigo's `he.Evaluator` extended with scheme-agnostic
+  key-switching operations (`Rotate`, `Conjugate`, `Automorphism`, `InnerSum`, `Replicate`), so that
+  the required keys can be inferred; `Scheme` gives access to the underlying `bgv`/`ckks` evaluator.
+- The `circuits.OperandID` type: system-wide operand ids of the form `//<node>/<circuit-id>/<name>`,
+  resolved once from a descriptor and an interface (`circuits.Resolve`).
+- The `MHEMPC.DecryptOutput` method, returning the plaintext output of a decryption protocol to its target.
 
 ### Changed
 
+- Circuits are now pure functions from encrypted inputs to encrypted outputs: `Runtime.Output` replaces
+  `NewOperand`/`EvalLocal`/`DEC`/`PCKS`, `Runtime.Evaluator` returns an evaluator with the declared keys,
+  and intermediate values are plain ciphertexts. The decryption of an output is requested by the
+  application as a `DEC` protocol on the output's operand id.
+- `HeliumServer.Run` and `HeliumClient.Run` now start the node and return; the application drives the
+  server with `Evaluate`, `RunSignature`, the `Protocols` and `Circuits` engines, and `Close`. The
+  `cdescs`/`outs` channels are removed.
+- The `circuits.InputProvider` is called with the ids of the operands the node must provide.
 - The `helium.HeliumServer` and `helium.HeliumClient` types now instantiate the session, the protocol
-  engine, the coordinator (helper only), the compute service and the gRPC transport directly.
-- The `compute.Service` runs its key-switching protocols through an `MHEMPC` engine.
+  engine, the coordinator (helper only), the circuit engine and the gRPC transport directly.
 - The `node.Config`, `node.App`, `node.List` and `node.SecretProvider` types moved to the `helium`
-  package; `node.Config` now has `ProtocolsConfig`, `CoordinatorConfig` and `ComputeConfig` fields.
+  package; `node.Config` now has `ProtocolsConfig`, `CoordinatorConfig` and `CircuitsConfig` fields.
 - The `NodeEvent` protobuf message is now a `oneof` of `ProtocolEvent` and `CircuitEvent`.
 
 ### Removed
 
 - The `node` package, the `setup.Service` (and its key backend), the `protocols.Executor` and
   `protocols.CompleteMap` types, and the `coordinator.TestCoordinator` type.
+- The `services` packages: `services/compute` is replaced by the `circuits.Engine` type.
+- The `sessions.Ciphertext` type, replaced by `circuits.Operand`.
 
 ## [v0.3.0] - 20.06.2025 
 

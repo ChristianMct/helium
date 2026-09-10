@@ -3,142 +3,149 @@ package circuits
 import (
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/he"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
-	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 )
 
-// TestRuntime is an implementation of the Runtime interface for testing purposes.
-// It can be initialized from the FHE parameters and circuit inputs, then passed
-// to a Circuit to execute it. It encrypts the requested inputs on-the-fly, under
-// a test secret-key.
-// See the Runtime interface.
+// TestRuntime is an implementation of the Runtime interface for testing circuits
+// locally, without any node. Inputs are provided as plaintexts and encrypted on
+// the fly under the test session's ideal secret key; outputs are collected.
 type TestRuntime struct {
-	sessions.TestSession
+	*sessions.TestSession
 
-	cd             Descriptor
-	inputProvider  func(OperandLabel) *rlwe.Plaintext
-	outputReceiver func(Output)
+	circuit Circuit
+	md      *Metadata
+	inputs  func(OperandID) *rlwe.Plaintext
 
-	l         sync.Mutex
-	evaluator he.Evaluator
+	evaluator Evaluator
+	outputs   map[string]*OutputOperand
 }
 
-// NewTestRuntime creates a new TestRuntime instance with the given FHE parameters and input/output functions.
-func NewTestRuntime(tsess *sessions.TestSession, cd Descriptor, inputProvider func(OperandLabel) *rlwe.Plaintext, outputReceiver func(Output)) *TestRuntime {
-	tr := &TestRuntime{TestSession: *tsess}
-	tr.cd = cd
+// NewTestRuntime creates a TestRuntime for the evaluation of circuit c as described by cd,
+// with the inputs provided by the given function.
+func NewTestRuntime(tsess *sessions.TestSession, c Circuit, cd Descriptor, inputs func(OperandID) *rlwe.Plaintext) (*TestRuntime, error) {
+	itf, err := c.Describe(cd.Signature, tsess.FHEParameters)
+	if err != nil {
+		return nil, err
+	}
+	md, err := Resolve(cd, itf, tsess.SessParams.Nodes)
+	if err != nil {
+		return nil, err
+	}
 
-	tr.inputProvider = inputProvider
-	tr.outputReceiver = outputReceiver
+	var rlk *rlwe.RelinearizationKey
+	if itf.Keys.Rlk {
+		rlk = tsess.KeyGen.GenRelinearizationKeyNew(tsess.SkIdeal)
+	}
+	gks := make([]*rlwe.GaloisKey, 0, len(itf.Keys.GaloisEls))
+	for _, galEl := range itf.Keys.GaloisEls {
+		gks = append(gks, tsess.KeyGen.GenGaloisKeyNew(galEl, tsess.SkIdeal))
+	}
 
-	tr.evaluator = sessions.NewEvaluator(tsess.FHEParameters, nil)
-
-	return tr
+	tr := &TestRuntime{
+		TestSession: tsess,
+		circuit:     c,
+		md:          md,
+		inputs:      inputs,
+		evaluator:   NewEvaluator(tsess.FHEParameters, rlwe.NewMemEvaluationKeySet(rlk, gks...)),
+		outputs:     make(map[string]*OutputOperand, len(itf.Outputs)),
+	}
+	for name, id := range md.Outputs {
+		tr.outputs[name] = NewOutputOperand(id)
+	}
+	return tr, nil
 }
 
-func (tr *TestRuntime) CircuitDescriptor() Descriptor {
-	return tr.cd
+// Run evaluates the circuit and returns its outputs, by name.
+func (tr *TestRuntime) Run() (map[string]Operand, error) {
+	if err := tr.circuit.Eval(tr); err != nil {
+		return nil, err
+	}
+	outs := make(map[string]Operand, len(tr.outputs))
+	for name, oo := range tr.outputs {
+		op, set := oo.Get()
+		if !set {
+			return nil, fmt.Errorf("output %s was not set by the circuit", name)
+		}
+		outs[name] = op
+	}
+	return outs, nil
+}
+
+// Metadata returns the resolved metadata of the circuit evaluation.
+func (tr *TestRuntime) Metadata() *Metadata {
+	return tr.md
+}
+
+func (tr *TestRuntime) Descriptor() Descriptor {
+	return tr.md.Descriptor.Clone()
 }
 
 func (tr *TestRuntime) Parameters() sessions.FHEParameters {
 	return tr.FHEParameters
 }
 
-func (tr *TestRuntime) Input(opl OperandLabel) *FutureOperand {
-	tr.l.Lock()
-	defer tr.l.Unlock()
-	opl = opl.ForCircuit(tr.cd.CircuitID)
-	fop := NewFutureOperand(opl)
-	pt := tr.inputProvider(opl)
+func (tr *TestRuntime) Keys(Keys) {}
+
+func (tr *TestRuntime) Input(p Port) *FutureOperand {
+	id, has := tr.md.InputID(p)
+	if !has {
+		panic(fmt.Errorf("input %s is not declared in the circuit interface", p))
+	}
+	fo := NewFutureOperand(id)
+	fo.Set(tr.encrypt(id))
+	return fo
+}
+
+func (tr *TestRuntime) InputSum(name string, _ ...string) *FutureOperand {
+	id, has := tr.md.SumID(name)
+	if !has {
+		panic(fmt.Errorf("summed input %s is not declared in the circuit interface", name))
+	}
+	fo := NewFutureOperand(id)
+
+	ptAgg := rlwe.NewPlaintext(tr.RlweParams, tr.RlweParams.MaxLevel())
+	for _, cid := range tr.md.SumInputs[name] {
+		pt := tr.inputs(cid)
+		if pt == nil {
+			panic(fmt.Errorf("input provider returned nil input for %s", cid))
+		}
+		tr.RlweParams.RingQ().Add(ptAgg.Value, pt.Value, ptAgg.Value)
+		*ptAgg.MetaData = *pt.MetaData
+	}
+	ct, err := tr.Encryptor.EncryptNew(ptAgg) // TODO: simulate CRS-based encryption
+	if err != nil {
+		panic(err)
+	}
+	fo.Set(ct)
+	return fo
+}
+
+func (tr *TestRuntime) Output(name string) *OutputOperand {
+	oo, has := tr.outputs[name]
+	if !has {
+		panic(fmt.Errorf("output %s is not declared in the circuit interface", name))
+	}
+	return oo
+}
+
+func (tr *TestRuntime) Evaluator() Evaluator {
+	return tr.evaluator
+}
+
+func (tr *TestRuntime) Logf(msg string, v ...any) {
+	log.Printf("[TestRuntime] %s\n", fmt.Sprintf(msg, v...))
+}
+
+func (tr *TestRuntime) encrypt(id OperandID) *rlwe.Ciphertext {
+	pt := tr.inputs(id)
 	if pt == nil {
-		panic(fmt.Errorf("input provider returned nil input for %s", opl))
+		panic(fmt.Errorf("input provider returned nil input for %s", id))
 	}
 	ct, err := tr.Encryptor.EncryptNew(pt)
 	if err != nil {
 		panic(err)
 	}
-	fop.Set(Operand{Ciphertext: ct, OperandLabel: opl})
-	return fop
-}
-
-func (tr *TestRuntime) InputSum(opl OperandLabel, nodeIDs ...sessions.NodeID) *FutureOperand {
-	tr.l.Lock()
-	defer tr.l.Unlock()
-
-	fop := NewFutureOperand(opl)
-
-	opls, err := ExpandInputSumLabels(opl, tr.HelperSession, tr.cd.CircuitID, nodeIDs...)
-	if err != nil {
-		panic(err)
-	}
-
-	ptAgg := rlwe.NewPlaintext(tr.RlweParams)
-	for _, opl := range opls {
-		pt := tr.inputProvider(opl)
-		if pt == nil {
-			panic(fmt.Errorf("input provider returned nil input for %s", opl))
-		}
-		tr.RlweParams.RingQ().Add(ptAgg.Value, pt.Value, ptAgg.Value)
-		*ptAgg.MetaData = *pt.MetaData
-	}
-	ct, err := tr.Encryptor.EncryptNew(ptAgg) //TODO: simulate CRS-based encryption
-	if err != nil {
-		panic(err)
-	}
-	fop.Set(Operand{Ciphertext: ct, OperandLabel: opl})
-	return fop
-}
-
-func (tr *TestRuntime) Load(_ OperandLabel) *Operand {
-	panic("not implemented") // TODO: Implement
-}
-
-func (tr *TestRuntime) NewOperand(opl OperandLabel) *Operand {
-	return &Operand{OperandLabel: opl.ForCircuit(tr.cd.CircuitID)}
-}
-
-func (tr *TestRuntime) EvalLocal(needRlk bool, galKeys []uint64, f func(he.Evaluator) error) error {
-
-	var rlk *rlwe.RelinearizationKey
-	gks := make([]*rlwe.GaloisKey, len(galKeys))
-
-	if needRlk {
-		rlk = tr.KeyGen.GenRelinearizationKeyNew(tr.SkIdeal)
-	}
-	for i, gk := range galKeys {
-		gks[i] = tr.KeyGen.GenGaloisKeyNew(gk, tr.SkIdeal)
-	}
-
-	evks := rlwe.NewMemEvaluationKeySet(rlk, gks...)
-	var ev he.Evaluator
-	switch sev := tr.evaluator.(type) {
-	case *bgv.Evaluator:
-		ev = sev.WithKey(evks)
-	case *ckks.Evaluator:
-		ev = sev.WithKey(evks)
-	default:
-		panic("unsupported evaluator type")
-	}
-	return f(ev)
-}
-
-func (tr *TestRuntime) DEC(in Operand, rec sessions.NodeID, params map[string]string) error {
-	tr.l.Lock()
-	defer tr.l.Unlock()
-	pt := tr.Decryptor.DecryptNew(in.Ciphertext)
-	tr.outputReceiver(Output{Operand: Operand{OperandLabel: OperandLabel(fmt.Sprintf("%s-dec", in.OperandLabel)), Ciphertext: &rlwe.Ciphertext{Element: pt.Element}}, CircuitID: tr.cd.CircuitID})
-	return nil
-}
-
-func (tr *TestRuntime) PCKS(in Operand, rec sessions.NodeID, params map[string]string) error {
-	panic("not implemented") // TODO: Implement
-}
-
-func (tr *TestRuntime) Logf(msg string, v ...any) {
-	log.Printf("[TestRuntime] %s\n", fmt.Sprintf(msg, v...))
+	return ct
 }

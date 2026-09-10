@@ -17,8 +17,6 @@ import (
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/services"
-	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/sessions"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -31,10 +29,10 @@ const (
 )
 
 // HeliumClient is a peer node of the helper-assisted setting. It runs the node's
-// protocol engine and compute service, and communicates with the helium server
+// protocol engine and compute engine, and communicates with the helium server
 // over gRPC: it receives the coordination events from the server's log, sends
 // its shares and inputs to the server, and queries it for protocol outputs and
-// ciphertexts.
+// operands.
 type HeliumClient struct {
 	id, helperID  sessions.NodeID
 	helperAddress Address
@@ -43,7 +41,7 @@ type HeliumClient struct {
 
 	engine *protocols.MHEMPC
 	*protocols.KeyProvider
-	compute *compute.Service
+	compute *circuits.Engine
 	trans   *clientTransport
 
 	// coordination event stream
@@ -51,6 +49,7 @@ type HeliumClient struct {
 	past      []Event
 	protoLive chan protocols.Event
 	circLive  chan circuits.Event
+	done      chan struct{}
 
 	*grpc.ClientConn
 	rpc pb.HeliumClient
@@ -72,6 +71,7 @@ func NewHeliumClient(config Config, nl List, secrets SecretProvider) (*HeliumCli
 	hc.helperID = config.HelperID
 	hc.helperAddress = nl.AddressOf(config.HelperID)
 	hc.config = config
+	hc.done = make(chan struct{})
 
 	sp := config.SessionParameters[0]
 	var sec *sessions.Secrets
@@ -106,9 +106,9 @@ func NewHeliumClient(config Config, nl List, secrets SecretProvider) (*HeliumCli
 
 	hc.KeyProvider = protocols.NewKeyProvider(hc.engine)
 
-	hc.compute, err = compute.NewComputeService(hc.id, hc.sess, config.ComputeConfig, hc.engine, nil, hc.KeyProvider)
+	hc.compute, err = circuits.NewEngine(hc.id, hc.sess, config.CircuitsConfig, hc.trans, sessions.NewCachedPublicKeyBackend(hc.KeyProvider))
 	if err != nil {
-		return nil, fmt.Errorf("cannot create compute service: %w", err)
+		return nil, fmt.Errorf("cannot create compute engine: %w", err)
 	}
 
 	return hc, nil
@@ -119,14 +119,19 @@ func (hc *HeliumClient) ID() sessions.NodeID {
 	return hc.id
 }
 
-// NodeID returns the node id of the client.
-func (hc *HeliumClient) NodeID() sessions.NodeID {
-	return hc.id
-}
-
 // Session returns the client's session.
 func (hc *HeliumClient) Session() *sessions.Session {
 	return hc.sess
+}
+
+// Protocols returns the client's protocol engine.
+func (hc *HeliumClient) Protocols() *protocols.MHEMPC {
+	return hc.engine
+}
+
+// Compute returns the client's compute engine.
+func (hc *HeliumClient) Circuits() *circuits.Engine {
+	return hc.compute
 }
 
 // Connect establishes a connection to the helium server.
@@ -176,40 +181,53 @@ func (hc *HeliumClient) Close() error {
 	return hc.ClientConn.Close()
 }
 
-// Run runs the app on the peer node: the node takes part in the setup protocols and in the
-// circuits announced by the helper. The node's outputs are sent on the returned channel,
-// which is closed when the helper terminates the coordination.
-func (hc *HeliumClient) Run(ctx context.Context, app App, ip compute.InputProvider) (outs <-chan circuits.Output, err error) {
+// Run starts the app on the peer node: the node takes part in the setup protocols and in the
+// circuits announced by the helper, providing its inputs through ip. The method returns
+// immediately; Wait blocks until the helper terminates the coordination.
+func (hc *HeliumClient) Run(ctx context.Context, app App, ip circuits.InputProvider) error {
 	if hc.rpc == nil {
-		return nil, fmt.Errorf("client is not connected")
+		return fmt.Errorf("client is not connected")
 	}
 	if err := hc.compute.RegisterCircuits(app.Circuits); err != nil {
-		return nil, fmt.Errorf("could not register all circuits: %w", err)
+		return fmt.Errorf("could not register all circuits: %w", err)
 	}
+	hc.compute.SetInputProvider(ip)
 
 	ctx = hc.nodeContext(ctx)
 
 	if err := hc.openEventStream(ctx); err != nil {
-		return nil, fmt.Errorf("cannot register to the helper: %w", err)
+		return fmt.Errorf("cannot register to the helper: %w", err)
 	}
 
+	var engines sync.WaitGroup
+	engines.Add(2)
 	go func() {
+		defer engines.Done()
 		if err := hc.engine.Run(ctx, hc); err != nil {
 			hc.Logf("protocol engine error: %s", err)
 		}
 	}()
-
-	or := make(chan circuits.Output)
 	go func() {
-		if err := hc.compute.Run(ctx, ip, or, &clientCircuitCoordinator{hc}, hc.trans, nil); err != nil {
-			hc.Logf("compute service error: %s", err)
+		defer engines.Done()
+		if err := hc.compute.Run(ctx, &clientCircuitCoordinator{hc}); err != nil {
+			hc.Logf("compute engine error: %s", err)
 		}
 	}()
+	go func() {
+		engines.Wait()
+		close(hc.done)
+	}()
 
-	return or, nil
+	return nil
 }
 
-// EvalCircuit sends a circuit to the helium server for evaluation.
+// Wait blocks until the engines have returned, i.e., once the helper has terminated
+// the coordination.
+func (hc *HeliumClient) Wait() {
+	<-hc.done
+}
+
+// EvalCircuit requests the evaluation of a circuit by the helium server.
 func (hc *HeliumClient) EvalCircuit(ctx context.Context, cd circuits.Descriptor) error {
 	_, err := hc.rpc.EvalCircuit(hc.outgoingContext(ctx), api.GetCircuitDesc(cd))
 	return err
@@ -296,7 +314,7 @@ func (hc *HeliumClient) openEventStream(ctx context.Context) error {
 	return nil
 }
 
-// ---- protocols.Coordinator interface (for the client's engine)
+// ---- protocols.Coordinator interface (for the client's protocol engine)
 
 // Register implements protocols.Coordinator.
 func (hc *HeliumClient) Register(_ context.Context) (past []protocols.Event, live <-chan protocols.Event, err error) {
@@ -319,7 +337,7 @@ func (hc *HeliumClient) Publish(_ context.Context, ev protocols.Event) error {
 	return fmt.Errorf("peer nodes cannot publish events (event: %s)", ev)
 }
 
-// clientCircuitCoordinator is the compute.Coordinator of the client's compute service.
+// clientCircuitCoordinator is the circuits.Coordinator of the client's compute engine.
 type clientCircuitCoordinator struct {
 	hc *HeliumClient
 }
@@ -342,7 +360,7 @@ func (cc *clientCircuitCoordinator) Publish(_ context.Context, ev circuits.Event
 	return fmt.Errorf("peer nodes cannot publish circuit events (event: %s)", ev)
 }
 
-// ---- transport (protocols.ShareTransport and compute.Transport over gRPC)
+// ---- transport (protocols.ShareTransport and circuits.OperandTransport over gRPC)
 
 type clientTransport struct {
 	hc *HeliumClient
@@ -354,7 +372,7 @@ func (ct *clientTransport) PutShare(ctx context.Context, pd protocols.Descriptor
 	if pd.Signature.Type.IsSetup() {
 		service = "setup"
 	}
-	ctx = context.WithValue(ctx, services.CtxKeyName, service) // for network statistics
+	ctx = contextWithService(ctx, service) // for network statistics
 	apiShare, err := api.GetShare(&share)
 	if err != nil {
 		return err
@@ -369,7 +387,7 @@ func (ct *clientTransport) GetAggregationOutput(ctx context.Context, pd protocol
 	if pd.Signature.Type.IsSetup() {
 		service = "setup"
 	}
-	ctx = context.WithValue(ctx, services.CtxKeyName, service)
+	ctx = contextWithService(ctx, service)
 	apiOut, err := ct.hc.rpc.GetAggregationOutput(ct.hc.outgoingContext(ctx), api.GetProtocolDesc(&pd))
 	if err != nil {
 		return protocols.Share{}, err
@@ -377,25 +395,25 @@ func (ct *clientTransport) GetAggregationOutput(ctx context.Context, pd protocol
 	return api.ToShare(apiOut.AggregatedShare)
 }
 
-// GetCiphertext queries a ciphertext from the helium server.
-func (ct *clientTransport) GetCiphertext(ctx context.Context, ctID sessions.CiphertextID) (*sessions.Ciphertext, error) {
-	ctx = context.WithValue(ctx, services.CtxKeyName, "compute")
-	apiCt, err := ct.hc.rpc.GetCiphertext(ct.hc.outgoingContext(ctx), &pb.CiphertextID{CiphertextId: string(ctID)})
-	if err != nil {
-		return nil, err
-	}
-	return api.ToCiphertext(apiCt)
-}
-
-// PutCiphertext sends a ciphertext to the helium server.
-func (ct *clientTransport) PutCiphertext(ctx context.Context, c sessions.Ciphertext) error {
-	ctx = context.WithValue(ctx, services.CtxKeyName, "compute")
-	apiCt, err := api.GetCiphertext(&c)
+// PutOperand sends an input operand to the helium server (the evaluator).
+func (ct *clientTransport) PutOperand(ctx context.Context, _ circuits.Descriptor, op circuits.Operand) error {
+	ctx = contextWithService(ctx, "compute")
+	apiCt, err := api.GetOperand(&op)
 	if err != nil {
 		return err
 	}
 	_, err = ct.hc.rpc.PutCiphertext(ct.hc.outgoingContext(ctx), apiCt)
 	return err
+}
+
+// GetOperand queries an operand from the helium server.
+func (ct *clientTransport) GetOperand(ctx context.Context, id circuits.OperandID) (*circuits.Operand, error) {
+	ctx = contextWithService(ctx, "compute")
+	apiCt, err := ct.hc.rpc.GetCiphertext(ct.hc.outgoingContext(ctx), &pb.CiphertextID{CiphertextId: string(id)})
+	if err != nil {
+		return nil, err
+	}
+	return api.ToOperand(apiCt)
 }
 
 func (hc *HeliumClient) outgoingContext(ctx context.Context) context.Context {

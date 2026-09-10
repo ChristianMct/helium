@@ -17,68 +17,74 @@ The code is expected to evolve without guaranteeing backward compatibility and i
 ## Synopsis
 Helium is a Go package that provides the types and methods to implement an end-to-end MHE application.
 Helium's main types are:
-- The `helium.App` type which lets the user define an application by specifying the circuits to be run.
-- The `helium.HeliumServer` (helper node) and `helium.HeliumClient` (peer node) types which run `helium.App` applications by running the MHE setup phase and letting the user trigger circuit evaluations.
-- Under the hood, the `protocols.MHEMPC` type executes the MHE protocols as a state machine driven by the coordination events of a `protocols.Coordinator`, whose helper-assisted implementation is `protocols.CentralCoordinator`.
+- The `helium.App` type which lets the user define an application by specifying the required MHE setup and the circuits to be run.
+- The `helium.HeliumServer` (helper node) and `helium.HeliumClient` (peer node) types which run `helium.App` applications: they run the MHE setup phase and let the application request circuit evaluations and protocols (e.g., the decryption of a circuit's output).
+- Under the hood, two engines drive the nodes as state machines: `protocols.MHEMPC` executes the MHE protocols and `circuits.Engine` evaluates the circuits, both driven by the coordination events of the helper's `protocols.CentralCoordinator`.
 
+A circuit is a Go function mapping encrypted input operands to encrypted output operands. Its inputs, outputs and required
+evaluation keys form its interface, which is either declared explicitly or derived by symbolic execution of the function:
+the function is run with placeholder ciphertexts and a recording evaluator, from which the required relinearization and
+Galois keys are inferred.
 Here is an overview of an Helium application:
 ```go
   // declares an helium application
   app = helium.App{
 
     // describes the required MHE setup
-    SetupDescription: &setup.Description{ Cpk: true, Rlk: true},
+    SetupDescription: &helium.SetupDescription{ Cpk: true, Rlk: true},
     
     // declares the application's circuits
     Circuits: map[circuits.Name]circuits.Circuit{
-      "mul-2-dec": func(rt circuits.Runtime) error {
-        in0, in1 := rt.Input("//p0/in"), rt.Input("//p1/in") // read the encrypted inputs from nodes p0 and p1
+      "mul-2": circuits.FromFunc(func(rt circuits.Runtime) error {
+        in0, in1 := rt.Input("//p0/in"), rt.Input("//p1/in") // the encrypted inputs of parties p0 and p1
+        out := rt.Output("prod")                              // the encrypted output, owned by the evaluator
 
-        // multiplies the inputs as a local operation
-        opRes := rt.NewOperand("//eval/prod")
-        if err := rt.EvalLocal(
-          true, // circuit requires relin
-          nil,  // circuit does not require any rotation
-          func(eval he.Evaluator) error {
-					  return eval.MulRelin(in0.Get().Ciphertext, in1.Get().Ciphertext,  opRes.Ciphertext)
-				  }
-        ); err != nil {
-					return err
-				}
-
-        // decrypts the result with receiver "rec"
-        return rt.DEC(opRes, "rec", map[string]string{
-          "smudging": "40.0",
-        })
-      },
+        // multiplies the inputs (the relinearization key is inferred from the use of MulRelinNew)
+        res, err := rt.Evaluator().MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
+        if err != nil {
+          return err
+        }
+        out.Set(res)
+        return nil
+      }),
     },
   }
 
-  inputProvider = func(ctx context.Context, cid session.CircuitID, ol circuits.OperandLabel, sess session.Session) (any, error) {
-      // ... user-defined logic to provide input for a given circuit
+  // the input provider is called by the framework for the node's inputs to a circuit
+  inputProvider = func(ctx context.Context, cd circuits.Descriptor, ids []circuits.OperandID) (<-chan circuits.Input, error) {
+      // ... user-defined logic to provide the inputs identified by ids
   }
 
   ctx, config, nodelist := // ... (omitted config, usually loaded from files or command-line flags)
 
-  var cdescs chan<- circuit.Descriptor
-	var outs <-chan circuit.Output
 	if nodeID == helperID {
-    // the helper runs the server-side of helium
-		_, cdescs, outs, err = helium.RunHeliumServer(ctx, config, nodelist, app, inputProvider)
-    
-    // cdesc is a channel to send circuit evaluation request(s)
-    cdescs <- circuits.Descriptor{
-      Signature:   circuits.Signature{Name: circuits.Name("mul-4-dec")}, // evaluates circuit "mul-4-dec"
-      CircuitID:   "mul-4-dec-0",                                        // as circuit  "mul-4-dec-0"
-      // ... other runtime-specific info 
-      }
+    // the helper runs the server-side of helium and acts as the application
+		hsv, err := helium.RunHeliumServer(ctx, config, nodelist, app, inputProvider)
+
+    // requests the evaluation of the circuit "mul-2" as "mul-2-0", by the helper, with p0 and p1 mapped to actual nodes
+    cd := circuits.Descriptor{
+      Signature:   circuits.Signature{Name: "mul-2"},
+      CircuitID:   "mul-2-0",
+      NodeMapping: map[string]sessions.NodeID{"p0": "node-1", "p1": "node-2"},
+      Evaluator:   "helper",
+    }
+    err = hsv.Evaluate(ctx, cd)
+    _, err = hsv.Circuits().AwaitCompleted(ctx, cd.CircuitID)
+
+    // requests the decryption of the output "//helper/mul-2-0/prod" to the helper
+    decSig := protocols.Signature{Type: protocols.DEC, Args: map[string]string{
+      "op": "//helper/mul-2-0/prod", "target": "helper", "smudging": "40.0",
+    }}
+    err = hsv.RunSignature(ctx, decSig)
+    pd, err := hsv.Protocols().AwaitCompleted(ctx, decSig)
+    pt, err := hsv.Protocols().DecryptOutput(ctx, pd) // the decrypted result, as a Lattigo plaintext
+
+    err = hsv.Close(ctx) // terminates the coordination
 	} else {
-    // non-helper nodes run the client side
-		_, outs, err = helium.RunHeliumClient(ctx, config, nodelist, secrets, app, inputProvider)
+    // non-helper nodes run the client side, until the helper terminates the coordination
+		hc, err := helium.RunHeliumClient(ctx, config, nodelist, secrets, app, inputProvider)
+    hc.Wait()
 	}
-  // outs is a channel to recieve the evaluation(s) output(s)
-  out <- outs 
-  // ... 
 ```
 
 A complete example application is available in the [examples](/examples/vec-mul/) folder.
@@ -87,8 +93,8 @@ A complete example application is available in the [examples](/examples/vec-mul/
 The framework currently supports the following features:
 - N-out-of-N-threshold and T-out-of-N-threshold
 - Helper-assisted setting
-- Setup phase for any multiparty RLWE scheme suppported by Lattigo, compute phase for BGV.
-- Circuit evaluation with output to the input-parties (internal) and to the helper (external).
+- Setup phase for any multiparty RLWE scheme suppported by Lattigo, compute phase for BGV and CKKS.
+- Circuit evaluation and decryption of the outputs to the input-parties (internal) and to the helper (external).
 
 Current limitations:
 - This release does not fully implement the secure failure-handling mechanism of the Helium paper. The full implementation is currently being cleaned up
@@ -97,8 +103,9 @@ and requires changes to the Lattigo library.
 Implementing this phase in the framework is planned.
 - Altough supported by the MHE scheme, external computation-receiver other than the helper (ie., re-encryption under arbitrary public-keys) are not yet supported.
 Supporting this feature is expected soon as it is rather easy to implement.
-- The current version of Helium targets a proof of concept for lightweight MPC in the helper-assisted model. Altough most of the low-level code is already 
-generic enough to support peer-to-peer applications, some more work on the high-level node implementation would be required to support fully it.
+- The current version of Helium targets a proof of concept for lightweight MPC in the helper-assisted model. The protocol and circuit engines are
+agnostic of the network topology and derive the nodes' roles from the protocol and circuit descriptors; supporting peer-to-peer applications
+requires a coordinator and a transport for that setting.
 
 Roadmap: to come.
 

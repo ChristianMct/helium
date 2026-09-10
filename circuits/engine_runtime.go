@@ -1,0 +1,97 @@
+package circuits
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/ChristianMct/helium/sessions"
+	"github.com/tuneinsight/lattigo/v5/ring"
+	"github.com/tuneinsight/lattigo/v5/utils/sampling"
+)
+
+// engineRuntime is the Runtime given to a circuit evaluated by the engine.
+type engineRuntime struct {
+	e    *Engine
+	rc   *runningCircuit
+	eval Evaluator
+}
+
+func (rt *engineRuntime) Descriptor() Descriptor {
+	return rt.rc.cd.Clone()
+}
+
+func (rt *engineRuntime) Parameters() sessions.FHEParameters {
+	return rt.e.sess.Params
+}
+
+func (rt *engineRuntime) Keys(k Keys) {
+	declared := rt.rc.md.Keys
+	if (k.Rlk && !declared.Rlk) || len(declared.Merge(k).GaloisEls) > len(declared.GaloisEls) {
+		panic(fmt.Errorf("circuit %s requires keys %+v that are not in its interface %+v", rt.rc.cd.HID(), k, declared))
+	}
+}
+
+func (rt *engineRuntime) Input(p Port) *FutureOperand {
+	id, has := rt.rc.md.InputID(p)
+	if !has {
+		panic(fmt.Errorf("input %s is not declared in the interface of circuit %s", p, rt.rc.cd.HID()))
+	}
+	return rt.rc.inputs[id]
+}
+
+// InputSum returns the sum of the contributions to a summed input. The contributions are
+// encrypted with a common random polynomial, so that only their first components need to
+// be summed.
+func (rt *engineRuntime) InputSum(name string, _ ...string) *FutureOperand {
+	rc := rt.rc
+	sumID, has := rc.md.SumID(name)
+	if !has {
+		panic(fmt.Errorf("summed input %s is not declared in the interface of circuit %s", name, rc.cd.HID()))
+	}
+
+	rc.sumsMu.Lock()
+	defer rc.sumsMu.Unlock()
+	if fo, has := rc.sums[name]; has {
+		return fo
+	}
+
+	fo := NewFutureOperand(sumID)
+	rc.sums[name] = fo
+	go func() {
+		params := rt.e.sess.Params
+		rq := params.GetRLWEParameters().RingQ()
+
+		ct := sessions.NewCiphertext(params, 1)
+		prng, err := sampling.NewKeyedPRNG(sumCRS(rt.e.sess, rc.cd.CircuitID, name))
+		if err != nil {
+			panic(err)
+		}
+		ring.NewUniformSampler(prng, rq).Read(ct.Value[1])
+
+		for i, id := range rc.md.SumInputs[name] {
+			c := rc.inputs[id].Get().Ciphertext
+			if i == 0 {
+				*ct.MetaData = *c.MetaData
+			}
+			rq.Add(c.Value[0], ct.Value[0], ct.Value[0])
+		}
+		fo.Set(ct)
+	}()
+	return fo
+}
+
+func (rt *engineRuntime) Output(name string) *OutputOperand {
+	oo, has := rt.rc.outputs[name]
+	if !has {
+		panic(fmt.Errorf("output %s is not declared in the interface of circuit %s", name, rt.rc.cd.HID()))
+	}
+	return oo
+}
+
+func (rt *engineRuntime) Evaluator() Evaluator {
+	return rt.eval
+}
+
+func (rt *engineRuntime) Logf(msg string, v ...any) {
+	log.Printf("%s | [compute][%s] %s\n", rt.e.self, rt.rc.cd.HID(), fmt.Sprintf(msg, v...))
+}

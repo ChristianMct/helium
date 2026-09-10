@@ -13,10 +13,8 @@ import (
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/sync/errgroup"
@@ -49,16 +47,16 @@ var testSetupDescription = SetupDescription{
 }
 
 var testCircuits2P = []TestCircuitSig{
-	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
-	{Signature: circuits.Signature{Name: "bgv-add-n-dec", Args: map[string]string{"n": "2"}}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-add-2", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-mul-2", Args: nil}, ExpResult: 0},
+	{Signature: circuits.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "2"}}, ExpResult: 1},
 }
 
 var testCircuits3P = []TestCircuitSig{
-	{Signature: circuits.Signature{Name: "bgv-add-2-dec", Args: nil}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "bgv-mul-2-dec", Args: nil}, ExpResult: 0},
-	{Signature: circuits.Signature{Name: "bgv-add-n-dec", Args: map[string]string{"n": "2"}}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "bgv-add-n-dec", Args: map[string]string{"n": "3"}}, ExpResult: 3},
+	{Signature: circuits.Signature{Name: "bgv-add-2", Args: nil}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-mul-2", Args: nil}, ExpResult: 0},
+	{Signature: circuits.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "2"}}, ExpResult: 1},
+	{Signature: circuits.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "3"}}, ExpResult: 3},
 }
 
 var testSettings = []testSetting{
@@ -69,7 +67,10 @@ var testSettings = []testSetting{
 	{N: 3, T: 2, CircuitSigs: testCircuits3P, Reciever: "helper", Rep: 10},
 }
 
-const buffConBufferSize = 65 * 1024 * 1024
+const (
+	buffConBufferSize = 65 * 1024 * 1024
+	testTimeout       = 3 * time.Minute
+)
 
 // localTest is a helper + N peers test setting.
 type localTest struct {
@@ -114,7 +115,7 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 		HelperID:          lt.helperID,
 		SessionParameters: []sessions.Parameters{sp},
 		CoordinatorConfig: protocols.CoordinatorConfig{MaxProtoPerNode: 1},
-		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 1},
+		CircuitsConfig:    circuits.Config{MaxEvaluation: 4},
 		ObjectStoreConfig: objStore,
 		TLSConfig:         TLSConfig{InsecureChannels: true},
 	}
@@ -124,7 +125,7 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 			HelperID:          lt.helperID,
 			SessionParameters: []sessions.Parameters{sp},
 			ProtocolsConfig:   protocols.Config{MaxParticipation: 1},
-			ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 1},
+			CircuitsConfig:    circuits.Config{MaxEvaluation: 1},
 			ObjectStoreConfig: objStore,
 			TLSConfig:         TLSConfig{InsecureChannels: true},
 		}
@@ -165,6 +166,24 @@ func bufconnDialer(lis *bufconn.Listener) Dialer {
 	return func(context.Context, string) (net.Conn, error) { return lis.Dial() }
 }
 
+func testContext(t *testing.T, sessID sessions.ID) context.Context {
+	ctx, cancel := context.WithTimeout(sessions.NewBackgroundContext(sessID), testTimeout)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// testInputProvider provides the test input of node nid for all its input operands.
+func testInputProvider(nid sessions.NodeID) circuits.InputProvider {
+	return func(ctx context.Context, cd circuits.Descriptor, ids []circuits.OperandID) (<-chan circuits.Input, error) {
+		in := make(chan circuits.Input, len(ids))
+		for _, id := range ids {
+			in <- circuits.Input{ID: id, Value: nodeIDtoTestInput(string(nid))}
+		}
+		close(in)
+		return in, nil
+	}
+}
+
 func TestSetup(t *testing.T) {
 	for _, ts := range testSettings {
 		if ts.T == 0 {
@@ -177,54 +196,27 @@ func TestSetup(t *testing.T) {
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 			lt := newLocalTest(t, ts.N, ts.T)
+			ctx := testContext(t, lt.SessParams.ID)
 
 			app := App{
 				SetupDescription: &testSetupDescription,
 			}
 
 			helper, lis := lt.newServer(t)
+			require.NoError(t, helper.Run(ctx, app, circuits.NoInput))
+
 			clients := make([]*HeliumClient, ts.N)
 			for i, nid := range lt.peerIDs {
 				clients[i] = lt.newClient(t, nid)
+				require.NoError(t, clients[i].ConnectWithDialer(bufconnDialer(lis)))
+				require.NoError(t, clients[i].Run(ctx, app, circuits.NoInput))
 			}
 
-			ctx := sessions.NewBackgroundContext(lt.SessParams.ID)
-			g, runctx := errgroup.WithContext(ctx)
-			g.Go(func() error {
-				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
-				if err != nil {
-					return err
-				}
-				close(cdescs)
-				_, has := <-outs
-				if has {
-					return fmt.Errorf("%s should have no output", helper.id)
-				}
-				return nil
-			})
-
+			require.NoError(t, helper.Close(ctx))
+			helper.Wait()
 			for _, cli := range clients {
-				cli := cli
-
-				g.Go(func() error {
-					err := cli.ConnectWithDialer(bufconnDialer(lis))
-					if err != nil {
-						return fmt.Errorf("node %s failed to connect: %v", cli.id, err)
-					}
-
-					outs, err := cli.Run(runctx, app, compute.NoInput)
-					if err != nil {
-						return err
-					}
-					_, has := <-outs
-					if has {
-						return fmt.Errorf("%s should have no output", cli.id)
-					}
-					return nil
-				})
+				cli.Wait()
 			}
-
-			require.NoError(t, g.Wait())
 
 			CheckTestSetup(ctx, t, *app.SetupDescription, helper, lt.RlweParams, lt.SkIdeal, ts.N)
 
@@ -247,47 +239,28 @@ func TestSetup(t *testing.T) {
 func TestLateJoiner(t *testing.T) {
 	ts := testSetting{N: 3, T: 2}
 	lt := newLocalTest(t, ts.N, ts.T)
+	ctx := testContext(t, lt.SessParams.ID)
 	app := App{SetupDescription: &testSetupDescription}
 
 	helper, lis := lt.newServer(t)
+	require.NoError(t, helper.Run(ctx, app, circuits.NoInput))
+
 	early := []*HeliumClient{lt.newClient(t, lt.peerIDs[0]), lt.newClient(t, lt.peerIDs[1])}
 	late := lt.newClient(t, lt.peerIDs[2])
-
-	ctx := sessions.NewBackgroundContext(lt.SessParams.ID)
-	g, runctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
-		if err != nil {
-			return err
-		}
-		close(cdescs)
-		for range outs {
-		}
-		return nil
-	})
 	for _, cli := range early {
-		cli := cli
-		g.Go(func() error {
-			if err := cli.ConnectWithDialer(bufconnDialer(lis)); err != nil {
-				return err
-			}
-			outs, err := cli.Run(runctx, app, compute.NoInput)
-			if err != nil {
-				return err
-			}
-			for range outs {
-			}
-			return nil
-		})
+		require.NoError(t, cli.ConnectWithDialer(bufconnDialer(lis)))
+		require.NoError(t, cli.Run(ctx, app, circuits.NoInput))
 	}
-	require.NoError(t, g.Wait())
+	require.NoError(t, helper.Close(ctx))
+	helper.Wait()
+	for _, cli := range early {
+		cli.Wait()
+	}
 
 	// the late peer connects after the coordination is done
 	require.NoError(t, late.ConnectWithDialer(bufconnDialer(lis)))
-	outs, err := late.Run(ctx, app, compute.NoInput)
-	require.NoError(t, err)
-	_, has := <-outs
-	require.False(t, has)
+	require.NoError(t, late.Run(ctx, app, circuits.NoInput))
+	late.Wait()
 
 	resCheckCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -298,6 +271,9 @@ func TestLateJoiner(t *testing.T) {
 	helper.Server.GracefulStop()
 }
 
+// TestCompute evaluates the test circuits and decrypts their outputs to the receiver.
+// The test acts as the application: it requests the circuit evaluations, then the
+// decryption protocols on their outputs.
 func TestCompute(t *testing.T) {
 	for _, ts := range testSettings {
 		if ts.T == 0 {
@@ -307,115 +283,98 @@ func TestCompute(t *testing.T) {
 			ts.Rep = 1
 		}
 
-		nodemap := map[string]sessions.NodeID{"p1": "peer-0", "p2": "peer-1", "p3": "peer-2", "eval": "helper", "rec": ts.Reciever}
-
-		expResult := make(map[sessions.CircuitID]uint64)
-		for i, tc := range ts.CircuitSigs {
-			for rep := 0; rep < ts.Rep; rep++ {
-				cid := sessions.CircuitID(fmt.Sprintf("%s-%d-%d", tc.Name, i, rep))
-				expResult[cid] = tc.ExpResult
-			}
-		}
+		nodemap := map[string]sessions.NodeID{"p1": "peer-0", "p2": "peer-1", "p3": "peer-2", "eval": "helper"}
 
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 			lt := newLocalTest(t, ts.N, ts.T)
+			ctx := testContext(t, lt.SessParams.ID)
 
 			app := App{
 				SetupDescription: &testSetupDescription,
 				Circuits:         circuits.TestCircuits,
 			}
 
-			helper, lis := lt.newServer(t)
-			clients := make([]*HeliumClient, ts.N)
-			for i, nid := range lt.peerIDs {
-				clients[i] = lt.newClient(t, nid)
+			// the circuit evaluations and the decryption of their outputs
+			type evaluation struct {
+				cd     circuits.Descriptor
+				decSig protocols.Signature
+				exp    uint64
+			}
+			evals := make([]evaluation, 0, len(ts.CircuitSigs)*ts.Rep)
+			for i, tc := range ts.CircuitSigs {
+				for rep := 0; rep < ts.Rep; rep++ {
+					cid := sessions.CircuitID(fmt.Sprintf("%s-%d-%d", tc.Name, i, rep))
+					cd := circuits.Descriptor{Signature: tc.Signature, CircuitID: cid, NodeMapping: nodemap, Evaluator: lt.helperID}
+					outID := circuits.NewOperandID(lt.helperID, cid, "out")
+					decSig := protocols.Signature{Type: protocols.DEC, Args: map[string]string{
+						"op": string(outID), "target": string(ts.Reciever), "smudging": "40.0",
+					}}
+					evals = append(evals, evaluation{cd: cd, decSig: decSig, exp: tc.ExpResult})
+				}
 			}
 
-			testOuts := make(chan struct {
-				sessions.NodeID
-				circuits.Output
-			}, len(expResult))
+			helper, lis := lt.newServer(t)
+			require.NoError(t, helper.Run(ctx, app, circuits.NoInput))
 
-			ctx := sessions.NewBackgroundContext(lt.SessParams.ID)
-			g, runctx := errgroup.WithContext(ctx)
-			g.Go(func() error {
-				cdescs, outs, err := helper.Run(runctx, app, compute.NoInput)
-				if err != nil {
-					return err
-				}
+			clients := make(map[sessions.NodeID]*HeliumClient, ts.N)
+			for _, nid := range lt.peerIDs {
+				cli := lt.newClient(t, nid)
+				require.NoError(t, cli.ConnectWithDialer(bufconnDialer(lis)))
+				require.NoError(t, cli.Run(ctx, app, testInputProvider(nid)))
+				clients[nid] = cli
+			}
 
-				go func() {
-					for i, tc := range ts.CircuitSigs {
-						for rep := 0; rep < ts.Rep; rep++ {
-							cid := sessions.CircuitID(fmt.Sprintf("%s-%d-%d", tc.Name, i, rep))
-							cdescs <- circuits.Descriptor{Signature: tc.Signature, CircuitID: cid, NodeMapping: nodemap, Evaluator: helper.id}
-						}
-					}
-					close(cdescs)
-				}()
+			// the application: evaluates the circuits, then decrypts their outputs to the receiver
+			var receiver *protocols.MHEMPC
+			if ts.Reciever == lt.helperID {
+				receiver = helper.Protocols()
+			} else {
+				receiver = clients[ts.Reciever].Protocols()
+			}
 
-				for out := range outs {
-					testOuts <- struct {
-						sessions.NodeID
-						circuits.Output
-					}{helper.id, out}
-				}
-
-				return nil
-			})
-
-			for _, cli := range clients {
-				cli := cli
-				nid := cli.id
+			g, gctx := errgroup.WithContext(ctx)
+			for _, ev := range evals {
+				require.NoError(t, helper.Evaluate(ctx, ev.cd))
+			}
+			for _, ev := range evals {
+				ev := ev
 				g.Go(func() error {
-					err := cli.ConnectWithDialer(bufconnDialer(lis))
-					if err != nil {
-						return fmt.Errorf("node %s failed to connect: %v", cli.id, err)
+					if _, err := helper.Circuits().AwaitCompleted(gctx, ev.cd.CircuitID); err != nil {
+						return fmt.Errorf("circuit %s: %w", ev.cd.HID(), err)
 					}
-
-					ip := func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
-						in := make(chan circuits.Input, 1)
-						in <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nid, cd.CircuitID)), OperandValue: nodeIDtoTestInput(string(nid))}
-						close(in)
-						return in, nil
-					}
-
-					outs, err := cli.Run(runctx, app, ip)
-					if err != nil {
-						return err
-					}
-
-					for out := range outs {
-						testOuts <- struct {
-							sessions.NodeID
-							circuits.Output
-						}{cli.id, out}
-					}
-					return nil
+					return helper.RunSignature(gctx, ev.decSig)
 				})
 			}
-
-			err := g.Wait()
-			close(testOuts)
-			require.NoError(t, err)
+			require.NoError(t, g.Wait())
 
 			encoder := bgv.NewEncoder(lt.params)
-			for out := range testOuts {
-				require.Equal(t, out.NodeID, ts.Reciever)
-				pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
-				res := make([]uint64, lt.params.MaxSlots())
-				err = encoder.Decode(pt, res)
+			for _, ev := range evals {
+				pd, err := receiver.AwaitCompleted(ctx, ev.decSig)
 				require.NoError(t, err)
-				exp, has := expResult[out.CircuitID]
-				require.True(t, has, "unexpected result for %s", out.CircuitID)
-				require.Equal(t, exp, res[0])
-				delete(expResult, out.CircuitID)
+				pt, err := receiver.DecryptOutput(ctx, pd)
+				require.NoError(t, err)
+				res := make([]uint64, lt.params.MaxSlots())
+				require.NoError(t, encoder.Decode(pt, res))
+				require.Equal(t, ev.exp, res[0], "circuit %s", ev.cd.HID())
 			}
 
-			require.Empty(t, expResult, "not all expected results were received")
+			// a non-receiver cannot decrypt
+			for nid, cli := range clients {
+				if nid == ts.Reciever {
+					continue
+				}
+				pd, err := cli.Protocols().AwaitCompleted(ctx, evals[0].decSig)
+				require.NoError(t, err)
+				_, err = cli.Protocols().DecryptOutput(ctx, pd)
+				require.Error(t, err)
+				break
+			}
 
+			require.NoError(t, helper.Close(ctx))
+			helper.Wait()
 			for _, cli := range clients {
+				cli.Wait()
 				require.NoError(t, cli.Close())
 			}
 			helper.Server.GracefulStop()

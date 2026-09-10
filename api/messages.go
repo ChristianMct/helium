@@ -9,6 +9,7 @@ import (
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 func GetProtocolEvent(event protocols.Event) *pb.ProtocolEvent {
@@ -163,25 +164,30 @@ func ToShare(s *pb.Share) (protocols.Share, error) {
 	return ps, nil
 }
 
-func GetCiphertext(ct *sessions.Ciphertext) (*pb.Ciphertext, error) {
-	ctBytes, err := ct.MarshalBinary()
+func GetOperand(op *circuits.Operand) (*pb.Ciphertext, error) {
+	if op == nil || op.Ciphertext == nil {
+		return nil, fmt.Errorf("operand has no ciphertext")
+	}
+	ctBytes, err := op.Ciphertext.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
-	typ := pb.CiphertextType(ct.Type)
 	return &pb.Ciphertext{
-		Metadata:   &pb.CiphertextMetadata{Id: &pb.CiphertextID{CiphertextId: string(ct.ID)}, Type: &typ},
+		Metadata:   &pb.CiphertextMetadata{Id: &pb.CiphertextID{CiphertextId: string(op.ID)}},
 		Ciphertext: ctBytes,
 	}, nil
 }
 
-func ToCiphertext(apiCt *pb.Ciphertext) (*sessions.Ciphertext, error) {
-	var ct sessions.Ciphertext
-	ct.CiphertextMetadata.ID = sessions.CiphertextID(apiCt.Metadata.GetId().CiphertextId)
-	ct.CiphertextMetadata.Type = sessions.CiphertextType(apiCt.Metadata.GetType())
-	err := ct.Ciphertext.UnmarshalBinary(apiCt.Ciphertext)
-	if err != nil {
+func ToOperand(apiCt *pb.Ciphertext) (*circuits.Operand, error) {
+	op := &circuits.Operand{
+		ID:         circuits.OperandID(apiCt.GetMetadata().GetId().GetCiphertextId()),
+		Ciphertext: new(rlwe.Ciphertext),
+	}
+	if err := op.ID.Validate(); err != nil {
 		return nil, err
 	}
-	return &ct, nil
+	if err := op.Ciphertext.UnmarshalBinary(apiCt.Ciphertext); err != nil {
+		return nil, err
+	}
+	return op, nil
 }

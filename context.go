@@ -4,10 +4,24 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ChristianMct/helium/services"
 	"github.com/ChristianMct/helium/sessions"
 	"google.golang.org/grpc/metadata"
 )
+
+type ctxKeyT string
+
+// ctxKeyService is the context key (and gRPC metadata key) tagging a request with the
+// phase it belongs to ("setup" or "compute"), for network statistics.
+const ctxKeyService ctxKeyT = "service"
+
+func contextWithService(ctx context.Context, service string) context.Context {
+	return context.WithValue(ctx, ctxKeyService, service)
+}
+
+func serviceFromContext(ctx context.Context) (string, bool) {
+	service, ok := ctx.Value(ctxKeyService).(string)
+	return service, ok
+}
 
 func getOutgoingContext(ctx context.Context) (context.Context, error) {
 	md := metadata.New(nil)
@@ -26,8 +40,8 @@ func getOutgoingContext(ctx context.Context) (context.Context, error) {
 	}
 
 	// optional fields
-	if service, hasService := services.ServiceFromContext(ctx); hasService {
-		md.Append(string(services.CtxKeyName), service)
+	if service, hasService := serviceFromContext(ctx); hasService {
+		md.Append(string(ctxKeyService), service)
 	}
 
 	if circID, hasCircID := sessions.CircuitIDFromContext(ctx); hasCircID {

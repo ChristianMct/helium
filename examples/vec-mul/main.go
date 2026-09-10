@@ -11,10 +11,7 @@ import (
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/sessions"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
@@ -41,9 +38,8 @@ var (
 		HelperID:          "helper", // the node id of the helper node
 		SessionParameters: []sessions.Parameters{sessionParams},
 
-		// in this example, peer node can only participate in one protocol and one circuit at a time
+		// in this example, peer node can only participate in one protocol at a time
 		ProtocolsConfig: protocols.Config{MaxParticipation: 1},
-		ComputeConfig:   compute.ServiceConfig{MaxCircuitEvaluation: 1},
 
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},   // use a volatile in-memory store for state
 		TLSConfig:         helium.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
@@ -57,7 +53,7 @@ var (
 
 		// each node is not chosen as participant for more than one protocol at the time.
 		CoordinatorConfig: protocols.CoordinatorConfig{MaxProtoPerNode: 1},
-		ComputeConfig:     compute.ServiceConfig{MaxCircuitEvaluation: 16},
+		CircuitsConfig:    circuits.Config{MaxEvaluation: 16},
 		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
 		TLSConfig:         helium.TLSConfig{InsecureChannels: true},
 	}
@@ -69,7 +65,7 @@ var (
 		helium.Info{NodeID: "node-3"}, helium.Info{NodeID: "node-4"},
 	}
 
-	// the application defines the MHE circuit to be evaluated and its required setup
+	// the application defines the MHE circuits to be evaluated and their required setup
 	app = helium.App{
 		SetupDescription: &helium.SetupDescription{
 			Cpk: true,       // the circuit requires the collective public-key (for encryption)
@@ -77,36 +73,35 @@ var (
 			Gks: []uint64{}, // the circuit does not require any galois keys (for homomorphic rotation)
 		},
 		Circuits: map[circuits.Name]circuits.Circuit{
-			// defines a circuit named "mul-4-dec" that multiplies 4 inputs and decrypts the result
-			"mul-4-dec": func(rt circuits.Runtime) error {
+			// defines a circuit named "mul-4" that multiplies 4 inputs. Its interface (inputs, outputs
+			// and required keys) is derived by symbolic execution of the function: the relinearization
+			// key is inferred from the use of MulRelinNew.
+			"mul-4": circuits.FromFunc(func(rt circuits.Runtime) error {
 
-				// reads the inputs from the parties. The node ids can be place-holders and the mapping actual ids are provided
-				// when querying for a circuit's execution.
+				// declares the inputs of the parties. The party ids are place-holders, the mapping to actual
+				// node ids is provided when requesting the circuit's evaluation.
 				in0, in1, in2, in3 := rt.Input("//p0/in"), rt.Input("//p1/in"), rt.Input("//p2/in"), rt.Input("//p3/in")
 
+				// declares the output of the circuit, owned by the evaluator
+				out := rt.Output("prod")
+
 				// computes the product between all inputs
-				opRes := rt.NewOperand("//eval/prod")
-				if err := rt.EvalLocal(true, nil, func(eval he.Evaluator) error {
-					var ctmul01, ctmul23 *rlwe.Ciphertext
-					var err error
-					if ctmul01, err = eval.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext); err != nil {
-						return err
-					}
-					if ctmul23, _ = eval.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext); err != nil {
-						return err
-					}
-					opRes.Ciphertext, err = eval.MulRelinNew(ctmul01, ctmul23)
-					return err
-				}); err != nil {
+				eval := rt.Evaluator()
+				ctmul01, err := eval.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
+				if err != nil {
 					return err
 				}
-
-				// decrypts the result with result receiver id "rec". The node id can be a place-holder and the actual id is provided
-				// when querying for a circuit's execution.
-				return rt.DEC(*opRes, "rec", map[string]string{
-					"smudging": "40.0", // use 40 bits of smudging.
-				})
-			},
+				ctmul23, err := eval.MulRelinNew(in2.Get().Ciphertext, in3.Get().Ciphertext)
+				if err != nil {
+					return err
+				}
+				res, err := eval.MulRelinNew(ctmul01, ctmul23)
+				if err != nil {
+					return err
+				}
+				out.Set(res)
+				return nil
+			}),
 		},
 	}
 )
@@ -144,83 +139,114 @@ func main() {
 	}
 	config.ID = nodeID
 
-	// creates an InputProvider function from the node's private input
-	var ip compute.InputProvider
-	if nodeID == helperID {
-		ip = compute.NoInput // the cloud has no input, the compute.NoInput InputProvider is used
-	} else {
-		ip = func(ctx context.Context, sess sessions.Session, cd circuits.Descriptor) (chan circuits.Input, error) {
-			bgvParams := sess.Params.(bgv.Parameters)
-			in := make([]uint64, bgvParams.MaxSlots())
-			// the session nodes create their input by replicating the user-provided input for each slot
-			for i := range in {
-				in[i] = input % bgvParams.PlaintextModulus()
-			}
-			inchan := make(chan circuits.Input, 1)
-			inchan <- circuits.Input{OperandLabel: circuits.OperandLabel(fmt.Sprintf("//%s/%s/in", nodeID, cd.CircuitID)), OperandValue: in}
-			close(inchan)
-			return inchan, nil
-		}
-	}
-
-	ctx := sessions.NewBackgroundContext(config.SessionParameters[0].ID)
-	var cdescs chan<- circuits.Descriptor
-	var outs <-chan circuits.Output
-	var err error
-	var statsProvider interface{ GetStats() helium.NetStats }
-
-	// runs the app on a new node
-	start := time.Now()
-	if nodeID == helperID {
-		statsProvider, cdescs, outs, err = helium.RunHeliumServer(ctx, config, nodelist, app, ip)
-	} else {
-		secrets := loadSecrets(config.SessionParameters[0], nodeID)
-		statsProvider, outs, err = helium.RunHeliumClient(ctx, config, nodelist, secrets, app, ip)
-	}
-	if err != nil {
-		log.Fatalf("could not run node: %s", err)
-	}
-
-	// the helper node starts the computation by sending a circuit description to the cdescs channel
-	if nodeID == helperID {
-		cdescs <- circuits.Descriptor{
-			Signature: circuits.Signature{Name: circuits.Name("mul-4-dec")}, // the name of the circuit to be evaluated
-			CircuitID: "mul-4-dec-0",                                        // a unique, user-defined id for the circuit
-			NodeMapping: map[string]sessions.NodeID{ // the mapping from node ids in the circuit to actual node ids
-				"p0":   "node-1",
-				"p1":   "node-2",
-				"p2":   "node-3",
-				"p3":   "node-4",
-				"eval": "helper",
-				"rec":  "helper"},
-			Evaluator: "helper", // the id of the circuit evaluator
-		}
-		close(cdescs) // when no more circuits evaluation are required, the user closes the cdesc channel
-	}
-
 	params, err := bgv.NewParametersFromLiteral(sessionParams.FHEParameters.(bgv.ParametersLiteral))
 	if err != nil {
 		log.Fatalf("%s | [main] error getting session parameters: %v\n", nodeID, err)
 	}
 	encoder := bgv.NewEncoder(params)
 
-	// outputs are received on the outputs channel. The output is a Lattigo rlwe.Plaintext.
-	out, hasOut := <-outs
-
-	if hasOut {
-		pt := &rlwe.Plaintext{Element: out.Ciphertext.Element, Value: out.Ciphertext.Value[0]}
-		pt.IsNTT = true
-		res := make([]uint64, params.MaxSlots())
-		err = encoder.Decode(pt, res)
-		if err != nil {
-			log.Fatalf("%s | [main] error decoding output: %v\n", nodeID, err)
+	// creates an InputProvider function from the node's private input
+	var ip circuits.InputProvider
+	if nodeID == helperID {
+		ip = circuits.NoInput // the cloud has no input, the circuits.NoInput InputProvider is used
+	} else {
+		ip = func(ctx context.Context, cd circuits.Descriptor, ids []circuits.OperandID) (<-chan circuits.Input, error) {
+			in := make([]uint64, params.MaxSlots())
+			// the session nodes create their input by replicating the user-provided input for each slot
+			for i := range in {
+				in[i] = input % params.PlaintextModulus()
+			}
+			inchan := make(chan circuits.Input, len(ids))
+			for _, id := range ids {
+				inchan <- circuits.Input{ID: id, Value: in}
+			}
+			close(inchan)
+			return inchan, nil
 		}
-		fmt.Printf("%v\n", res)
 	}
 
-	stats := statsProvider.GetStats()
+	ctx := sessions.NewBackgroundContext(config.SessionParameters[0].ID)
+	start := time.Now()
+
+	if nodeID == helperID {
+		runHelper(ctx, config, ip, encoder, params)
+	} else {
+		runPeer(ctx, config, ip)
+	}
+
 	fmt.Printf("TimeStats: %fs\n", time.Since(start).Seconds())
-	fmt.Println(stats)
+}
+
+// runHelper runs the helper node. The helper acts as the application: it requests the
+// evaluation of the circuit, then the decryption of its output to itself.
+func runHelper(ctx context.Context, config helium.Config, ip circuits.InputProvider, encoder *bgv.Encoder, params bgv.Parameters) {
+	hsv, err := helium.RunHeliumServer(ctx, config, nodelist, app, ip)
+	if err != nil {
+		log.Fatalf("could not run node: %s", err)
+	}
+
+	// requests the evaluation of the circuit
+	cd := circuits.Descriptor{
+		Signature: circuits.Signature{Name: "mul-4"}, // the name of the circuit to be evaluated
+		CircuitID: "mul-4-0",                         // a unique, user-defined id for the circuit evaluation
+		NodeMapping: map[string]sessions.NodeID{ // the mapping from party ids in the circuit to actual node ids
+			"p0": "node-1",
+			"p1": "node-2",
+			"p2": "node-3",
+			"p3": "node-4",
+		},
+		Evaluator: "helper", // the id of the circuit evaluator
+	}
+	if err := hsv.Evaluate(ctx, cd); err != nil {
+		log.Fatalf("%s | [main] cannot evaluate circuit: %v\n", nodeID, err)
+	}
+	if _, err := hsv.Circuits().AwaitCompleted(ctx, cd.CircuitID); err != nil {
+		log.Fatalf("%s | [main] circuit evaluation failed: %v\n", nodeID, err)
+	}
+
+	// requests the decryption of the output to the helper
+	outID := circuits.NewOperandID("helper", cd.CircuitID, "prod")
+	decSig := protocols.Signature{Type: protocols.DEC, Args: map[string]string{
+		"op":       string(outID),
+		"target":   string(helperID),
+		"smudging": "40.0", // use 40 bits of smudging.
+	}}
+	if err := hsv.RunSignature(ctx, decSig); err != nil {
+		log.Fatalf("%s | [main] cannot run decryption: %v\n", nodeID, err)
+	}
+	pd, err := hsv.Protocols().AwaitCompleted(ctx, decSig)
+	if err != nil {
+		log.Fatalf("%s | [main] decryption failed: %v\n", nodeID, err)
+	}
+	pt, err := hsv.Protocols().DecryptOutput(ctx, pd)
+	if err != nil {
+		log.Fatalf("%s | [main] cannot decrypt output: %v\n", nodeID, err)
+	}
+
+	res := make([]uint64, params.MaxSlots())
+	if err := encoder.Decode(pt, res); err != nil {
+		log.Fatalf("%s | [main] error decoding output: %v\n", nodeID, err)
+	}
+	fmt.Printf("%v\n", res)
+
+	// terminates the coordination
+	if err := hsv.Close(ctx); err != nil {
+		log.Fatalf("%s | [main] error closing: %v\n", nodeID, err)
+	}
+	hsv.Wait()
+	fmt.Println(hsv.GetStats())
+}
+
+// runPeer runs a peer node: it takes part in the setup, provides its input to the circuit
+// and to the decryption protocol, until the helper terminates the coordination.
+func runPeer(ctx context.Context, config helium.Config, ip circuits.InputProvider) {
+	secrets := loadSecrets(config.SessionParameters[0], nodeID)
+	hc, err := helium.RunHeliumClient(ctx, config, nodelist, secrets, app, ip)
+	if err != nil {
+		log.Fatalf("could not run node: %s", err)
+	}
+	hc.Wait()
+	fmt.Println(hc.GetStats())
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.

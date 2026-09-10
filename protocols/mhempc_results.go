@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
 // GetAggregationOutput returns the aggregated share of the protocol described by pd.
@@ -200,6 +202,43 @@ func (e *MHEMPC) getInput(ctx context.Context, pd Descriptor) (Input, error) {
 	default:
 		return nil, fmt.Errorf("no input for protocol type %s", pd.Signature.Type)
 	}
+}
+
+// DecryptOutput returns the plaintext output of the decryption protocol described by pd,
+// as seen by its target. The method retrieves the protocol output (see GetOutput), which
+// is encrypted under the target's share of the group secret key, and decrypts it. A target
+// that has no secret in the session (e.g., the helper node) obtains the plaintext directly.
+func (e *MHEMPC) DecryptOutput(ctx context.Context, pd Descriptor) (*rlwe.Plaintext, error) {
+	if pd.Signature.Type != DEC {
+		return nil, fmt.Errorf("protocol %s is not a decryption protocol", pd.HID())
+	}
+	if !e.isKeySwitchReceiver(pd) {
+		return nil, fmt.Errorf("node %s is not the target of %s", e.self, pd.HID())
+	}
+
+	out, err := e.GetOutput(ctx, pd)
+	if err != nil {
+		return nil, err
+	}
+	ct, isCt := out.Result.(*rlwe.Ciphertext)
+	if !isCt {
+		return nil, fmt.Errorf("output of %s is not a ciphertext: %T", pd.HID(), out.Result)
+	}
+
+	pt := rlwe.NewPlaintext(e.sess.Params, ct.Level())
+	if !e.sess.Contains(e.self) {
+		// the target has no secret key: the output is encrypted under the zero key
+		pt.Value.Copy(ct.Value[0])
+		*pt.MetaData = *ct.MetaData
+		return pt, nil
+	}
+
+	sk, err := e.sess.GetSecretKeyForGroup(pd.Participants)
+	if err != nil {
+		return nil, fmt.Errorf("cannot get group secret key: %w", err)
+	}
+	rlwe.NewDecryptor(e.sess.Params, sk).Decrypt(ct, pt)
+	return pt, nil
 }
 
 // rkg1Descriptor returns the descriptor of the first round of the RKG protocol described by pd.

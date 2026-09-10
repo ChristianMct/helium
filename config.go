@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/services/compute"
 	"github.com/ChristianMct/helium/sessions"
 )
 
@@ -22,7 +22,7 @@ type Config struct {
 	SessionParameters []sessions.Parameters
 	ProtocolsConfig   protocols.Config            // configuration of the node's protocol engine
 	CoordinatorConfig protocols.CoordinatorConfig // configuration of the coordinator (helper only)
-	ComputeConfig     compute.ServiceConfig
+	CircuitsConfig    circuits.Config             // configuration of the node's circuit engine
 	ObjectStoreConfig objectstore.Config
 	TLSConfig         TLSConfig
 }
