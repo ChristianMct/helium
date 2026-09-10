@@ -6,13 +6,13 @@ import (
 	"context"
 	"log"
 	"net"
-
-	"github.com/ChristianMct/helium/circuits"
 )
 
 // RunHeliumServer creates a helium server (helper node) from the config, starts serving on
 // the helper's address from the node list, and runs the app on it (see HeliumServer.Run).
-func RunHeliumServer(ctx context.Context, config Config, nl List, app App, ip circuits.InputProvider) (hsv *HeliumServer, err error) {
+// It returns once the app has run, with the server (e.g., for statistics) and the error
+// returned by Run.
+func RunHeliumServer(ctx context.Context, config Config, nl List, app App) (hsv *HeliumServer, err error) {
 
 	hsv, err = NewHeliumServer(config, nl)
 	if err != nil {
@@ -32,15 +32,13 @@ func RunHeliumServer(ctx context.Context, config Config, nl List, app App, ip ci
 		}
 	}()
 
-	if err := hsv.Run(ctx, app, ip); err != nil {
-		return nil, err
-	}
-	return hsv, nil
+	return hsv, hsv.Run(ctx, app)
 }
 
 // RunHeliumClient creates a helium client (peer node) from the config, connects it to the
-// helper and runs the app on it (see HeliumClient.Run).
-func RunHeliumClient(ctx context.Context, config Config, nl List, secrets SecretProvider, app App, ip circuits.InputProvider) (hc *HeliumClient, err error) {
+// helper and runs the app on it (see HeliumClient.Run). It returns once the app has run,
+// with the client (e.g., for statistics) and the error returned by Run.
+func RunHeliumClient(ctx context.Context, config Config, nl List, secrets SecretProvider, app App) (hc *HeliumClient, err error) {
 
 	hc, err = NewHeliumClient(config, nl, secrets)
 	if err != nil {
@@ -53,8 +51,5 @@ func RunHeliumClient(ctx context.Context, config Config, nl List, secrets Secret
 	}
 
 	log.Println("[client] running node")
-	if err := hc.Run(ctx, app, ip); err != nil {
-		return nil, err
-	}
-	return hc, nil
+	return hc, hc.Run(ctx, app)
 }

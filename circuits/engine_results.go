@@ -70,21 +70,25 @@ func (e *Engine) GetOperand(ctx context.Context, id OperandID) (*Operand, error)
 	return op, nil
 }
 
-// AwaitCompleted blocks until the circuit with the given id has completed,
-// and returns its descriptor.
+// AwaitCompleted blocks until the circuit with the given id has terminated. It returns
+// the circuit's descriptor if it completed, and an error if it failed.
 func (e *Engine) AwaitCompleted(ctx context.Context, cid sessions.CircuitID) (Descriptor, error) {
 	e.mu.Lock()
 	if cd, has := e.completed[cid]; has {
 		e.mu.Unlock()
 		return cd, nil
 	}
-	w := make(chan Descriptor, 1)
+	if cd, has := e.failed[cid]; has {
+		e.mu.Unlock()
+		return Descriptor{}, fmt.Errorf("circuit %s failed", cd.HID())
+	}
+	w := make(chan completion, 1)
 	e.waiters[cid] = append(e.waiters[cid], w)
 	e.mu.Unlock()
 
 	select {
-	case cd := <-w:
-		return cd, nil
+	case c := <-w:
+		return c.cd, c.err
 	case <-ctx.Done():
 		return Descriptor{}, ctx.Err()
 	}

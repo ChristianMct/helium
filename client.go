@@ -49,7 +49,6 @@ type HeliumClient struct {
 	past      []Event
 	protoLive chan protocols.Event
 	circLive  chan circuits.Event
-	done      chan struct{}
 
 	*grpc.ClientConn
 	rpc pb.HeliumClient
@@ -71,7 +70,6 @@ func NewHeliumClient(config Config, nl List, secrets SecretProvider) (*HeliumCli
 	hc.helperID = config.HelperID
 	hc.helperAddress = nl.AddressOf(config.HelperID)
 	hc.config = config
-	hc.done = make(chan struct{})
 
 	sp := config.SessionParameters[0]
 	var sec *sessions.Secrets
@@ -129,7 +127,7 @@ func (hc *HeliumClient) Protocols() *protocols.MHEMPC {
 	return hc.engine
 }
 
-// Compute returns the client's compute engine.
+// Circuits returns the client's circuit engine.
 func (hc *HeliumClient) Circuits() *circuits.Engine {
 	return hc.compute
 }
@@ -181,56 +179,52 @@ func (hc *HeliumClient) Close() error {
 	return hc.ClientConn.Close()
 }
 
-// Run starts the app on the peer node: the node takes part in the setup protocols and in the
-// circuits announced by the helper, providing its inputs through ip. The method returns
-// immediately; Wait blocks until the helper terminates the coordination.
-func (hc *HeliumClient) Run(ctx context.Context, app App, ip circuits.InputProvider) error {
+// Run runs the app on the peer node: the node takes part in the setup protocols, then runs
+// the app's Main function, through which it takes part in the circuits and protocols the
+// application requests. The method returns once Main has returned and the helper has
+// terminated the coordination, with Main's error, if any.
+func (hc *HeliumClient) Run(ctx context.Context, app App) error {
 	if hc.rpc == nil {
 		return fmt.Errorf("client is not connected")
 	}
 	if err := hc.compute.RegisterCircuits(app.Circuits); err != nil {
 		return fmt.Errorf("could not register all circuits: %w", err)
 	}
-	hc.compute.SetInputProvider(ip)
 
 	ctx = hc.nodeContext(ctx)
+	rt := newRuntime(hc.id, hc.sess, hc.engine, hc.compute, nil)
 
 	if err := hc.openEventStream(ctx); err != nil {
 		return fmt.Errorf("cannot register to the helper: %w", err)
 	}
 
+	protoCoord := &gatedCoordinator[protocols.Event]{register: hc.registerProtocols, publish: hc.publishProtocolEvent, g: rt.protoGate}
+	circCoord := &gatedCoordinator[circuits.Event]{register: hc.registerCircuits, publish: hc.publishCircuitEvent, g: rt.circGate}
 	var engines sync.WaitGroup
+	var protoErr, circErr error
 	engines.Add(2)
 	go func() {
 		defer engines.Done()
-		if err := hc.engine.Run(ctx, hc); err != nil {
-			hc.Logf("protocol engine error: %s", err)
+		if protoErr = hc.engine.Run(ctx, protoCoord); protoErr != nil {
+			hc.Logf("protocol engine error: %s", protoErr)
 		}
 	}()
 	go func() {
 		defer engines.Done()
-		if err := hc.compute.Run(ctx, &clientCircuitCoordinator{hc}); err != nil {
-			hc.Logf("compute engine error: %s", err)
+		if circErr = hc.compute.Run(ctx, circCoord); circErr != nil {
+			hc.Logf("circuit engine error: %s", circErr)
 		}
 	}()
-	go func() {
-		engines.Wait()
-		close(hc.done)
-	}()
 
-	return nil
-}
+	var mainErr error
+	if app.Main != nil {
+		mainErr = app.Main(ctx, rt)
+		hc.Logf("app main returned (err: %v)", mainErr)
+	}
+	rt.finish()
+	engines.Wait()
 
-// Wait blocks until the engines have returned, i.e., once the helper has terminated
-// the coordination.
-func (hc *HeliumClient) Wait() {
-	<-hc.done
-}
-
-// EvalCircuit requests the evaluation of a circuit by the helium server.
-func (hc *HeliumClient) EvalCircuit(ctx context.Context, cd circuits.Descriptor) error {
-	_, err := hc.rpc.EvalCircuit(hc.outgoingContext(ctx), api.GetCircuitDesc(cd))
-	return err
+	return errors.Join(mainErr, protoErr, circErr)
 }
 
 // nodeContext returns a context with the node and session ids of the client.
@@ -314,10 +308,10 @@ func (hc *HeliumClient) openEventStream(ctx context.Context) error {
 	return nil
 }
 
-// ---- protocols.Coordinator interface (for the client's protocol engine)
+// ---- coordination streams (for the client's engines, see gatedCoordinator)
 
-// Register implements protocols.Coordinator.
-func (hc *HeliumClient) Register(_ context.Context) (past []protocols.Event, live <-chan protocols.Event, err error) {
+// registerProtocols returns the protocol events of the helper's log.
+func (hc *HeliumClient) registerProtocols(_ context.Context) (past []protocols.Event, live <-chan protocols.Event, err error) {
 	hc.streamMu.Lock()
 	defer hc.streamMu.Unlock()
 	if hc.protoLive == nil {
@@ -331,32 +325,30 @@ func (hc *HeliumClient) Register(_ context.Context) (past []protocols.Event, liv
 	return past, hc.protoLive, nil
 }
 
-// Publish implements protocols.Coordinator. Peer nodes never aggregate protocols in the
+// publishProtocolEvent rejects the event: peer nodes never aggregate protocols in the
 // helper-assisted setting, hence never publish events.
-func (hc *HeliumClient) Publish(_ context.Context, ev protocols.Event) error {
+func (hc *HeliumClient) publishProtocolEvent(_ context.Context, ev protocols.Event) error {
 	return fmt.Errorf("peer nodes cannot publish events (event: %s)", ev)
 }
 
-// clientCircuitCoordinator is the circuits.Coordinator of the client's compute engine.
-type clientCircuitCoordinator struct {
-	hc *HeliumClient
-}
-
-func (cc *clientCircuitCoordinator) Register(_ context.Context) (past []circuits.Event, live <-chan circuits.Event, err error) {
-	cc.hc.streamMu.Lock()
-	defer cc.hc.streamMu.Unlock()
-	if cc.hc.circLive == nil {
+// registerCircuits returns the circuit events of the helper's log.
+func (hc *HeliumClient) registerCircuits(_ context.Context) (past []circuits.Event, live <-chan circuits.Event, err error) {
+	hc.streamMu.Lock()
+	defer hc.streamMu.Unlock()
+	if hc.circLive == nil {
 		return nil, nil, fmt.Errorf("event stream not open")
 	}
-	for _, ev := range cc.hc.past {
+	for _, ev := range hc.past {
 		if ev.Circuit != nil {
 			past = append(past, *ev.Circuit)
 		}
 	}
-	return past, cc.hc.circLive, nil
+	return past, hc.circLive, nil
 }
 
-func (cc *clientCircuitCoordinator) Publish(_ context.Context, ev circuits.Event) error {
+// publishCircuitEvent rejects the event: peer nodes never evaluate circuits in the
+// helper-assisted setting, hence never publish events.
+func (hc *HeliumClient) publishCircuitEvent(_ context.Context, ev circuits.Event) error {
 	return fmt.Errorf("peer nodes cannot publish circuit events (event: %s)", ev)
 }
 

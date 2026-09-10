@@ -2,6 +2,7 @@ package helium
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -30,12 +31,12 @@ const (
 )
 
 // HeliumServer is the helper node of the helper-assisted setting. It runs the
-// protocol engine, the coordinator and the compute engine of the helper, owns
+// protocol engine, the coordinator and the circuit engine of the helper, owns
 // the node-level event log, and serves the peer nodes over gRPC.
 //
-// After Run, the application drives the server through Evaluate, RunSignature
-// and the Protocols and Compute engines; Close terminates the coordination.
-// In the current implementation, a server cannot be restarted after it is closed.
+// Run runs an App on the server: the setup phase, then the app's Main function
+// through which the application evaluates circuits and runs protocols (see Runtime).
+// In the current implementation, a server cannot be run twice.
 type HeliumServer struct {
 	id       sessions.NodeID
 	config   Config
@@ -49,11 +50,6 @@ type HeliumServer struct {
 
 	// node-level event log
 	log *coordinator.Log[Event]
-
-	runCtx    context.Context
-	closeOnce sync.Once
-	closing   chan struct{}
-	done      chan struct{}
 
 	// grpc API
 	*grpc.Server
@@ -105,8 +101,6 @@ func NewHeliumServer(config Config, nl List) (*HeliumServer, error) {
 	}
 
 	hsv.log = coordinator.NewLog[Event]()
-	hsv.closing = make(chan struct{})
-	hsv.done = make(chan struct{})
 
 	interceptors := []grpc.UnaryServerInterceptor{
 		// t.serverSigChecker,
@@ -144,16 +138,17 @@ func (hsv *HeliumServer) Protocols() *protocols.MHEMPC {
 	return hsv.engine
 }
 
-// Compute returns the helper's compute engine.
+// Circuits returns the helper's circuit engine.
 func (hsv *HeliumServer) Circuits() *circuits.Engine {
 	return hsv.compute
 }
 
-// Run starts the app on the helper node: it registers the app's circuits, starts the
-// engines and runs the setup phase described by the app. The method returns immediately;
-// the application then requests circuit evaluations (Evaluate) and protocols
-// (RunSignature), and terminates the coordination with Close.
-func (hsv *HeliumServer) Run(ctx context.Context, app App, ip circuits.InputProvider) error {
+// Run runs the app on the helper node: it registers the app's circuits, starts the
+// engines, runs the setup phase described by the app and then the app's Main function,
+// through which the application requests circuit evaluations and protocols. Once Main
+// returns, the helper terminates the coordination (the peers' event streams end once
+// all circuits and protocols are done) and Run returns Main's error, if any.
+func (hsv *HeliumServer) Run(ctx context.Context, app App) error {
 
 	if app.SetupDescription == nil {
 		return fmt.Errorf("app must provide a setup description") // TODO: inference of setup description from registered circuits.
@@ -161,10 +156,9 @@ func (hsv *HeliumServer) Run(ctx context.Context, app App, ip circuits.InputProv
 	if err := hsv.compute.RegisterCircuits(app.Circuits); err != nil {
 		return fmt.Errorf("could not register all circuits: %w", err)
 	}
-	hsv.compute.SetInputProvider(ip)
 
 	ctx = hsv.nodeContext(ctx)
-	hsv.runCtx = ctx
+	rt := newRuntime(hsv.id, hsv.sess, hsv.engine, hsv.compute, hsv)
 
 	// restores the completed protocols from the persistent state
 	sigs := SetupDescriptionToSignatureList(*app.SetupDescription)
@@ -192,24 +186,23 @@ func (hsv *HeliumServer) Run(ctx context.Context, app App, ip circuits.InputProv
 		hsv.Logf("event log closed")
 	}()
 
-	// runs the engines
+	// runs the engines on the gated coordination streams
+	protoCoord := &gatedCoordinator[protocols.Event]{register: hsv.coord.Register, publish: hsv.coord.Publish, g: rt.protoGate}
+	circCoord := &gatedCoordinator[circuits.Event]{register: hsv.registerCircuits, publish: hsv.publishCircuitEvent, g: rt.circGate}
 	var engines sync.WaitGroup
+	var protoErr, circErr error
 	engines.Add(2)
 	go func() {
 		defer engines.Done()
-		if err := hsv.engine.Run(ctx, hsv.coord); err != nil {
-			hsv.Logf("protocol engine error: %s", err)
+		if protoErr = hsv.engine.Run(ctx, protoCoord); protoErr != nil {
+			hsv.Logf("protocol engine error: %s", protoErr)
 		}
 	}()
 	go func() {
 		defer engines.Done()
-		if err := hsv.compute.Run(ctx, &serverCircuitCoordinator{hsv}); err != nil {
-			hsv.Logf("compute engine error: %s", err)
+		if circErr = hsv.compute.Run(ctx, circCoord); circErr != nil {
+			hsv.Logf("circuit engine error: %s", circErr)
 		}
-	}()
-	go func() {
-		engines.Wait()
-		close(hsv.done)
 	}()
 
 	// runs the setup phase
@@ -225,19 +218,25 @@ func (hsv *HeliumServer) Run(ctx context.Context, app App, ip circuits.InputProv
 	}
 	hsv.Logf("running setup phase: %d signatures restored, %d to run", len(restored), nRun)
 
-	return nil
+	// runs the application
+	var mainErr error
+	if app.Main != nil {
+		mainErr = app.Main(ctx, rt)
+		hsv.Logf("app main returned (err: %v)", mainErr)
+	}
+	rt.finish()
+
+	// terminates the coordination: waits for the running circuits to complete, then closes
+	// the coordinator, which closes the event log once all protocols are done
+	closeErr := hsv.compute.AwaitIdle(ctx)
+	hsv.coord.Close()
+	engines.Wait()
+
+	return errors.Join(mainErr, closeErr, protoErr, circErr)
 }
 
-// Evaluate requests the evaluation of the circuit described by cd by this node.
-func (hsv *HeliumServer) Evaluate(_ context.Context, cd circuits.Descriptor) error {
-	select {
-	case <-hsv.closing:
-		return fmt.Errorf("the helper does not accept circuits anymore")
-	default:
-	}
-	if cd.Evaluator != hsv.id {
-		return fmt.Errorf("node %s is not the evaluator of circuit %s", hsv.id, cd.HID())
-	}
+// startCircuit implements starter: it appends the Started event of the circuit to the log.
+func (hsv *HeliumServer) startCircuit(_ context.Context, cd circuits.Descriptor) error {
 	if err := hsv.compute.Validate(cd); err != nil {
 		return err
 	}
@@ -245,31 +244,9 @@ func (hsv *HeliumServer) Evaluate(_ context.Context, cd circuits.Descriptor) err
 	return hsv.log.Append(Event{Circuit: &ev})
 }
 
-// RunSignature requests the execution of a protocol with the given signature, with this node
-// as aggregator (see protocols.CentralCoordinator.RunSignature).
-func (hsv *HeliumServer) RunSignature(ctx context.Context, sig protocols.Signature) error {
-	return hsv.coord.RunSignature(hsv.nodeContext(ctx), sig)
-}
-
-// Close terminates the coordination: it waits for the running circuits to complete, then
-// closes the coordinator, which closes the event log once all protocols are done. The
-// peers' event streams end at that point. Use Wait to wait for the engines to return.
-func (hsv *HeliumServer) Close(ctx context.Context) error {
-	var err error
-	hsv.closeOnce.Do(func() {
-		close(hsv.closing)
-		if err = hsv.compute.AwaitIdle(ctx); err != nil {
-			return
-		}
-		hsv.coord.Close()
-	})
-	return err
-}
-
-// Wait blocks until the engines have returned, i.e., after Close and once all
-// protocols and circuits are done.
-func (hsv *HeliumServer) Wait() {
-	<-hsv.done
+// startProtocol implements starter: it requests the execution of the protocol to the coordinator.
+func (hsv *HeliumServer) startProtocol(ctx context.Context, sig protocols.Signature) error {
+	return hsv.coord.RunSignature(ctx, sig)
 }
 
 // nodeContext returns a context with the node and session ids of the server.
@@ -296,14 +273,10 @@ func (hsv *HeliumServer) Log() []Event {
 	return hsv.log.Events()
 }
 
-// serverCircuitCoordinator is the circuits.Coordinator of the helper's compute engine,
-// backed by the node-level log.
-type serverCircuitCoordinator struct {
-	hsv *HeliumServer
-}
-
-func (sc *serverCircuitCoordinator) Register(ctx context.Context) (past []circuits.Event, live <-chan circuits.Event, err error) {
-	p, l := sc.hsv.log.Register(ctx)
+// registerCircuits is the register function of the helper's circuit coordinator, backed
+// by the node-level log.
+func (hsv *HeliumServer) registerCircuits(ctx context.Context) (past []circuits.Event, live <-chan circuits.Event, err error) {
+	p, l := hsv.log.Register(ctx)
 	for _, ev := range p {
 		if ev.Circuit != nil {
 			past = append(past, *ev.Circuit)
@@ -326,8 +299,9 @@ func (sc *serverCircuitCoordinator) Register(ctx context.Context) (past []circui
 	return past, ch, nil
 }
 
-func (sc *serverCircuitCoordinator) Publish(_ context.Context, ev circuits.Event) error {
-	return sc.hsv.log.Append(Event{Circuit: &ev})
+// publishCircuitEvent is the publish function of the helper's circuit coordinator.
+func (hsv *HeliumServer) publishCircuitEvent(_ context.Context, ev circuits.Event) error {
+	return hsv.log.Append(Event{Circuit: &ev})
 }
 
 // noShareTransport is the protocols.ShareTransport of the helper's engine: the helper
@@ -492,16 +466,6 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Cipherte
 		return nil, status.Errorf(codes.FailedPrecondition, "%s", err)
 	}
 	return &pb.CiphertextID{CiphertextId: string(op.ID)}, nil
-}
-
-// EvalCircuit is a gRPC handler for the EvalCircuit method of the Helium service.
-// It requests the evaluation of the circuit by the helper.
-func (hsv *HeliumServer) EvalCircuit(ctx context.Context, apicd *pb.CircuitDescriptor) (*pb.Void, error) {
-	cd := api.ToCircuitDesc(apicd)
-	if err := hsv.Evaluate(ctx, *cd); err != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "%s", err)
-	}
-	return &pb.Void{}, nil
 }
 
 // Logf logs a message with the server's prefix.

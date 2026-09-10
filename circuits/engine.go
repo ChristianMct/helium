@@ -85,7 +85,7 @@ type Engine struct {
 	running     map[sessions.CircuitID]*runningCircuit
 	completed   map[sessions.CircuitID]Descriptor
 	failed      map[sessions.CircuitID]Descriptor
-	waiters     map[sessions.CircuitID][]chan Descriptor
+	waiters     map[sessions.CircuitID][]chan completion
 	idleWaiters []chan struct{}
 	operands    map[OperandID]*Operand
 	outbox      []Event
@@ -144,7 +144,7 @@ func NewEngine(self sessions.NodeID, sess *sessions.Session, conf Config, trans 
 		running:   make(map[sessions.CircuitID]*runningCircuit),
 		completed: make(map[sessions.CircuitID]Descriptor),
 		failed:    make(map[sessions.CircuitID]Descriptor),
-		waiters:   make(map[sessions.CircuitID][]chan Descriptor),
+		waiters:   make(map[sessions.CircuitID][]chan completion),
 		operands:  make(map[OperandID]*Operand),
 		notify:    make(chan struct{}, 1),
 		evalSem:   make(chan struct{}, conf.MaxEvaluation),
@@ -342,7 +342,7 @@ func (e *Engine) apply(ctx context.Context, ev Event) error {
 		if rc, has := e.running[cid]; has {
 			e.dropRunning(rc)
 		}
-		e.failed[cid] = cd
+		e.markFailed(cd)
 	default:
 		return fmt.Errorf("unknown event type: %d", ev.EventType)
 	}
@@ -381,9 +381,25 @@ func (e *Engine) markCompleted(cd Descriptor) {
 	delete(e.failed, cid)
 	e.completed[cid] = cd
 	for _, w := range e.waiters[cid] {
-		w <- cd
+		w <- completion{cd: cd}
 	}
 	delete(e.waiters, cid)
+}
+
+// markFailed records cd as failed and wakes up the waiters with an error.
+func (e *Engine) markFailed(cd Descriptor) {
+	cid := cd.CircuitID
+	e.failed[cid] = cd
+	for _, w := range e.waiters[cid] {
+		w <- completion{cd: cd, err: fmt.Errorf("circuit %s failed", cd.HID())}
+	}
+	delete(e.waiters, cid)
+}
+
+// completion is the result of waiting for a circuit's termination.
+type completion struct {
+	cd  Descriptor
+	err error
 }
 
 // reconcile derives the actions required by the current state:
@@ -487,7 +503,7 @@ func (e *Engine) failLocal(rc *runningCircuit, cause error) {
 		return // already terminated by an event
 	}
 	e.dropRunning(rc)
-	e.failed[rc.cd.CircuitID] = rc.cd
+	e.markFailed(rc.cd)
 	e.emit(Event{EventType: Failed, Descriptor: rc.cd})
 	e.changed()
 }

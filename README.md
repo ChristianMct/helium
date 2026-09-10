@@ -17,8 +17,9 @@ The code is expected to evolve without guaranteeing backward compatibility and i
 ## Synopsis
 Helium is a Go package that provides the types and methods to implement an end-to-end MHE application.
 Helium's main types are:
-- The `helium.App` type which lets the user define an application by specifying the required MHE setup and the circuits to be run.
-- The `helium.HeliumServer` (helper node) and `helium.HeliumClient` (peer node) types which run `helium.App` applications: they run the MHE setup phase and let the application request circuit evaluations and protocols (e.g., the decryption of a circuit's output).
+- The `helium.App` type which lets the user define an application by specifying the required MHE setup, the circuits, and the `Main` function run by every node.
+- The `helium.Runtime` type, the interface of the framework available to `Main`: it evaluates circuits and runs decryption protocols, blocking until they have completed. A node takes part only in the circuits and protocols its `Main` requests.
+- The `helium.HeliumServer` (helper node) and `helium.HeliumClient` (peer node) types which run `helium.App` applications: they run the MHE setup phase, then the application's `Main`.
 - Under the hood, two engines drive the nodes as state machines: `protocols.MHEMPC` executes the MHE protocols and `circuits.Engine` evaluates the circuits, both driven by the coordination events of the helper's `protocols.CentralCoordinator`.
 
 A circuit is a Go function mapping encrypted input operands to encrypted output operands. Its inputs, outputs and required
@@ -48,42 +49,42 @@ Here is an overview of an Helium application:
         return nil
       }),
     },
-  }
 
-  // the input provider is called by the framework for the node's inputs to a circuit
-  inputProvider = func(ctx context.Context, cd circuits.Descriptor, ids []circuits.OperandID) (<-chan circuits.Input, error) {
-      // ... user-defined logic to provide the inputs identified by ids
+    // the application's logic, run by every node
+    Main: func(ctx context.Context, rt *helium.Runtime) error {
+      // the evaluation of the circuit "mul-2" as "mul-2-0", by the helper, with p0 and p1 mapped to actual nodes
+      cd := circuits.Descriptor{
+        Signature:   circuits.Signature{Name: "mul-2"},
+        CircuitID:   "mul-2-0",
+        NodeMapping: map[string]sessions.NodeID{"p0": "node-1", "p1": "node-2"},
+        Evaluator:   "helper",
+      }
+
+      // the peers provide their input "in" (the helper has none); the call blocks until the circuit has completed
+      var inputs map[string]any
+      if rt.ID() != "helper" {
+        inputs = map[string]any{"in": []uint64{ /* ... */ }}
+      }
+      outs, err := rt.Evaluate(ctx, cd, inputs)
+
+      // the decryption of the output "prod" to the helper, with 40 bits of smudging noise; the peers
+      // take part in the protocol, the helper obtains the plaintext
+      pt, err := rt.Decrypt(ctx, outs["prod"], "helper", 40)
+      if rt.ID() == "helper" {
+        // ... decodes pt, a Lattigo plaintext
+      }
+      return err
+    },
   }
 
   ctx, config, nodelist := // ... (omitted config, usually loaded from files or command-line flags)
 
 	if nodeID == helperID {
-    // the helper runs the server-side of helium and acts as the application
-		hsv, err := helium.RunHeliumServer(ctx, config, nodelist, app, inputProvider)
-
-    // requests the evaluation of the circuit "mul-2" as "mul-2-0", by the helper, with p0 and p1 mapped to actual nodes
-    cd := circuits.Descriptor{
-      Signature:   circuits.Signature{Name: "mul-2"},
-      CircuitID:   "mul-2-0",
-      NodeMapping: map[string]sessions.NodeID{"p0": "node-1", "p1": "node-2"},
-      Evaluator:   "helper",
-    }
-    err = hsv.Evaluate(ctx, cd)
-    _, err = hsv.Circuits().AwaitCompleted(ctx, cd.CircuitID)
-
-    // requests the decryption of the output "//helper/mul-2-0/prod" to the helper
-    decSig := protocols.Signature{Type: protocols.DEC, Args: map[string]string{
-      "op": "//helper/mul-2-0/prod", "target": "helper", "smudging": "40.0",
-    }}
-    err = hsv.RunSignature(ctx, decSig)
-    pd, err := hsv.Protocols().AwaitCompleted(ctx, decSig)
-    pt, err := hsv.Protocols().DecryptOutput(ctx, pd) // the decrypted result, as a Lattigo plaintext
-
-    err = hsv.Close(ctx) // terminates the coordination
+    // the helper runs the server-side of helium; the call returns once Main has returned and the coordination is done
+		hsv, err := helium.RunHeliumServer(ctx, config, nodelist, app)
 	} else {
-    // non-helper nodes run the client side, until the helper terminates the coordination
-		hc, err := helium.RunHeliumClient(ctx, config, nodelist, secrets, app, inputProvider)
-    hc.Wait()
+    // non-helper nodes run the client side; the call returns once Main has returned and the helper has terminated
+		hc, err := helium.RunHeliumClient(ctx, config, nodelist, secrets, app)
 	}
 ```
 

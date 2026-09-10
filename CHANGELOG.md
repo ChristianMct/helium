@@ -10,6 +10,11 @@ This update collapses the MHE-MPC protocol logic, previously spread over the `no
 
 ### Added
 
+- The `helium.App.Main` function and the `helium.Runtime` type: every node runs `Main`, which
+  evaluates circuits (`Runtime.Evaluate`, providing the node's inputs) and decrypts operands
+  (`Runtime.Decrypt`) through blocking calls returning `helium.Operand` handles. A node takes part
+  only in the circuits and protocols its `Main` requests: the coordination events of a circuit or
+  protocol in which the node has a role are held until the matching `Runtime` call.
 - The `protocols.MHEMPC` type: a state machine executing the MHE protocols (in the aggregator,
   participant and receiver roles) as driven by the events of a `protocols.Coordinator`, and holding
   the protocols' results (fetched lazily from the aggregator when not available locally).
@@ -41,10 +46,12 @@ This update collapses the MHE-MPC protocol logic, previously spread over the `no
   `NewOperand`/`EvalLocal`/`DEC`/`PCKS`, `Runtime.Evaluator` returns an evaluator with the declared keys,
   and intermediate values are plain ciphertexts. The decryption of an output is requested by the
   application as a `DEC` protocol on the output's operand id.
-- `HeliumServer.Run` and `HeliumClient.Run` now start the node and return; the application drives the
-  server with `Evaluate`, `RunSignature`, the `Protocols` and `Circuits` engines, and `Close`. The
-  `cdescs`/`outs` channels are removed.
-- The `circuits.InputProvider` is called with the ids of the operands the node must provide.
+- `HeliumServer.Run` and `HeliumClient.Run` (and `RunHeliumServer`/`RunHeliumClient`) now run the
+  app's `Main` and return once the node is done; the input provider argument, the `cdescs`/`outs`
+  channels and the client-side circuit evaluation request are removed.
+- The `circuits.InputProvider` is called with the ids of the operands the node must provide; it is
+  now an engine-level mechanism fed by `Runtime.Evaluate`.
+- `circuits.Engine.AwaitCompleted` returns an error when the circuit has failed.
 - The `helium.HeliumServer` and `helium.HeliumClient` types now instantiate the session, the protocol
   engine, the coordinator (helper only), the circuit engine and the gRPC transport directly.
 - The `node.Config`, `node.App`, `node.List` and `node.SecretProvider` types moved to the `helium`
