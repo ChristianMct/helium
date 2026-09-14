@@ -58,10 +58,10 @@ var (
 	}
 
 	// the node list for the example system
-	nodelist = helper.List{
-		helper.Info{NodeID: "helper", Address: "helper:40000"},
-		helper.Info{NodeID: "node-1"}, helper.Info{NodeID: "node-2"},
-		helper.Info{NodeID: "node-3"}, helper.Info{NodeID: "node-4"},
+	nodelist = helium.NodeList{
+		helium.NodeInfo{NodeID: "helper", NodeAddress: "helper:40000"},
+		helium.NodeInfo{NodeID: "node-1"}, helium.NodeInfo{NodeID: "node-2"},
+		helium.NodeInfo{NodeID: "node-3"}, helium.NodeInfo{NodeID: "node-4"},
 	}
 
 	// the application defines the MHE circuits to be evaluated, their required setup, and the
@@ -157,7 +157,7 @@ var (
 
 var (
 	nodeID   helium.NodeID
-	nodeAddr helper.Address
+	nodeAddr helium.NodeAddress
 	helperID helium.NodeID = "helper"
 	input    uint64
 )

@@ -19,7 +19,7 @@ import (
 // address from the node list, and runs the app on it (see Server.Run). It returns
 // once the app has run, with the server (e.g., for statistics) and the error
 // returned by Run.
-func RunServer(ctx context.Context, config Config, nl List, app helium.App) (hsv *Server, err error) {
+func RunServer(ctx context.Context, config Config, nl helium.NodeList, app helium.App) (hsv *Server, err error) {
 
 	hsv, err = NewServer(config, nl)
 	if err != nil {
@@ -45,7 +45,7 @@ func RunServer(ctx context.Context, config Config, nl List, app helium.App) (hsv
 // RunClient creates a client (peer node) from the config, connects it to the helper
 // and runs the app on it (see Client.Run). It returns once the app has run, with the
 // client (e.g., for statistics) and the error returned by Run.
-func RunClient(ctx context.Context, config Config, nl List, secrets helium.SecretProvider, app helium.App) (hc *Client, err error) {
+func RunClient(ctx context.Context, config Config, nl helium.NodeList, secrets helium.SecretProvider, app helium.App) (hc *Client, err error) {
 
 	hc, err = NewClient(config, nl, secrets)
 	if err != nil {

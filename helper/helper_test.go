@@ -80,7 +80,7 @@ type localTest struct {
 	params   bgv.Parameters
 	helperID helium.NodeID
 	peerIDs  []helium.NodeID
-	nl       List
+	nl       helium.NodeList
 	configs  map[helium.NodeID]Config
 	secrets  map[helium.NodeID]*helium.Secrets
 }
@@ -92,13 +92,13 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 	sp.Threshold = T
 	sp.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
 	sp.ShamirPks = make(map[helium.NodeID]drlwe.ShamirPublicPoint, N)
-	lt.nl = List{{NodeID: lt.helperID, Address: "local"}}
+	lt.nl = helium.NodeList{{NodeID: lt.helperID, NodeAddress: "local"}}
 	for i := 0; i < N; i++ {
 		nid := helium.NodeID("peer-" + strconv.Itoa(i))
 		lt.peerIDs = append(lt.peerIDs, nid)
 		sp.Nodes = append(sp.Nodes, nid)
 		sp.ShamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
-		lt.nl = append(lt.nl, Info{NodeID: nid})
+		lt.nl = append(lt.nl, helium.NodeInfo{NodeID: nid})
 	}
 
 	var err error

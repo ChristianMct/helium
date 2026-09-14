@@ -24,55 +24,6 @@ type Config struct {
 	TLS TLSConfig
 }
 
-// Address is the network address of a node.
-type Address string
-
-// String returns a string representation of the node address.
-func (na Address) String() string {
-	return string(na)
-}
-
-// Info contains the unique identifier and the network address of a node.
-type Info struct {
-	helium.NodeID
-	Address
-}
-
-// List is a list of known nodes in the network. It must contain all nodes for a
-// given application, including the current node. It does not need to contain an
-// address for all nodes, except for the helper node.
-type List []Info
-
-// AddressOf returns the network address of the node with the given ID. Returns
-// an empty string if the node is not found in the list.
-func (nl List) AddressOf(id helium.NodeID) Address {
-	for _, n := range nl {
-		if n.NodeID == id {
-			return n.Address
-		}
-	}
-	return ""
-}
-
-// Contains returns whether the list contains the node with the given ID.
-func (nl List) Contains(id helium.NodeID) bool {
-	for _, n := range nl {
-		if n.NodeID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// String returns a string representation of the list of nodes.
-func (nl List) String() string {
-	str := "[ "
-	for _, n := range nl {
-		str += fmt.Sprintf(`{ID: %s, Address: %s} `, n.NodeID, n.Address)
-	}
-	return str + "]"
-}
-
 // LoadConfigFromFile loads a node configuration from a JSON file.
 func LoadConfigFromFile(filename string) (Config, error) {
 	// Open the config file
@@ -94,7 +45,7 @@ func LoadConfigFromFile(filename string) (Config, error) {
 }
 
 // ValidateConfig checks that the configuration is valid.
-func ValidateConfig(config Config, nl List) error {
+func ValidateConfig(config Config, nl helium.NodeList) error {
 	if len(config.ID) == 0 {
 		return fmt.Errorf("config must specify a node ID")
 	}

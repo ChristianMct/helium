@@ -40,7 +40,7 @@ const (
 type Server struct {
 	id       helium.NodeID
 	config   Config
-	nodeList List
+	nodeList helium.NodeList
 	sess     *helium.Session
 
 	engine *protocols.MHEMPC
@@ -60,7 +60,7 @@ type Server struct {
 var _ node.Starter = (*Server)(nil)
 
 // NewServer creates a new helper server from the provided config and node list.
-func NewServer(config Config, nl List) (*Server, error) {
+func NewServer(config Config, nl helium.NodeList) (*Server, error) {
 	if err := ValidateConfig(config, nl); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}

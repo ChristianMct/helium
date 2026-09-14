@@ -34,7 +34,7 @@ const (
 // server, and queries it for protocol outputs and operands.
 type Client struct {
 	id, helperID  helium.NodeID
-	helperAddress Address
+	helperAddress helium.NodeAddress
 	config        Config
 	sess          *helium.Session
 
@@ -60,7 +60,7 @@ type Dialer = func(c context.Context, addr string) (net.Conn, error)
 // NewClient creates a new helper-assisted client from the provided config and node
 // list. The secrets provider is called for the node's session secrets if the node is
 // a session node.
-func NewClient(config Config, nl List, secrets helium.SecretProvider) (*Client, error) {
+func NewClient(config Config, nl helium.NodeList, secrets helium.SecretProvider) (*Client, error) {
 	if err := ValidateConfig(config, nl); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}

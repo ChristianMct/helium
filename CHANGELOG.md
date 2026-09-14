@@ -18,7 +18,7 @@ package of its setting only, in preparation for the peer-to-peer setting.
   protocol in which the node has a role are held until the matching `Runtime` call.
 - The `helper` package: the helper-assisted setting, with `helper.Server` (the helper node),
   `helper.Client` (a peer node), `helper.RunServer`/`helper.RunClient`, and the setting's
-  configuration (`helper.Config`, `List`, `Info`, `Address`, `TLSConfig`). It also hosts the
+  configuration (`helper.Config`, `NodeList`, `NodeInfo`, `NodeAddress`, `TLSConfig`). It also hosts the
   protobuf translation layer, which the `api` package no longer provides.
 - The `node` package: the node-side runtime shared by all settings. It implements
   `helium.Runtime` over the two engines (`node.New`), holds the rendez-vous gate between the
