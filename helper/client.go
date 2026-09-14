@@ -24,10 +24,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-const (
-	ClientConnectTimeout = 3 * time.Second
-)
-
 // Client is a peer node of the helper-assisted setting. It runs the node's protocol
 // and circuit engines, and communicates with the helper server over gRPC: it receives
 // the coordination events from the server's log, sends its shares and inputs to the
@@ -132,22 +128,30 @@ func (hc *Client) Circuits() *circuits.Engine {
 	return hc.compute
 }
 
-// Connect establishes a connection to the helper server.
+// Connect creates the connection to the helper server. It does not block: the
+// connection is established lazily, and the failure to reach the helper is reported
+// by Run, when the client opens the coordination stream.
 func (hc *Client) Connect() error {
-	return hc.ConnectWithDialer(func(_ context.Context, _ string) (net.Conn, error) {
-		return net.Dial("tcp", hc.helperAddress.String())
-	})
+	// the helper's address is resolved and dialed by grpc.
+	return hc.connect("dns:///" + string(hc.helperAddress))
 }
 
-// ConnectWithDialer establishes a connection to the helper server using the provided dialer.
+// ConnectWithDialer creates the connection to the helper server over the provided
+// dialer, for the settings in which the helper is not reached over the network (e.g.,
+// an in-memory connection in tests). The helper's address is passed to the dialer
+// as-is, without being resolved. Like Connect, it does not block.
 func (hc *Client) ConnectWithDialer(dialer Dialer) error {
+	return hc.connect("passthrough:///"+string(hc.helperAddress), grpc.WithContextDialer(dialer))
+}
+
+// connect creates the connection to the helper at the given grpc target, with the
+// client's transport options and the provided extra ones.
+func (hc *Client) connect(target string, extraOpts ...grpc.DialOption) error {
 	interceptors := []grpc.UnaryClientInterceptor{
 		// t.clientSigner,
 	}
 
 	opts := []grpc.DialOption{
-		grpc.WithContextDialer(dialer),
-		grpc.WithBlock(),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.DefaultConfig, MinConnectTimeout: 1 * time.Second}),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(MaxMsgSize),
@@ -157,15 +161,14 @@ func (hc *Client) ConnectWithDialer(dialer Dialer) error {
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Second, Timeout: time.Minute}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
+	opts = append(opts, extraOpts...)
 
-	ctx, cancel := context.WithTimeout(context.Background(), ClientConnectTimeout)
-	defer cancel()
-	var err error
-	hc.ClientConn, err = grpc.DialContext(ctx, string(hc.helperAddress), opts...)
+	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
 		return fmt.Errorf("fail establish connection to the helper at tcp://%s: %w", hc.helperAddress, err)
 	}
 
+	hc.ClientConn = conn
 	hc.rpc = pb.NewHeliumClient(hc.ClientConn)
 
 	return nil
@@ -183,6 +186,10 @@ func (hc *Client) Close() error {
 // the app's Main function, through which it takes part in the circuits and protocols the
 // application requests. The method returns once Main has returned and the helper has
 // terminated the coordination, with Main's error, if any.
+//
+// The method starts by opening the coordination stream, waiting for the helper to become
+// available if it is not yet: a node can be started before the helper. The wait is bounded
+// by ctx only.
 func (hc *Client) Run(ctx context.Context, app helium.App) error {
 	if hc.rpc == nil {
 		return fmt.Errorf("client is not connected")
@@ -232,7 +239,9 @@ func (hc *Client) getKeySwitchInput(ctx context.Context, pd protocols.Descriptor
 }
 
 // openEventStream registers the client with the helper server, reads the past events
-// and starts demultiplexing the live events into the protocol and circuit streams.
+// and starts demultiplexing the live events into the protocol and circuit streams. The
+// registration is the call that waits for the connection to the helper to be
+// established (see Run); the other calls fail fast when the helper is unavailable.
 func (hc *Client) openEventStream(ctx context.Context) error {
 	hc.streamMu.Lock()
 	defer hc.streamMu.Unlock()
@@ -240,7 +249,7 @@ func (hc *Client) openEventStream(ctx context.Context) error {
 		return fmt.Errorf("event stream already open")
 	}
 
-	stream, err := hc.rpc.Register(hc.outgoingContext(ctx), &pb.Void{})
+	stream, err := hc.rpc.Register(hc.outgoingContext(ctx), &pb.Void{}, grpc.WaitForReady(true))
 	if err != nil {
 		return err
 	}

@@ -52,11 +52,10 @@ func RunClient(ctx context.Context, config Config, nl helium.NodeList, secrets h
 		return nil, err
 	}
 
-	log.Println("[client] connecting to helper...")
 	if err := hc.Connect(); err != nil {
 		return nil, err
 	}
 
-	log.Println("[client] running node")
+	log.Println("[client] running node, waiting for the helper...")
 	return hc, hc.Run(ctx, app)
 }

@@ -76,6 +76,12 @@ package of its setting only, in preparation for the peer-to-peer setting.
   `MaxProtoPerNode` and `TLS`. The engine configuration structs are no longer part of the
   user-facing configuration.
 - The `NodeEvent` protobuf message is now a `oneof` of `ProtocolEvent` and `CircuitEvent`.
+- `Client.Connect` no longer blocks until the connection to the helper is established: it creates
+  the connection, which grpc establishes lazily. A node started before the helper now waits for it
+  when opening the coordination stream, in `Client.Run`, bounded by the context passed to it, and
+  this is also where an unreachable helper is reported. The `ClientConnectTimeout` constant is
+  removed. `Client.Connect` resolves the helper's address through grpc; `ConnectWithDialer`, for
+  in-memory connections, passes it to the dialer unresolved.
 
 ### Removed
 

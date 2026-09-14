@@ -233,7 +233,7 @@ func (e *Engine) Validate(cd helium.Descriptor) error {
 	return err
 }
 
-// helium.Metadata returns the resolved metadata of the circuit described by cd.
+// Metadata returns the resolved metadata of the circuit described by cd.
 func (e *Engine) Metadata(cd helium.Descriptor) (*helium.Metadata, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
