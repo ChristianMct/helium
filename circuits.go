@@ -1,14 +1,4 @@
-// Package circuits provides the types for defining and describing circuits,
-// and the engine evaluating them.
-//
-// A circuit is a function mapping encrypted input operands to encrypted output
-// operands. Its evaluation is a protocol between the input-providing nodes and
-// an evaluator node: the participants send their inputs to the evaluator, which
-// evaluates the circuit and makes the outputs available. Inputs and outputs are
-// identified by system-wide operand ids (see OperandID); intermediate values are
-// plain ciphertexts. The Engine type executes these protocols as driven by the
-// events of a Coordinator, mirroring the protocols.MHEMPC engine.
-package circuits
+package helium
 
 import (
 	"fmt"
@@ -16,8 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/ChristianMct/helium/sessions"
 )
 
 // Circuit is a circuit definition: an evaluation function and, optionally,
@@ -28,18 +16,18 @@ type Circuit struct {
 	// Interface returns the interface of the circuit for the given signature.
 	Interface func(Signature) (Interface, error)
 	// Eval evaluates the circuit in the given runtime.
-	Eval func(Runtime) error
+	Eval func(CircuitRuntime) error
 }
 
 // FromFunc returns a Circuit defined by a single evaluation function, whose
 // interface (ports and required keys) is derived by symbolic execution of
 // the function (see Parse).
-func FromFunc(eval func(Runtime) error) Circuit {
+func FromFunc(eval func(CircuitRuntime) error) Circuit {
 	return Circuit{Eval: eval}
 }
 
 // Describe returns the interface of the circuit for the given signature.
-func (c Circuit) Describe(sig Signature, params sessions.FHEParameters) (Interface, error) {
+func (c Circuit) Describe(sig Signature, params FHEParameters) (Interface, error) {
 	if c.Eval == nil {
 		return Interface{}, fmt.Errorf("circuit has no evaluation function")
 	}
@@ -53,17 +41,17 @@ func (c Circuit) Describe(sig Signature, params sessions.FHEParameters) (Interfa
 	return Parse(c.Eval, sig, params)
 }
 
-// Runtime is the interface available to circuits during their evaluation.
+// CircuitRuntime is the interface available to circuits during their evaluation.
 //
 // A circuit is run both for real, by the evaluator node, and symbolically, to
 // derive its interface (see Parse). A circuit must hence be a deterministic
 // function of its signature: it must not depend on the ciphertexts' coefficients.
-type Runtime interface {
+type CircuitRuntime interface {
 	// Descriptor returns the descriptor of the evaluated circuit.
 	Descriptor() Descriptor
 
 	// Parameters returns the FHE parameters of the session.
-	Parameters() sessions.FHEParameters
+	Parameters() FHEParameters
 
 	// Keys declares evaluation keys required by the circuit, in addition to the
 	// ones inferred from the operations requested to the Evaluator. It is needed
@@ -129,9 +117,9 @@ func (s Signature) Clone() Signature {
 // placeholders of the circuit definition to actual nodes, and the evaluator.
 type Descriptor struct {
 	Signature
-	CircuitID   sessions.CircuitID
-	NodeMapping map[string]sessions.NodeID // nil is the identity mapping
-	Evaluator   sessions.NodeID
+	CircuitID   CircuitID
+	NodeMapping map[string]NodeID // nil is the identity mapping
+	Evaluator   NodeID
 }
 
 // Clone returns a deep copy of the Descriptor.
@@ -155,12 +143,12 @@ func (d Descriptor) String() string {
 }
 
 // mapParty resolves a party placeholder to a node id.
-func (d Descriptor) mapParty(party string) (sessions.NodeID, error) {
+func (d Descriptor) mapParty(party string) (NodeID, error) {
 	if len(party) == 0 {
 		return "", fmt.Errorf("empty party")
 	}
 	if d.NodeMapping == nil {
-		return sessions.NodeID(party), nil
+		return NodeID(party), nil
 	}
 	nid, has := d.NodeMapping[party]
 	if !has {
@@ -294,21 +282,21 @@ type Metadata struct {
 	// in the order of its parties.
 	SumInputs map[string][]OperandID
 	// InputsOf maps each participant to the operand ids it must provide (sorted).
-	InputsOf map[sessions.NodeID][]OperandID
+	InputsOf map[NodeID][]OperandID
 	// Outputs maps each output name to its operand id.
 	Outputs map[string]OperandID
 	// Participants is the sorted list of input-providing nodes.
-	Participants []sessions.NodeID
+	Participants []NodeID
 
 	inputIDs map[Port]OperandID
 	sumIDs   map[string]OperandID
-	sumNodes map[string][]sessions.NodeID
+	sumNodes map[string][]NodeID
 }
 
 // Resolve resolves the operand ids and participants of a circuit evaluation from its
 // descriptor and interface. The session nodes are used for summed inputs without
 // explicit parties.
-func Resolve(cd Descriptor, itf Interface, sessionNodes []sessions.NodeID) (*Metadata, error) {
+func Resolve(cd Descriptor, itf Interface, sessionNodes []NodeID) (*Metadata, error) {
 	if err := itf.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid interface: %w", err)
 	}
@@ -327,14 +315,14 @@ func Resolve(cd Descriptor, itf Interface, sessionNodes []sessions.NodeID) (*Met
 		Interface:  itf,
 		Inputs:     make(map[OperandID]Port, len(itf.Inputs)),
 		SumInputs:  make(map[string][]OperandID, len(itf.SumInputs)),
-		InputsOf:   make(map[sessions.NodeID][]OperandID),
+		InputsOf:   make(map[NodeID][]OperandID),
 		Outputs:    make(map[string]OperandID, len(itf.Outputs)),
 		inputIDs:   make(map[Port]OperandID, len(itf.Inputs)),
 		sumIDs:     make(map[string]OperandID, len(itf.SumInputs)),
-		sumNodes:   make(map[string][]sessions.NodeID, len(itf.SumInputs)),
+		sumNodes:   make(map[string][]NodeID, len(itf.SumInputs)),
 	}
 
-	addInput := func(nid sessions.NodeID, id OperandID) error {
+	addInput := func(nid NodeID, id OperandID) error {
 		if _, dup := md.Inputs[id]; dup {
 			return fmt.Errorf("duplicate input operand %s", id)
 		}
@@ -356,7 +344,7 @@ func Resolve(cd Descriptor, itf Interface, sessionNodes []sessions.NodeID) (*Met
 	}
 
 	for _, sp := range itf.SumInputs {
-		var nids []sessions.NodeID
+		var nids []NodeID
 		if len(sp.Parties) == 0 {
 			nids = slices.Clone(sessionNodes)
 		} else {
@@ -412,7 +400,7 @@ func (md *Metadata) SumID(name string) (OperandID, bool) {
 }
 
 // SumNodes returns the nodes contributing to the given summed input.
-func (md *Metadata) SumNodes(name string) []sessions.NodeID {
+func (md *Metadata) SumNodes(name string) []NodeID {
 	return md.sumNodes[name]
 }
 
@@ -430,51 +418,14 @@ func (md *Metadata) ExpectedInputs() []OperandID {
 }
 
 // IsParticipant returns whether nid provides inputs to the circuit.
-func (md *Metadata) IsParticipant(nid sessions.NodeID) bool {
+func (md *Metadata) IsParticipant(nid NodeID) bool {
 	_, has := md.InputsOf[nid]
 	return has
 }
 
 // IsEvaluator returns whether nid is the evaluator of the circuit.
-func (md *Metadata) IsEvaluator(nid sessions.NodeID) bool {
+func (md *Metadata) IsEvaluator(nid NodeID) bool {
 	return md.Evaluator == nid
-}
-
-// Event is a type for circuit-related events.
-type Event struct {
-	EventType
-	Descriptor
-}
-
-// EventType define the type of event (see circuits.Event)
-type EventType int8
-
-const (
-	// Completed corresponds to then event of a circuit being completed.
-	// It is published by the evaluator.
-	Completed EventType = iota
-	// Started corresponds to then event of a circuit being started.
-	// It is published by the node requesting the evaluation.
-	Started
-	// Executing corresponds to the event of the evaluator being ready to
-	// receive the circuit's inputs. Participants send their inputs only
-	// after this event.
-	Executing
-	// Failed corresponds to then event of a circuit failing to execute to completion.
-	Failed
-)
-
-var statusToString = []string{"COMPLETED", "STARTED", "EXECUTING", "FAILED"}
-
-func (t EventType) String() string {
-	if int(t) >= len(statusToString) || t < 0 {
-		return "UNKNOWN"
-	}
-	return statusToString[t]
-}
-
-func (u Event) String() string {
-	return fmt.Sprintf("%s: %s", u.EventType, u.Descriptor.HID())
 }
 
 // ArgumentOfType returns the argument of the given type from the signature.

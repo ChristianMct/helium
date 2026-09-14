@@ -1,11 +1,10 @@
-package circuits
+package helium
 
 import (
 	"errors"
 	"fmt"
 	"log"
 
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/ring"
@@ -22,13 +21,13 @@ var errParseNoScheme = errors.New("the scheme evaluator is not available during 
 // a level and metadata, but no coefficients), and the evaluator records the keys required by
 // the operations it is asked to perform (relinearization for MulRelin and Relinearize, Galois
 // elements for Rotate, Conjugate, Automorphism, InnerSum and Replicate) without computing
-// anything. Keys declared with Runtime.Keys are merged with the inferred ones.
+// anything. Keys declared with CircuitRuntime.Keys are merged with the inferred ones.
 //
 // Hence, a circuit must be a deterministic function of its signature: it must not depend on the
 // coefficients of the ciphertexts, and it must not use Evaluator.Scheme (whose operations cannot
 // be recorded). Circuits that do not meet these requirements must declare their interface
 // explicitly (see Circuit.Interface). Every declared output must be set when the function returns.
-func Parse(eval func(Runtime) error, sig Signature, params sessions.FHEParameters) (itf Interface, err error) {
+func Parse(eval func(CircuitRuntime) error, sig Signature, params FHEParameters) (itf Interface, err error) {
 	if eval == nil {
 		return Interface{}, fmt.Errorf("nil evaluation function")
 	}
@@ -61,10 +60,10 @@ func Parse(eval func(Runtime) error, sig Signature, params sessions.FHEParameter
 	return pr.itf, nil
 }
 
-// parseRuntime is the recording Runtime used by Parse.
+// parseRuntime is the recording CircuitRuntime used by Parse.
 type parseRuntime struct {
 	sig    Signature
-	params sessions.FHEParameters
+	params FHEParameters
 	itf    Interface
 
 	inputs  map[Port]*FutureOperand
@@ -73,7 +72,7 @@ type parseRuntime struct {
 	eval    *recordingEvaluator
 }
 
-func newParseRuntime(sig Signature, params sessions.FHEParameters) *parseRuntime {
+func newParseRuntime(sig Signature, params FHEParameters) *parseRuntime {
 	pr := &parseRuntime{
 		sig:     sig,
 		params:  params,
@@ -89,7 +88,7 @@ func (pr *parseRuntime) Descriptor() Descriptor {
 	return Descriptor{Signature: pr.sig.Clone()}
 }
 
-func (pr *parseRuntime) Parameters() sessions.FHEParameters {
+func (pr *parseRuntime) Parameters() FHEParameters {
 	return pr.params
 }
 
@@ -102,7 +101,7 @@ func (pr *parseRuntime) Input(p Port) *FutureOperand {
 		return fo
 	}
 	pr.itf.Inputs = append(pr.itf.Inputs, p)
-	fo := NewFutureOperand(NewOperandID(sessions.NodeID(p.Party()), "parse", p.Name()))
+	fo := NewFutureOperand(NewOperandID(NodeID(p.Party()), "parse", p.Name()))
 	fo.Set(pr.eval.placeholder(1, pr.eval.params.MaxLevel()))
 	pr.inputs[p] = fo
 	return fo
@@ -146,10 +145,10 @@ type recordingEvaluator struct {
 	itf    *Interface
 }
 
-func newRecordingEvaluator(params sessions.FHEParameters, itf *Interface) *recordingEvaluator {
+func newRecordingEvaluator(params FHEParameters, itf *Interface) *recordingEvaluator {
 	return &recordingEvaluator{
 		params: *params.GetRLWEParameters(),
-		meta:   sessions.NewCiphertext(params, 0, 0).MetaData.CopyNew(),
+		meta:   NewCiphertext(params, 0, 0).MetaData.CopyNew(),
 		itf:    itf,
 	}
 }

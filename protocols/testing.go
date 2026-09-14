@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 )
 
 // TestEngineTransport is an in-memory ShareTransport connecting a set of MHEMPC
@@ -14,15 +14,15 @@ import (
 // back with GateShares, to simulate slow or failing participants.
 type TestEngineTransport struct {
 	mu      sync.Mutex
-	engines map[sessions.NodeID]*MHEMPC
-	gates   map[sessions.NodeID]chan struct{}
+	engines map[helium.NodeID]*MHEMPC
+	gates   map[helium.NodeID]chan struct{}
 }
 
 // NewTestEngineTransport creates a new, empty, TestEngineTransport.
 func NewTestEngineTransport() *TestEngineTransport {
 	return &TestEngineTransport{
-		engines: make(map[sessions.NodeID]*MHEMPC),
-		gates:   make(map[sessions.NodeID]chan struct{}),
+		engines: make(map[helium.NodeID]*MHEMPC),
+		gates:   make(map[helium.NodeID]chan struct{}),
 	}
 }
 
@@ -34,12 +34,12 @@ func (t *TestEngineTransport) AddEngine(e *MHEMPC) {
 }
 
 // For returns the ShareTransport to be used by node nid.
-func (t *TestEngineTransport) For(nid sessions.NodeID) ShareTransport {
+func (t *TestEngineTransport) For(nid helium.NodeID) ShareTransport {
 	return &testEngineNodeTransport{t: t, self: nid}
 }
 
 // GateShares holds back all shares sent by node nid until the returned function is called.
-func (t *TestEngineTransport) GateShares(nid sessions.NodeID) (release func()) {
+func (t *TestEngineTransport) GateShares(nid helium.NodeID) (release func()) {
 	gate := make(chan struct{})
 	t.mu.Lock()
 	t.gates[nid] = gate
@@ -55,7 +55,7 @@ func (t *TestEngineTransport) GateShares(nid sessions.NodeID) (release func()) {
 	}
 }
 
-func (t *TestEngineTransport) engine(nid sessions.NodeID) (*MHEMPC, error) {
+func (t *TestEngineTransport) engine(nid helium.NodeID) (*MHEMPC, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e, has := t.engines[nid]
@@ -65,7 +65,7 @@ func (t *TestEngineTransport) engine(nid sessions.NodeID) (*MHEMPC, error) {
 	return e, nil
 }
 
-func (t *TestEngineTransport) gate(nid sessions.NodeID) chan struct{} {
+func (t *TestEngineTransport) gate(nid helium.NodeID) chan struct{} {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.gates[nid]
@@ -73,7 +73,7 @@ func (t *TestEngineTransport) gate(nid sessions.NodeID) chan struct{} {
 
 type testEngineNodeTransport struct {
 	t    *TestEngineTransport
-	self sessions.NodeID
+	self helium.NodeID
 }
 
 func (nt *testEngineNodeTransport) PutShare(ctx context.Context, pd Descriptor, share Share) error {

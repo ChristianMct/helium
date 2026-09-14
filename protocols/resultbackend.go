@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/sessions"
 )
 
 // ErrResultNotFound is returned by ResultBackend implementations when no
@@ -33,13 +33,13 @@ type ResultBackend interface {
 }
 
 type objStoreResultBackend struct {
-	sessID sessions.ID
+	sessID helium.SessionID
 	store  objectstore.ObjectStore
 }
 
 // NewObjectStoreResultBackend returns a ResultBackend storing the results of the
 // given session in the provided object store.
-func NewObjectStoreResultBackend(store objectstore.ObjectStore, sessID sessions.ID) ResultBackend {
+func NewObjectStoreResultBackend(store objectstore.ObjectStore, sessID helium.SessionID) ResultBackend {
 	return &objStoreResultBackend{sessID: sessID, store: store}
 }
 

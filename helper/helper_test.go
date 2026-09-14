@@ -1,4 +1,4 @@
-package helium
+package helper
 
 import (
 	"context"
@@ -11,10 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/stretchr/testify/require"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -23,11 +21,11 @@ import (
 )
 
 type TestCircuitSig struct {
-	circuits.Signature
+	helium.Signature
 	ExpResult uint64
 }
 
-var testSessionParameters = sessions.Parameters{
+var testSessionParameters = helium.Parameters{
 	ID:            "test-session",
 	FHEParameters: bgv.ParametersLiteral{LogN: 12, LogQ: []int{45, 45}, LogP: []int{19}, PlaintextModulus: 79873},
 	// Threshold:     set by test
@@ -37,27 +35,27 @@ type testSetting struct {
 	N           int // N - total parties
 	T           int // T - parties in the access structure
 	CircuitSigs []TestCircuitSig
-	Reciever    sessions.NodeID
+	Reciever    helium.NodeID
 	Rep         int // numer of repetition for each circuit
 }
 
-var testSetupDescription = SetupDescription{
+var testSetupDescription = helium.SetupDescription{
 	Cpk: true,
 	Rlk: true,
 	Gks: []uint64{5, 25, 125},
 }
 
 var testCircuits2P = []TestCircuitSig{
-	{Signature: circuits.Signature{Name: "bgv-add-2", Args: nil}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "bgv-mul-2", Args: nil}, ExpResult: 0},
-	{Signature: circuits.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "2"}}, ExpResult: 1},
+	{Signature: helium.Signature{Name: "bgv-add-2", Args: nil}, ExpResult: 1},
+	{Signature: helium.Signature{Name: "bgv-mul-2", Args: nil}, ExpResult: 0},
+	{Signature: helium.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "2"}}, ExpResult: 1},
 }
 
 var testCircuits3P = []TestCircuitSig{
-	{Signature: circuits.Signature{Name: "bgv-add-2", Args: nil}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "bgv-mul-2", Args: nil}, ExpResult: 0},
-	{Signature: circuits.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "2"}}, ExpResult: 1},
-	{Signature: circuits.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "3"}}, ExpResult: 3},
+	{Signature: helium.Signature{Name: "bgv-add-2", Args: nil}, ExpResult: 1},
+	{Signature: helium.Signature{Name: "bgv-mul-2", Args: nil}, ExpResult: 0},
+	{Signature: helium.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "2"}}, ExpResult: 1},
+	{Signature: helium.Signature{Name: "bgv-add-n", Args: map[string]string{"n": "3"}}, ExpResult: 3},
 }
 
 var testSettings = []testSetting{
@@ -74,29 +72,29 @@ const (
 	testSmudging      = 40.0
 )
 
-var testNodeMapping = map[string]sessions.NodeID{"p1": "peer-0", "p2": "peer-1", "p3": "peer-2", "eval": "helper"}
+var testNodeMapping = map[string]helium.NodeID{"p1": "peer-0", "p2": "peer-1", "p3": "peer-2", "eval": "helper"}
 
 // localTest is a helper + N peers test setting.
 type localTest struct {
-	*sessions.TestSession
+	*heliumtest.Sessions
 	params   bgv.Parameters
-	helperID sessions.NodeID
-	peerIDs  []sessions.NodeID
+	helperID helium.NodeID
+	peerIDs  []helium.NodeID
 	nl       List
-	configs  map[sessions.NodeID]Config
-	secrets  map[sessions.NodeID]*sessions.Secrets
+	configs  map[helium.NodeID]Config
+	secrets  map[helium.NodeID]*helium.Secrets
 }
 
 func newLocalTest(t *testing.T, N, T int) *localTest {
-	lt := &localTest{helperID: "helper", configs: make(map[sessions.NodeID]Config)}
+	lt := &localTest{helperID: "helper", configs: make(map[helium.NodeID]Config)}
 
 	sp := testSessionParameters
 	sp.Threshold = T
 	sp.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
-	sp.ShamirPks = make(map[sessions.NodeID]drlwe.ShamirPublicPoint, N)
+	sp.ShamirPks = make(map[helium.NodeID]drlwe.ShamirPublicPoint, N)
 	lt.nl = List{{NodeID: lt.helperID, Address: "local"}}
 	for i := 0; i < N; i++ {
-		nid := sessions.NodeID("peer-" + strconv.Itoa(i))
+		nid := helium.NodeID("peer-" + strconv.Itoa(i))
 		lt.peerIDs = append(lt.peerIDs, nid)
 		sp.Nodes = append(sp.Nodes, nid)
 		sp.ShamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
@@ -104,40 +102,44 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 	}
 
 	var err error
-	lt.TestSession, err = sessions.NewTestSessionFromParams(sp, lt.helperID)
+	lt.Sessions, err = heliumtest.NewSessionsFromParams(sp, lt.helperID)
 	require.NoError(t, err)
-	lt.secrets, err = sessions.GenTestSecretKeys(sp)
+	lt.secrets, err = heliumtest.GenSecretKeys(sp)
 	require.NoError(t, err)
 
 	var ok bool
 	lt.params, ok = lt.FHEParameters.(bgv.Parameters)
 	require.True(t, ok)
 
-	objStore := objectstore.Config{BackendName: "mem"}
+	objStore := helium.ObjectStoreConfig{BackendName: "mem"}
 	lt.configs[lt.helperID] = Config{
-		ID:                lt.helperID,
-		HelperID:          lt.helperID,
-		SessionParameters: []sessions.Parameters{sp},
-		CoordinatorConfig: protocols.CoordinatorConfig{MaxProtoPerNode: 1},
-		CircuitsConfig:    circuits.Config{MaxEvaluation: 4},
-		ObjectStoreConfig: objStore,
-		TLSConfig:         TLSConfig{InsecureChannels: true},
+		Config: helium.Config{
+			ID:                lt.helperID,
+			SessionParameters: sp,
+			MaxEvaluation:     4,
+			ObjectStore:       objStore,
+		},
+		HelperID:        lt.helperID,
+		MaxProtoPerNode: 1,
+		TLS:             TLSConfig{InsecureChannels: true},
 	}
 	for _, nid := range lt.peerIDs {
 		lt.configs[nid] = Config{
-			ID:                nid,
-			HelperID:          lt.helperID,
-			SessionParameters: []sessions.Parameters{sp},
-			ProtocolsConfig:   protocols.Config{MaxParticipation: 1},
-			CircuitsConfig:    circuits.Config{MaxEvaluation: 1},
-			ObjectStoreConfig: objStore,
-			TLSConfig:         TLSConfig{InsecureChannels: true},
+			Config: helium.Config{
+				ID:                nid,
+				SessionParameters: sp,
+				MaxParticipation:  1,
+				MaxEvaluation:     1,
+				ObjectStore:       objStore,
+			},
+			HelperID: lt.helperID,
+			TLS:      TLSConfig{InsecureChannels: true},
 		}
 	}
 	return lt
 }
 
-func (lt *localTest) secretProvider(sid sessions.ID, nid sessions.NodeID) (*sessions.Secrets, error) {
+func (lt *localTest) secretProvider(sid helium.SessionID, nid helium.NodeID) (*helium.Secrets, error) {
 	if sid != lt.SessParams.ID {
 		return nil, fmt.Errorf("unknown session %s", sid)
 	}
@@ -148,27 +150,27 @@ func (lt *localTest) secretProvider(sid sessions.ID, nid sessions.NodeID) (*sess
 	return sec, nil
 }
 
-func (lt *localTest) newServer(t *testing.T) (*HeliumServer, *bufconn.Listener) {
-	helper, err := NewHeliumServer(lt.configs[lt.helperID], lt.nl)
+func (lt *localTest) newServer(t *testing.T) (*Server, *bufconn.Listener) {
+	hsv, err := NewServer(lt.configs[lt.helperID], lt.nl)
 	require.NoError(t, err)
 	lis := bufconn.Listen(buffConBufferSize)
 	go func() {
-		if err := helper.Serve(lis); err != nil {
+		if err := hsv.Serve(lis); err != nil {
 			log.Printf("server error: %s", err)
 		}
 	}()
-	return helper, lis
+	return hsv, lis
 }
 
-func (lt *localTest) newClient(t *testing.T, nid sessions.NodeID) *HeliumClient {
-	cli, err := NewHeliumClient(lt.configs[nid], lt.nl, lt.secretProvider)
+func (lt *localTest) newClient(t *testing.T, nid helium.NodeID) *Client {
+	cli, err := NewClient(lt.configs[nid], lt.nl, lt.secretProvider)
 	require.NoError(t, err)
 	return cli
 }
 
 // newConnectedClients creates and connects the clients of all the peers.
-func (lt *localTest) newConnectedClients(t *testing.T, lis *bufconn.Listener, nids ...sessions.NodeID) map[sessions.NodeID]*HeliumClient {
-	clients := make(map[sessions.NodeID]*HeliumClient, len(nids))
+func (lt *localTest) newConnectedClients(t *testing.T, lis *bufconn.Listener, nids ...helium.NodeID) map[helium.NodeID]*Client {
+	clients := make(map[helium.NodeID]*Client, len(nids))
 	for _, nid := range nids {
 		cli := lt.newClient(t, nid)
 		require.NoError(t, cli.ConnectWithDialer(bufconnDialer(lis)))
@@ -178,9 +180,9 @@ func (lt *localTest) newConnectedClients(t *testing.T, lis *bufconn.Listener, ni
 }
 
 // runAll runs the app on the helper and the clients, and waits for all of them to return.
-func runAll(ctx context.Context, app App, helper *HeliumServer, clients map[sessions.NodeID]*HeliumClient) error {
+func runAll(ctx context.Context, app helium.App, hsv *Server, clients map[helium.NodeID]*Client) error {
 	g := new(errgroup.Group)
-	g.Go(func() error { return helper.Run(ctx, app) })
+	g.Go(func() error { return hsv.Run(ctx, app) })
 	for _, cli := range clients {
 		cli := cli
 		g.Go(func() error { return cli.Run(ctx, app) })
@@ -192,14 +194,14 @@ func bufconnDialer(lis *bufconn.Listener) Dialer {
 	return func(context.Context, string) (net.Conn, error) { return lis.Dial() }
 }
 
-func testContext(t *testing.T, sessID sessions.ID) context.Context {
-	ctx, cancel := context.WithTimeout(sessions.NewBackgroundContext(sessID), testTimeout)
+func testContext(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	t.Cleanup(cancel)
 	return ctx
 }
 
 // testInputs returns the test inputs of node nid (nil for the helper, which has no input).
-func testInputs(nid, helperID sessions.NodeID) map[string]any {
+func testInputs(nid, helperID helium.NodeID) map[string]any {
 	if nid == helperID {
 		return nil
 	}
@@ -209,21 +211,21 @@ func testInputs(nid, helperID sessions.NodeID) map[string]any {
 // testResults collects the decrypted results of the test apps, by circuit id.
 type testResults struct {
 	mu      sync.Mutex
-	results map[sessions.CircuitID]uint64
+	results map[helium.CircuitID]uint64
 }
 
-func (tr *testResults) set(cid sessions.CircuitID, v uint64) {
+func (tr *testResults) set(cid helium.CircuitID, v uint64) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	if tr.results == nil {
-		tr.results = make(map[sessions.CircuitID]uint64)
+		tr.results = make(map[helium.CircuitID]uint64)
 	}
 	tr.results[cid] = v
 }
 
 // evaluateAndDecrypt is the test app logic for one circuit: it evaluates the circuit, decrypts
 // its output to the receiver, and records the result at the receiver.
-func (lt *localTest) evaluateAndDecrypt(ctx context.Context, rt *Runtime, cd circuits.Descriptor, receiver sessions.NodeID, res *testResults) error {
+func (lt *localTest) evaluateAndDecrypt(ctx context.Context, rt helium.Runtime, cd helium.Descriptor, receiver helium.NodeID, res *testResults) error {
 	outs, err := rt.Evaluate(ctx, cd, testInputs(rt.ID(), lt.helperID))
 	if err != nil {
 		return fmt.Errorf("circuit %s: %w", cd.HID(), err)
@@ -261,28 +263,28 @@ func TestSetup(t *testing.T) {
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 			lt := newLocalTest(t, ts.N, ts.T)
-			ctx := testContext(t, lt.SessParams.ID)
+			ctx := testContext(t)
 
-			app := App{
-				SetupDescription: &testSetupDescription,
+			app := helium.App{
+				Setup: &testSetupDescription,
 			}
 
-			helper, lis := lt.newServer(t)
+			hsv, lis := lt.newServer(t)
 			clients := lt.newConnectedClients(t, lis, lt.peerIDs...)
-			require.NoError(t, runAll(ctx, app, helper, clients))
+			require.NoError(t, runAll(ctx, app, hsv, clients))
 
-			CheckTestSetup(ctx, t, *app.SetupDescription, helper, lt.RlweParams, lt.SkIdeal, ts.N)
+			heliumtest.CheckSetup(ctx, t, *app.Setup, hsv, lt.RlweParams, lt.SkIdeal, ts.N)
 
 			for _, cli := range clients {
 				log.Println("checking setup for", cli.id)
 				resCheckCtx, runCheckCancel := context.WithTimeout(ctx, time.Second)
-				CheckTestSetup(resCheckCtx, t, *app.SetupDescription, cli, lt.RlweParams, lt.SkIdeal, ts.N)
+				heliumtest.CheckSetup(resCheckCtx, t, *app.Setup, cli, lt.RlweParams, lt.SkIdeal, ts.N)
 				runCheckCancel()
 
 				require.NoError(t, cli.Close())
 			}
 
-			helper.Server.GracefulStop()
+			hsv.Server.GracefulStop()
 		})
 	}
 }
@@ -293,26 +295,26 @@ func TestSetup(t *testing.T) {
 func TestLateJoiner(t *testing.T) {
 	ts := testSetting{N: 3, T: 2}
 	lt := newLocalTest(t, ts.N, ts.T)
-	ctx := testContext(t, lt.SessParams.ID)
+	ctx := testContext(t)
 
-	cd := circuits.Descriptor{
-		Signature:   circuits.Signature{Name: "bgv-add-2"},
+	cd := helium.Descriptor{
+		Signature:   helium.Signature{Name: "bgv-add-2"},
 		CircuitID:   "add-0",
 		NodeMapping: testNodeMapping,
 		Evaluator:   lt.helperID,
 	}
 	res := new(testResults)
-	app := App{
-		SetupDescription: &testSetupDescription,
-		Circuits:         circuits.TestCircuits,
-		Main: func(ctx context.Context, rt *Runtime) error {
+	app := helium.App{
+		Setup:    &testSetupDescription,
+		Circuits: heliumtest.Circuits,
+		Main: func(ctx context.Context, rt helium.Runtime) error {
 			return lt.evaluateAndDecrypt(ctx, rt, cd, lt.helperID, res)
 		},
 	}
 
-	helper, lis := lt.newServer(t)
+	hsv, lis := lt.newServer(t)
 	early := lt.newConnectedClients(t, lis, lt.peerIDs[0], lt.peerIDs[1])
-	require.NoError(t, runAll(ctx, app, helper, early))
+	require.NoError(t, runAll(ctx, app, hsv, early))
 	require.Equal(t, uint64(1), res.results[cd.CircuitID])
 
 	// the late peer connects after the coordination is done
@@ -322,11 +324,11 @@ func TestLateJoiner(t *testing.T) {
 
 	resCheckCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	for _, cli := range []*HeliumClient{early[lt.peerIDs[0]], early[lt.peerIDs[1]], late} {
-		CheckTestSetup(resCheckCtx, t, *app.SetupDescription, cli, lt.RlweParams, lt.SkIdeal, ts.N)
+	for _, cli := range []*Client{early[lt.peerIDs[0]], early[lt.peerIDs[1]], late} {
+		heliumtest.CheckSetup(resCheckCtx, t, *app.Setup, cli, lt.RlweParams, lt.SkIdeal, ts.N)
 		require.NoError(t, cli.Close())
 	}
-	helper.Server.GracefulStop()
+	hsv.Server.GracefulStop()
 }
 
 // TestCompute runs an app evaluating the test circuits and decrypting their outputs to the
@@ -343,27 +345,27 @@ func TestCompute(t *testing.T) {
 		t.Run(fmt.Sprintf("NParty=%d/T=%d/rec=%s/rep=%d", ts.N, ts.T, ts.Reciever, ts.Rep), func(t *testing.T) {
 
 			lt := newLocalTest(t, ts.N, ts.T)
-			ctx := testContext(t, lt.SessParams.ID)
+			ctx := testContext(t)
 
 			// the circuit evaluations
 			type evaluation struct {
-				cd  circuits.Descriptor
+				cd  helium.Descriptor
 				exp uint64
 			}
 			evals := make([]evaluation, 0, len(ts.CircuitSigs)*ts.Rep)
 			for i, tc := range ts.CircuitSigs {
 				for rep := 0; rep < ts.Rep; rep++ {
-					cid := sessions.CircuitID(fmt.Sprintf("%s-%d-%d", tc.Name, i, rep))
-					cd := circuits.Descriptor{Signature: tc.Signature, CircuitID: cid, NodeMapping: testNodeMapping, Evaluator: lt.helperID}
+					cid := helium.CircuitID(fmt.Sprintf("%s-%d-%d", tc.Name, i, rep))
+					cd := helium.Descriptor{Signature: tc.Signature, CircuitID: cid, NodeMapping: testNodeMapping, Evaluator: lt.helperID}
 					evals = append(evals, evaluation{cd: cd, exp: tc.ExpResult})
 				}
 			}
 
 			res := new(testResults)
-			app := App{
-				SetupDescription: &testSetupDescription,
-				Circuits:         circuits.TestCircuits,
-				Main: func(ctx context.Context, rt *Runtime) error {
+			app := helium.App{
+				Setup:    &testSetupDescription,
+				Circuits: heliumtest.Circuits,
+				Main: func(ctx context.Context, rt helium.Runtime) error {
 					g, gctx := errgroup.WithContext(ctx)
 					for _, ev := range evals {
 						ev := ev
@@ -373,9 +375,9 @@ func TestCompute(t *testing.T) {
 				},
 			}
 
-			helper, lis := lt.newServer(t)
+			hsv, lis := lt.newServer(t)
 			clients := lt.newConnectedClients(t, lis, lt.peerIDs...)
-			require.NoError(t, runAll(ctx, app, helper, clients))
+			require.NoError(t, runAll(ctx, app, hsv, clients))
 
 			for _, ev := range evals {
 				v, has := res.results[ev.cd.CircuitID]
@@ -386,7 +388,7 @@ func TestCompute(t *testing.T) {
 			for _, cli := range clients {
 				require.NoError(t, cli.Close())
 			}
-			helper.Server.GracefulStop()
+			hsv.Server.GracefulStop()
 		})
 	}
 }

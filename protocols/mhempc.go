@@ -8,7 +8,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
 )
 
@@ -60,8 +60,8 @@ type KeySwitchInputProvider func(ctx context.Context, pd Descriptor) (*KeySwitch
 // Completed protocols' results are held in a ResultBackend and are fetched lazily
 // from the aggregator when not available locally (see GetAggregationOutput, GetOutput).
 type MHEMPC struct {
-	self    sessions.NodeID
-	sess    *sessions.Session
+	self    helium.NodeID
+	sess    *helium.Session
 	conf    Config
 	trans   ShareTransport
 	results ResultBackend
@@ -94,7 +94,7 @@ type runningProto struct {
 
 // NewMHEMPC creates a new engine for the given node and session.
 // The ksInput provider may be nil if the node never takes part in key-switching protocols.
-func NewMHEMPC(self sessions.NodeID, sess *sessions.Session, conf Config, trans ShareTransport, results ResultBackend, ksInput KeySwitchInputProvider) (*MHEMPC, error) {
+func NewMHEMPC(self helium.NodeID, sess *helium.Session, conf Config, trans ShareTransport, results ResultBackend, ksInput KeySwitchInputProvider) (*MHEMPC, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("session must not be nil")
 	}
@@ -127,12 +127,12 @@ func NewMHEMPC(self sessions.NodeID, sess *sessions.Session, conf Config, trans 
 }
 
 // NodeID returns the id of the node running this engine.
-func (e *MHEMPC) NodeID() sessions.NodeID {
+func (e *MHEMPC) NodeID() helium.NodeID {
 	return e.self
 }
 
 // Session returns the session of this engine.
-func (e *MHEMPC) Session() *sessions.Session {
+func (e *MHEMPC) Session() *helium.Session {
 	return e.sess
 }
 
@@ -149,17 +149,17 @@ func (e *MHEMPC) isParticipant(pd Descriptor) bool {
 func (e *MHEMPC) isKeySwitchReceiver(pd Descriptor) bool {
 	switch pd.Signature.Type {
 	case DEC, PCKS:
-		return e.self == sessions.NodeID(pd.Signature.Args["target"])
+		return e.self == helium.NodeID(pd.Signature.Args["target"])
 	}
 	return false
 }
 
 // shareProviders returns the set of nodes expected to provide a share in pd:
 // the participants, minus the receiver in the DEC protocol.
-func shareProviders(pd Descriptor) utils.Set[sessions.NodeID] {
+func shareProviders(pd Descriptor) utils.Set[helium.NodeID] {
 	exp := utils.NewSet(pd.Participants)
 	if pd.Signature.Type == DEC {
-		exp.Remove(sessions.NodeID(pd.Signature.Args["target"]))
+		exp.Remove(helium.NodeID(pd.Signature.Args["target"]))
 	}
 	return exp
 }
@@ -230,7 +230,7 @@ func (e *MHEMPC) HandleShare(ctx context.Context, share Share) error {
 }
 
 // MissingShares implements AggregationStatus.
-func (e *MHEMPC) MissingShares(pd Descriptor) (missing utils.Set[sessions.NodeID], known bool) {
+func (e *MHEMPC) MissingShares(pd Descriptor) (missing utils.Set[helium.NodeID], known bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	pid := pd.ID()
@@ -238,7 +238,7 @@ func (e *MHEMPC) MissingShares(pd Descriptor) (missing utils.Set[sessions.NodeID
 		return rp.proto.Missing(), true
 	}
 	if _, has := e.completed[pid]; has {
-		return utils.NewEmptySet[sessions.NodeID](), true
+		return utils.NewEmptySet[helium.NodeID](), true
 	}
 	return nil, false
 }

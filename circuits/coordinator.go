@@ -3,6 +3,7 @@ package circuits
 import (
 	"context"
 	"fmt"
+	"github.com/ChristianMct/helium"
 
 	"github.com/ChristianMct/helium/coordinator"
 )
@@ -41,7 +42,7 @@ func (lc *LogCoordinator) Publish(_ context.Context, ev Event) error {
 }
 
 // Start requests the evaluation of the circuit described by cd, by publishing its Started event.
-func (lc *LogCoordinator) Start(ctx context.Context, cd Descriptor) error {
+func (lc *LogCoordinator) Start(ctx context.Context, cd helium.Descriptor) error {
 	if len(cd.CircuitID) == 0 {
 		return fmt.Errorf("circuit descriptor has no id")
 	}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
@@ -13,25 +13,25 @@ import (
 type engineRuntime struct {
 	e    *Engine
 	rc   *runningCircuit
-	eval Evaluator
+	eval helium.Evaluator
 }
 
-func (rt *engineRuntime) Descriptor() Descriptor {
+func (rt *engineRuntime) Descriptor() helium.Descriptor {
 	return rt.rc.cd.Clone()
 }
 
-func (rt *engineRuntime) Parameters() sessions.FHEParameters {
+func (rt *engineRuntime) Parameters() helium.FHEParameters {
 	return rt.e.sess.Params
 }
 
-func (rt *engineRuntime) Keys(k Keys) {
+func (rt *engineRuntime) Keys(k helium.Keys) {
 	declared := rt.rc.md.Keys
 	if (k.Rlk && !declared.Rlk) || len(declared.Merge(k).GaloisEls) > len(declared.GaloisEls) {
 		panic(fmt.Errorf("circuit %s requires keys %+v that are not in its interface %+v", rt.rc.cd.HID(), k, declared))
 	}
 }
 
-func (rt *engineRuntime) Input(p Port) *FutureOperand {
+func (rt *engineRuntime) Input(p helium.Port) *helium.FutureOperand {
 	id, has := rt.rc.md.InputID(p)
 	if !has {
 		panic(fmt.Errorf("input %s is not declared in the interface of circuit %s", p, rt.rc.cd.HID()))
@@ -42,7 +42,7 @@ func (rt *engineRuntime) Input(p Port) *FutureOperand {
 // InputSum returns the sum of the contributions to a summed input. The contributions are
 // encrypted with a common random polynomial, so that only their first components need to
 // be summed.
-func (rt *engineRuntime) InputSum(name string, _ ...string) *FutureOperand {
+func (rt *engineRuntime) InputSum(name string, _ ...string) *helium.FutureOperand {
 	rc := rt.rc
 	sumID, has := rc.md.SumID(name)
 	if !has {
@@ -55,13 +55,13 @@ func (rt *engineRuntime) InputSum(name string, _ ...string) *FutureOperand {
 		return fo
 	}
 
-	fo := NewFutureOperand(sumID)
+	fo := helium.NewFutureOperand(sumID)
 	rc.sums[name] = fo
 	go func() {
 		params := rt.e.sess.Params
 		rq := params.GetRLWEParameters().RingQ()
 
-		ct := sessions.NewCiphertext(params, 1)
+		ct := helium.NewCiphertext(params, 1)
 		prng, err := sampling.NewKeyedPRNG(sumCRS(rt.e.sess, rc.cd.CircuitID, name))
 		if err != nil {
 			panic(err)
@@ -80,7 +80,7 @@ func (rt *engineRuntime) InputSum(name string, _ ...string) *FutureOperand {
 	return fo
 }
 
-func (rt *engineRuntime) Output(name string) *OutputOperand {
+func (rt *engineRuntime) Output(name string) *helium.OutputOperand {
 	oo, has := rt.rc.outputs[name]
 	if !has {
 		panic(fmt.Errorf("output %s is not declared in the interface of circuit %s", name, rt.rc.cd.HID()))
@@ -88,7 +88,7 @@ func (rt *engineRuntime) Output(name string) *OutputOperand {
 	return oo
 }
 
-func (rt *engineRuntime) Evaluator() Evaluator {
+func (rt *engineRuntime) Evaluator() helium.Evaluator {
 	return rt.eval
 }
 

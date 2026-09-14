@@ -1,16 +1,42 @@
-// Package api implements a translation layer between the protobuf and internal Helium types.
-package api
+package helper
 
 import (
 	"fmt"
 
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/api/pb"
 	"github.com/ChristianMct/helium/circuits"
+	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
+
+// ---- node events
+
+func getNodeEvent(ev node.Event) (*pb.NodeEvent, error) {
+	switch {
+	case ev.Protocol != nil:
+		return &pb.NodeEvent{Event: &pb.NodeEvent_ProtocolEvent{ProtocolEvent: GetProtocolEvent(*ev.Protocol)}}, nil
+	case ev.Circuit != nil:
+		return &pb.NodeEvent{Event: &pb.NodeEvent_CircuitEvent{CircuitEvent: GetCircuitEvent(*ev.Circuit)}}, nil
+	}
+	return nil, fmt.Errorf("invalid event: neither a protocol nor a circuit event")
+}
+
+func toNodeEvent(apiEvent *pb.NodeEvent) (node.Event, error) {
+	switch e := apiEvent.Event.(type) {
+	case *pb.NodeEvent_ProtocolEvent:
+		ev := ToProtocolEvent(e.ProtocolEvent)
+		return node.Event{Protocol: &ev}, nil
+	case *pb.NodeEvent_CircuitEvent:
+		ev := ToCircuitEvent(e.CircuitEvent)
+		return node.Event{Circuit: &ev}, nil
+	}
+	return node.Event{}, fmt.Errorf("invalid event: neither a protocol nor a circuit event")
+}
+
+// ---- protocol and circuit events
 
 func GetProtocolEvent(event protocols.Event) *pb.ProtocolEvent {
 	return &pb.ProtocolEvent{
@@ -40,6 +66,8 @@ func ToCircuitEvent(apiEvent *pb.CircuitEvent) circuits.Event {
 	}
 }
 
+// ---- descriptors
+
 func GetProtocolDesc(pd *protocols.Descriptor) *pb.ProtocolDescriptor {
 	apiDesc := &pb.ProtocolDescriptor{
 		ProtocolType: pb.ProtocolType(pd.Signature.Type),
@@ -59,8 +87,8 @@ func GetProtocolDesc(pd *protocols.Descriptor) *pb.ProtocolDescriptor {
 func ToProtocolDesc(apiPD *pb.ProtocolDescriptor) *protocols.Descriptor {
 	desc := &protocols.Descriptor{
 		Signature:    protocols.Signature{Type: protocols.Type(apiPD.ProtocolType)},
-		Aggregator:   sessions.NodeID(apiPD.Aggregator.NodeId),
-		Participants: make([]sessions.NodeID, 0, len(apiPD.Participants)),
+		Aggregator:   helium.NodeID(apiPD.Aggregator.NodeId),
+		Participants: make([]helium.NodeID, 0, len(apiPD.Participants)),
 	}
 	if len(apiPD.Args) > 0 {
 		desc.Signature.Args = make(map[string]string, len(apiPD.Args))
@@ -69,12 +97,12 @@ func ToProtocolDesc(apiPD *pb.ProtocolDescriptor) *protocols.Descriptor {
 		}
 	}
 	for _, p := range apiPD.Participants {
-		desc.Participants = append(desc.Participants, sessions.NodeID(p.NodeId))
+		desc.Participants = append(desc.Participants, helium.NodeID(p.NodeId))
 	}
 	return desc
 }
 
-func GetCircuitDesc(cd circuits.Descriptor) *pb.CircuitDescriptor {
+func GetCircuitDesc(cd helium.Descriptor) *pb.CircuitDescriptor {
 	apiDesc := &pb.CircuitDescriptor{
 		CircuitSignature: &pb.CircuitSignature{
 			Name: string(cd.Name),
@@ -96,15 +124,15 @@ func GetCircuitDesc(cd circuits.Descriptor) *pb.CircuitDescriptor {
 	return apiDesc
 }
 
-func ToCircuitDesc(apiCd *pb.CircuitDescriptor) *circuits.Descriptor {
-	cd := &circuits.Descriptor{
-		Signature: circuits.Signature{
-			Name: circuits.Name(apiCd.CircuitSignature.Name),
+func ToCircuitDesc(apiCd *pb.CircuitDescriptor) *helium.Descriptor {
+	cd := &helium.Descriptor{
+		Signature: helium.Signature{
+			Name: helium.Name(apiCd.CircuitSignature.Name),
 			Args: make(map[string]string, len(apiCd.CircuitSignature.Args)),
 		},
-		CircuitID:   sessions.CircuitID(apiCd.CircuitID.CircuitID),
-		NodeMapping: make(map[string]sessions.NodeID, len(apiCd.NodeMapping)),
-		Evaluator:   sessions.NodeID(apiCd.Evaluator.NodeId),
+		CircuitID:   helium.CircuitID(apiCd.CircuitID.CircuitID),
+		NodeMapping: make(map[string]helium.NodeID, len(apiCd.NodeMapping)),
+		Evaluator:   helium.NodeID(apiCd.Evaluator.NodeId),
 	}
 
 	for k, v := range apiCd.CircuitSignature.Args {
@@ -112,11 +140,13 @@ func ToCircuitDesc(apiCd *pb.CircuitDescriptor) *circuits.Descriptor {
 	}
 
 	for s, nid := range apiCd.NodeMapping {
-		cd.NodeMapping[s] = sessions.NodeID(nid.NodeId)
+		cd.NodeMapping[s] = helium.NodeID(nid.NodeId)
 	}
 
 	return cd
 }
+
+// ---- shares and operands
 
 func GetShare(s *protocols.Share) (*pb.Share, error) {
 	outShareBytes, err := s.MarshalBinary()
@@ -149,12 +179,12 @@ func ToShare(s *pb.Share) (protocols.Share, error) {
 		ShareMetadata: protocols.ShareMetadata{
 			ProtocolID:   pID,
 			ProtocolType: pType,
-			From:         make(utils.Set[sessions.NodeID]),
+			From:         make(utils.Set[helium.NodeID]),
 		},
 		MHEShare: share,
 	}
 	for _, nid := range desc.AggregateFor {
-		ps.From.Add(sessions.NodeID(nid.NodeId))
+		ps.From.Add(helium.NodeID(nid.NodeId))
 	}
 
 	err := ps.MHEShare.UnmarshalBinary(s.GetShare())
@@ -164,7 +194,7 @@ func ToShare(s *pb.Share) (protocols.Share, error) {
 	return ps, nil
 }
 
-func GetOperand(op *circuits.Operand) (*pb.Ciphertext, error) {
+func GetOperand(op *helium.Operand) (*pb.Ciphertext, error) {
 	if op == nil || op.Ciphertext == nil {
 		return nil, fmt.Errorf("operand has no ciphertext")
 	}
@@ -178,9 +208,9 @@ func GetOperand(op *circuits.Operand) (*pb.Ciphertext, error) {
 	}, nil
 }
 
-func ToOperand(apiCt *pb.Ciphertext) (*circuits.Operand, error) {
-	op := &circuits.Operand{
-		ID:         circuits.OperandID(apiCt.GetMetadata().GetId().GetCiphertextId()),
+func ToOperand(apiCt *pb.Ciphertext) (*helium.Operand, error) {
+	op := &helium.Operand{
+		ID:         helium.OperandID(apiCt.GetMetadata().GetId().GetCiphertextId()),
 		Ciphertext: new(rlwe.Ciphertext),
 	}
 	if err := op.ID.Validate(); err != nil {

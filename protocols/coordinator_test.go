@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 )
@@ -14,19 +15,19 @@ import (
 // fakeStatus is an AggregationStatus for testing the coordinator without an engine.
 type fakeStatus struct {
 	mu      sync.Mutex
-	missing map[ID]utils.Set[sessions.NodeID] // known protocols and their missing shares
+	missing map[ID]utils.Set[helium.NodeID] // known protocols and their missing shares
 }
 
-func (fs *fakeStatus) set(pd Descriptor, missing ...sessions.NodeID) {
+func (fs *fakeStatus) set(pd Descriptor, missing ...helium.NodeID) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	if fs.missing == nil {
-		fs.missing = make(map[ID]utils.Set[sessions.NodeID])
+		fs.missing = make(map[ID]utils.Set[helium.NodeID])
 	}
 	fs.missing[pd.ID()] = utils.NewSet(missing)
 }
 
-func (fs *fakeStatus) MissingShares(pd Descriptor) (utils.Set[sessions.NodeID], bool) {
+func (fs *fakeStatus) MissingShares(pd Descriptor) (utils.Set[helium.NodeID], bool) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	m, has := fs.missing[pd.ID()]
@@ -71,15 +72,15 @@ func (r eventReader) closed() {
 }
 
 func TestCentralCoordinator(t *testing.T) {
-	hid := sessions.NodeID("helper")
+	hid := helium.NodeID("helper")
 	ev := func(et EventType, pd Descriptor) Event { return Event{EventType: et, Descriptor: pd} }
 
 	t.Run("threshold", func(t *testing.T) {
 		ctx := testContext(t)
-		testSess, err := sessions.NewTestSession(3, 2, TestPN12QP109, hid)
+		testSess, err := heliumtest.NewSessions(3, 2, TestPN12QP109, hid)
 		require.NoError(t, err)
 		fs := &fakeStatus{}
-		c, err := NewCentralCoordinator(hid, testSess.HelperSession, CoordinatorConfig{MaxProtoPerNode: 1}, fs)
+		c, err := NewCentralCoordinator(hid, testSess.Helper, CoordinatorConfig{MaxProtoPerNode: 1}, fs)
 		require.NoError(t, err)
 
 		past, live, err := c.Register(ctx)
@@ -98,7 +99,7 @@ func TestCentralCoordinator(t *testing.T) {
 		c.PeerConnected("node-0")
 		r.none()
 		c.PeerConnected("node-1")
-		pd1 := Descriptor{Signature: ckg, Participants: []sessions.NodeID{"node-0", "node-1"}, Aggregator: hid}
+		pd1 := Descriptor{Signature: ckg, Participants: []helium.NodeID{"node-0", "node-1"}, Aggregator: hid}
 		require.Equal(t, ev(Started, pd1), r.next())
 
 		// engine events are appended to the log
@@ -120,7 +121,7 @@ func TestCentralCoordinator(t *testing.T) {
 
 		// the retry starts as soon as a replacement connects
 		c.PeerConnected("node-2")
-		pd2 := Descriptor{Signature: ckg, Participants: []sessions.NodeID{"node-0", "node-2"}, Aggregator: hid}
+		pd2 := Descriptor{Signature: ckg, Participants: []helium.NodeID{"node-0", "node-2"}, Aggregator: hid}
 		require.Equal(t, ev(Started, pd2), r.next())
 		require.NoError(t, c.Publish(ctx, ev(Completed, pd2)))
 		require.Equal(t, ev(Completed, pd2), r.next())
@@ -129,13 +130,13 @@ func TestCentralCoordinator(t *testing.T) {
 		rtg5 := Signature{Type: RTG, Args: map[string]string{"GalEl": "5"}}
 		rtg25 := Signature{Type: RTG, Args: map[string]string{"GalEl": "25"}}
 		require.NoError(t, c.RunSignature(ctx, rtg5))
-		pdRtg5 := Descriptor{Signature: rtg5, Participants: []sessions.NodeID{"node-0", "node-2"}, Aggregator: hid}
+		pdRtg5 := Descriptor{Signature: rtg5, Participants: []helium.NodeID{"node-0", "node-2"}, Aggregator: hid}
 		require.Equal(t, ev(Started, pdRtg5), r.next())
 		require.NoError(t, c.RunSignature(ctx, rtg25))
 		r.none()
 		require.NoError(t, c.Publish(ctx, ev(Completed, pdRtg5)))
 		require.Equal(t, ev(Completed, pdRtg5), r.next())
-		pdRtg25 := Descriptor{Signature: rtg25, Participants: []sessions.NodeID{"node-0", "node-2"}, Aggregator: hid}
+		pdRtg25 := Descriptor{Signature: rtg25, Participants: []helium.NodeID{"node-0", "node-2"}, Aggregator: hid}
 		require.Equal(t, ev(Started, pdRtg25), r.next())
 		require.NoError(t, c.Publish(ctx, ev(Completed, pdRtg25)))
 		require.Equal(t, ev(Completed, pdRtg25), r.next())
@@ -143,11 +144,11 @@ func TestCentralCoordinator(t *testing.T) {
 		// RKG runs its first round first, then its second round with the same participants
 		rkg := Signature{Type: RKG}
 		require.NoError(t, c.RunSignature(ctx, rkg))
-		pdRkg1 := Descriptor{Signature: Signature{Type: RKG1}, Participants: []sessions.NodeID{"node-0", "node-2"}, Aggregator: hid}
+		pdRkg1 := Descriptor{Signature: Signature{Type: RKG1}, Participants: []helium.NodeID{"node-0", "node-2"}, Aggregator: hid}
 		require.Equal(t, ev(Started, pdRkg1), r.next())
 		require.NoError(t, c.Publish(ctx, ev(Completed, pdRkg1)))
 		require.Equal(t, ev(Completed, pdRkg1), r.next())
-		pdRkg := Descriptor{Signature: rkg, Participants: []sessions.NodeID{"node-0", "node-2"}, Aggregator: hid}
+		pdRkg := Descriptor{Signature: rkg, Participants: []helium.NodeID{"node-0", "node-2"}, Aggregator: hid}
 		require.Equal(t, ev(Started, pdRkg), r.next())
 
 		// Close waits for the running protocols
@@ -170,9 +171,9 @@ func TestCentralCoordinator(t *testing.T) {
 
 	t.Run("full-threshold", func(t *testing.T) {
 		ctx := testContext(t)
-		testSess, err := sessions.NewTestSession(3, 3, TestPN12QP109, hid)
+		testSess, err := heliumtest.NewSessions(3, 3, TestPN12QP109, hid)
 		require.NoError(t, err)
-		c, err := NewCentralCoordinator(hid, testSess.HelperSession, CoordinatorConfig{}, nil)
+		c, err := NewCentralCoordinator(hid, testSess.Helper, CoordinatorConfig{}, nil)
 		require.NoError(t, err)
 		_, live, err := c.Register(ctx)
 		require.NoError(t, err)

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
@@ -16,7 +16,7 @@ type KeyProvider struct {
 	e *MHEMPC
 }
 
-var _ sessions.PublicKeyProvider = (*KeyProvider)(nil)
+var _ helium.PublicKeyProvider = (*KeyProvider)(nil)
 
 // NewKeyProvider returns a KeyProvider for the given engine.
 func NewKeyProvider(e *MHEMPC) *KeyProvider {

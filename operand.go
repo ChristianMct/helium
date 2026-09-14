@@ -1,4 +1,4 @@
-package circuits
+package helium
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
@@ -20,11 +19,11 @@ import (
 type OperandID string
 
 // NewOperandID builds the operand id for the given owner, circuit and name.
-func NewOperandID(owner sessions.NodeID, cid sessions.CircuitID, name string) OperandID {
+func NewOperandID(owner NodeID, cid CircuitID, name string) OperandID {
 	return OperandID(fmt.Sprintf("//%s/%s/%s", owner, cid, name))
 }
 
-func (id OperandID) parse() (owner sessions.NodeID, cid sessions.CircuitID, name string, err error) {
+func (id OperandID) parse() (owner NodeID, cid CircuitID, name string, err error) {
 	u, err := url.Parse(string(id))
 	if err != nil {
 		return "", "", "", fmt.Errorf("invalid operand id %q: %w", id, err)
@@ -33,7 +32,7 @@ func (id OperandID) parse() (owner sessions.NodeID, cid sessions.CircuitID, name
 	if len(u.Host) == 0 || len(parts) != 2 || len(parts[0]) == 0 || len(parts[1]) == 0 {
 		return "", "", "", fmt.Errorf("invalid operand id %q: must be of the form //<node-id>/<circuit-id>/<name>", id)
 	}
-	return sessions.NodeID(u.Host), sessions.CircuitID(parts[0]), parts[1], nil
+	return NodeID(u.Host), CircuitID(parts[0]), parts[1], nil
 }
 
 // Validate returns an error if the operand id is not well-formed.
@@ -43,13 +42,13 @@ func (id OperandID) Validate() error {
 }
 
 // NodeID returns the id of the node owning the operand.
-func (id OperandID) NodeID() sessions.NodeID {
+func (id OperandID) NodeID() NodeID {
 	owner, _, _, _ := id.parse()
 	return owner
 }
 
 // CircuitID returns the id of the circuit evaluation the operand belongs to.
-func (id OperandID) CircuitID() sessions.CircuitID {
+func (id OperandID) CircuitID() CircuitID {
 	_, cid, _, _ := id.parse()
 	return cid
 }

@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -26,20 +27,20 @@ var (
 // testEngines is a helper + N session nodes setting on an in-memory transport,
 // coordinated by the helper.
 type testEngines struct {
-	sess   *sessions.TestSession
-	hid    sessions.NodeID
+	sess   *heliumtest.Sessions
+	hid    helium.NodeID
 	trans  *TestEngineTransport
 	coord  *CentralCoordinator
 	helper *MHEMPC
-	nodes  map[sessions.NodeID]*MHEMPC
-	nids   []sessions.NodeID // sorted session node ids
+	nodes  map[helium.NodeID]*MHEMPC
+	nids   []helium.NodeID // sorted session node ids
 	sigs   []Signature
 	ksin   KeySwitchInputProvider
 }
 
 func newTestEngines(t *testing.T, N, T int) *testEngines {
-	hid := sessions.NodeID("helper")
-	testSess, err := sessions.NewTestSession(N, T, TestPN12QP109, hid)
+	hid := helium.NodeID("helper")
+	testSess, err := heliumtest.NewSessions(N, T, TestPN12QP109, hid)
 	require.NoError(t, err)
 
 	ct := testSess.Encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
@@ -48,7 +49,7 @@ func newTestEngines(t *testing.T, N, T int) *testEngines {
 		sess:  testSess,
 		hid:   hid,
 		trans: NewTestEngineTransport(),
-		nodes: make(map[sessions.NodeID]*MHEMPC, N),
+		nodes: make(map[helium.NodeID]*MHEMPC, N),
 		ksin: func(ctx context.Context, pd Descriptor) (*KeySwitchInput, error) {
 			return &KeySwitchInput{OutputKey: zeroKey, InpuCt: ct}, nil
 		},
@@ -61,10 +62,10 @@ func newTestEngines(t *testing.T, N, T int) *testEngines {
 		},
 	}
 
-	te.helper = te.newEngine(t, hid, testSess.HelperSession)
-	te.coord, err = NewCentralCoordinator(hid, testSess.HelperSession, testCoordConf, te.helper)
+	te.helper = te.newEngine(t, hid, testSess.Helper)
+	te.coord, err = NewCentralCoordinator(hid, testSess.Helper, testCoordConf, te.helper)
 	require.NoError(t, err)
-	for nid, nsess := range testSess.NodeSessions {
+	for nid, nsess := range testSess.Nodes {
 		te.nodes[nid] = te.newEngine(t, nid, nsess)
 		te.nids = append(te.nids, nid)
 	}
@@ -72,7 +73,7 @@ func newTestEngines(t *testing.T, N, T int) *testEngines {
 	return te
 }
 
-func (te *testEngines) newEngine(t *testing.T, nid sessions.NodeID, sess *sessions.Session) *MHEMPC {
+func (te *testEngines) newEngine(t *testing.T, nid helium.NodeID, sess *helium.Session) *MHEMPC {
 	e, err := NewMHEMPC(nid, sess, testEngineConf, te.trans.For(nid),
 		NewObjectStoreResultBackend(objectstore.NewMemObjectStore(), sess.ID), te.ksin)
 	require.NoError(t, err)
@@ -245,7 +246,7 @@ func TestMHEMPCRetry(t *testing.T) {
 
 	require.NoError(t, te.coord.RunSignature(ctx, sig))
 
-	pd1 := Descriptor{Signature: sig, Participants: []sessions.NodeID{"node-0", "node-1"}, Aggregator: te.hid}
+	pd1 := Descriptor{Signature: sig, Participants: []helium.NodeID{"node-0", "node-1"}, Aggregator: te.hid}
 	require.Equal(t, Event{EventType: Started, Descriptor: pd1}, nextEvent())
 	require.Equal(t, Event{EventType: Executing, Descriptor: pd1}, nextEvent())
 
@@ -255,7 +256,7 @@ func TestMHEMPCRetry(t *testing.T) {
 	te.run(g, gctx, n2)
 	te.coord.PeerConnected(n2.NodeID())
 
-	pd2 := Descriptor{Signature: sig, Participants: []sessions.NodeID{"node-0", "node-2"}, Aggregator: te.hid}
+	pd2 := Descriptor{Signature: sig, Participants: []helium.NodeID{"node-0", "node-2"}, Aggregator: te.hid}
 	require.Equal(t, Event{EventType: Started, Descriptor: pd2}, nextEvent())
 	require.Equal(t, Event{EventType: Executing, Descriptor: pd2}, nextEvent())
 	require.Equal(t, Event{EventType: Completed, Descriptor: pd2}, nextEvent())
@@ -300,11 +301,11 @@ func (rt *recordingTransport) sent() []Descriptor {
 // concurrent nodes, and checks the state transitions and emitted actions.
 func TestMHEMPCStateMachine(t *testing.T) {
 	ctx := testContext(t)
-	hid := sessions.NodeID("helper")
-	testSess, err := sessions.NewTestSession(3, 3, TestPN12QP109, hid)
+	hid := helium.NodeID("helper")
+	testSess, err := heliumtest.NewSessions(3, 3, TestPN12QP109, hid)
 	require.NoError(t, err)
-	nids := make([]sessions.NodeID, 0, len(testSess.NodeSessions))
-	for nid := range testSess.NodeSessions {
+	nids := make([]helium.NodeID, 0, len(testSess.Nodes))
+	for nid := range testSess.Nodes {
 		nids = append(nids, nid)
 	}
 	slices.Sort(nids)
@@ -316,9 +317,9 @@ func TestMHEMPCStateMachine(t *testing.T) {
 	completed := func(pd Descriptor) Event { return Event{EventType: Completed, Descriptor: pd} }
 	failed := func(pd Descriptor) Event { return Event{EventType: Failed, Descriptor: pd} }
 
-	newNode := func(nid sessions.NodeID) (*MHEMPC, *recordingTransport) {
+	newNode := func(nid helium.NodeID) (*MHEMPC, *recordingTransport) {
 		rt := &recordingTransport{}
-		e, err := NewMHEMPC(nid, testSess.NodeSessions[nid], testEngineConf, rt,
+		e, err := NewMHEMPC(nid, testSess.Nodes[nid], testEngineConf, rt,
 			NewObjectStoreResultBackend(objectstore.NewMemObjectStore(), testSess.SessParams.ID), nil)
 		require.NoError(t, err)
 		return e, rt
@@ -392,7 +393,7 @@ func TestMHEMPCStateMachine(t *testing.T) {
 
 	t.Run("aggregator", func(t *testing.T) {
 		rt := &recordingTransport{}
-		helper, err := NewMHEMPC(hid, testSess.HelperSession, testEngineConf, rt,
+		helper, err := NewMHEMPC(hid, testSess.Helper, testEngineConf, rt,
 			NewObjectStoreResultBackend(objectstore.NewMemObjectStore(), testSess.SessParams.ID), nil)
 		require.NoError(t, err)
 
@@ -412,11 +413,11 @@ func TestMHEMPCStateMachine(t *testing.T) {
 
 		// feeds the shares of all participants, generated by hand
 		for i, nid := range nids {
-			p, err := NewProtocol(pdCkg, testSess.NodeSessions[nid])
+			p, err := NewProtocol(pdCkg, testSess.Nodes[nid])
 			require.NoError(t, err)
 			in, err := p.ReadCRP()
 			require.NoError(t, err)
-			sk, err := testSess.NodeSessions[nid].GetSecretKeyForGroup(pdCkg.Participants)
+			sk, err := testSess.Nodes[nid].GetSecretKeyForGroup(pdCkg.Participants)
 			require.NoError(t, err)
 			share := p.AllocateShare()
 			require.NoError(t, p.GenShare(sk, in, &share))
@@ -438,7 +439,7 @@ func TestMHEMPCStateMachine(t *testing.T) {
 		checkOutput(out.Result, pdCkg, *testSess, t)
 
 		// a restarted helper restores the completion from its backend
-		restarted, err := NewMHEMPC(hid, testSess.HelperSession, testEngineConf, rt, helper.results, nil)
+		restarted, err := NewMHEMPC(hid, testSess.Helper, testEngineConf, rt, helper.results, nil)
 		require.NoError(t, err)
 		restored, err := restarted.RestoreCompleted(pdCkg.Signature, pdRtg.Signature)
 		require.NoError(t, err)

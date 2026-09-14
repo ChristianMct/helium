@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 )
 
 // TestEngineTransport is an in-memory OperandTransport connecting a set of Engines running in
@@ -13,12 +13,12 @@ import (
 // queries to the owner's engine.
 type TestEngineTransport struct {
 	mu      sync.Mutex
-	engines map[sessions.NodeID]*Engine
+	engines map[helium.NodeID]*Engine
 }
 
 // NewTestEngineTransport creates a new, empty, TestEngineTransport.
 func NewTestEngineTransport() *TestEngineTransport {
-	return &TestEngineTransport{engines: make(map[sessions.NodeID]*Engine)}
+	return &TestEngineTransport{engines: make(map[helium.NodeID]*Engine)}
 }
 
 // AddEngine registers an engine as the endpoint for its node id.
@@ -29,11 +29,11 @@ func (t *TestEngineTransport) AddEngine(e *Engine) {
 }
 
 // For returns the OperandTransport to be used by node nid.
-func (t *TestEngineTransport) For(nid sessions.NodeID) OperandTransport {
+func (t *TestEngineTransport) For(nid helium.NodeID) OperandTransport {
 	return &testNodeTransport{t: t, self: nid}
 }
 
-func (t *TestEngineTransport) engine(nid sessions.NodeID) (*Engine, error) {
+func (t *TestEngineTransport) engine(nid helium.NodeID) (*Engine, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e, has := t.engines[nid]
@@ -45,10 +45,10 @@ func (t *TestEngineTransport) engine(nid sessions.NodeID) (*Engine, error) {
 
 type testNodeTransport struct {
 	t    *TestEngineTransport
-	self sessions.NodeID
+	self helium.NodeID
 }
 
-func (nt *testNodeTransport) PutOperand(ctx context.Context, cd Descriptor, op Operand) error {
+func (nt *testNodeTransport) PutOperand(ctx context.Context, cd helium.Descriptor, op helium.Operand) error {
 	dst, err := nt.t.engine(cd.Evaluator)
 	if err != nil {
 		return err
@@ -56,7 +56,7 @@ func (nt *testNodeTransport) PutOperand(ctx context.Context, cd Descriptor, op O
 	return dst.HandleOperand(ctx, op)
 }
 
-func (nt *testNodeTransport) GetOperand(ctx context.Context, id OperandID) (*Operand, error) {
+func (nt *testNodeTransport) GetOperand(ctx context.Context, id helium.OperandID) (*helium.Operand, error) {
 	src, err := nt.t.engine(id.NodeID())
 	if err != nil {
 		return nil, err

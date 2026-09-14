@@ -8,8 +8,8 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/coordinator"
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 )
 
@@ -39,7 +39,7 @@ type Coordinator interface {
 type AggregationStatus interface {
 	// MissingShares returns the participants whose share has not yet been aggregated in pd.
 	// The returned known is false if the engine neither runs nor has completed pd.
-	MissingShares(pd Descriptor) (missing utils.Set[sessions.NodeID], known bool)
+	MissingShares(pd Descriptor) (missing utils.Set[helium.NodeID], known bool)
 }
 
 // CoordinatorConfig is the configuration of a CentralCoordinator.
@@ -71,8 +71,8 @@ type scheduled struct {
 // helper-assisted setting; in a peer-to-peer setting, an instance would take
 // the decisions for the protocols aggregated by its node.
 type CentralCoordinator struct {
-	self   sessions.NodeID
-	sess   *sessions.Session
+	self   helium.NodeID
+	sess   *helium.Session
 	conf   CoordinatorConfig
 	status AggregationStatus
 
@@ -80,8 +80,8 @@ type CentralCoordinator struct {
 	log     *coordinator.Log[Event]
 	closing bool // Close was called: the log closes once idle
 
-	online    map[sessions.NodeID]utils.Set[ID] // connected peers -> running protocols they participate in
-	queued    []*sigRequest                     // requests waiting for available participants
+	online    map[helium.NodeID]utils.Set[ID] // connected peers -> running protocols they participate in
+	queued    []*sigRequest                   // requests waiting for available participants
 	running   map[ID]*scheduled
 	completed map[ID]Descriptor
 	failed    map[ID]Descriptor
@@ -90,7 +90,7 @@ type CentralCoordinator struct {
 // NewCentralCoordinator creates a new coordinator for node self in the given session.
 // The status is queried on peer disconnection; if nil, running protocols are
 // considered to be missing the share of any disconnecting participant.
-func NewCentralCoordinator(self sessions.NodeID, sess *sessions.Session, conf CoordinatorConfig, status AggregationStatus) (*CentralCoordinator, error) {
+func NewCentralCoordinator(self helium.NodeID, sess *helium.Session, conf CoordinatorConfig, status AggregationStatus) (*CentralCoordinator, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("session must not be nil")
 	}
@@ -103,7 +103,7 @@ func NewCentralCoordinator(self sessions.NodeID, sess *sessions.Session, conf Co
 		conf:      conf,
 		status:    status,
 		log:       coordinator.NewLog[Event](),
-		online:    make(map[sessions.NodeID]utils.Set[ID]),
+		online:    make(map[helium.NodeID]utils.Set[ID]),
 		running:   make(map[ID]*scheduled),
 		completed: make(map[ID]Descriptor),
 		failed:    make(map[ID]Descriptor),
@@ -215,7 +215,7 @@ func (c *CentralCoordinator) RunDescriptor(_ context.Context, pd Descriptor) err
 }
 
 // PeerConnected informs the coordinator that peer nid is reachable and can be selected as participant.
-func (c *CentralCoordinator) PeerConnected(nid sessions.NodeID) {
+func (c *CentralCoordinator) PeerConnected(nid helium.NodeID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, has := c.online[nid]; has {
@@ -235,7 +235,7 @@ func (c *CentralCoordinator) PeerConnected(nid sessions.NodeID) {
 // Running protocols in which nid has not yet provided its share are failed (and retried
 // if requested through RunSignature), unless the session is full-threshold, in which
 // case nothing can be done but wait.
-func (c *CentralCoordinator) PeerDisconnected(nid sessions.NodeID) {
+func (c *CentralCoordinator) PeerDisconnected(nid helium.NodeID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	pids, has := c.online[nid]
@@ -250,7 +250,7 @@ func (c *CentralCoordinator) PeerDisconnected(nid sessions.NodeID) {
 			if !running {
 				continue
 			}
-			var missing utils.Set[sessions.NodeID]
+			var missing utils.Set[helium.NodeID]
 			var known bool
 			if c.status != nil {
 				missing, known = c.status.MissingShares(s.pd)
@@ -389,17 +389,17 @@ func (c *CentralCoordinator) tryStart(req *sigRequest) (bool, error) {
 // selectParticipants selects the participants for a protocol with signature sig among the
 // connected peers. It returns false if there are not enough available peers. In full-threshold
 // sessions, all session nodes are selected.
-func (c *CentralCoordinator) selectParticipants(sig Signature) ([]sessions.NodeID, bool) {
-	selected := utils.NewEmptySet[sessions.NodeID]()
+func (c *CentralCoordinator) selectParticipants(sig Signature) ([]helium.NodeID, bool) {
+	selected := utils.NewEmptySet[helium.NodeID]()
 	if c.fullThreshold() {
 		selected.Add(c.sess.Nodes...)
 	} else {
 		if sig.Type == DEC {
-			if target := sessions.NodeID(sig.Args["target"]); c.sess.Contains(target) {
+			if target := helium.NodeID(sig.Args["target"]); c.sess.Contains(target) {
 				selected.Add(target)
 			}
 		}
-		available := utils.NewEmptySet[sessions.NodeID]()
+		available := utils.NewEmptySet[helium.NodeID]()
 		for nid, protos := range c.online {
 			if c.sess.Contains(nid) && !selected.Contains(nid) && len(protos) < c.conf.MaxProtoPerNode {
 				available.Add(nid)

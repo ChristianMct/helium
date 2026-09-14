@@ -1,137 +1,42 @@
 package helium
 
-import (
-	"encoding/json"
-	"fmt"
-	"os"
+import "fmt"
 
-	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/sessions"
-)
-
-// Config is the configuration of a node.
-// The struct is meant to be encoded and decoded to JSON with the
-// standard library's encoding/json package.
-//
-// In the current implementation, only a single session per node is supported.
+// Config is the configuration of a Helium node, independently of the setting it
+// runs in. The setting-specific packages embed it in their own configuration
+// (see helper.Config).
 type Config struct {
-	ID                sessions.NodeID
-	HelperID          sessions.NodeID
-	SessionParameters []sessions.Parameters
-	ProtocolsConfig   protocols.Config            // configuration of the node's protocol engine
-	CoordinatorConfig protocols.CoordinatorConfig // configuration of the coordinator (helper only)
-	CircuitsConfig    circuits.Config             // configuration of the node's circuit engine
-	ObjectStoreConfig objectstore.Config
-	TLSConfig         TLSConfig
+	// ID is the node's own identifier.
+	ID NodeID
+	// SessionParameters describes the session the node takes part in.
+	SessionParameters Parameters
+	// MaxParticipation is the maximum number of protocols the node participates in
+	// concurrently. Zero means no limit.
+	MaxParticipation int
+	// MaxEvaluation is the maximum number of circuits the node evaluates concurrently.
+	// Zero selects the engine's default.
+	MaxEvaluation int
+	// ObjectStore configures the node's persistent store for the protocol results.
+	ObjectStore ObjectStoreConfig
 }
 
-// Address is the network address of a node.
-type Address string
-
-// Info contains the unique identifier and the network address of a node.
-type Info struct {
-	sessions.NodeID
-	Address
+// SetupDescription describes the MHE setup phase of an application: the keys that
+// must be generated before the circuits can be evaluated.
+//   - Cpk: the collective public key, under which the inputs are encrypted,
+//   - Rlk: the relinearization key, for homomorphic multiplications,
+//   - Gks: the Galois keys, identified by their Galois elements, for rotations.
+type SetupDescription struct {
+	Cpk bool
+	Rlk bool
+	Gks []uint64
 }
 
-// List is a list of known nodes in the network. It must contains all nodes
-// for a given application, including the current node. It does not need to contain
-// an address for all nodes, except for the helper node.
-type List []Info
-
-// AddressOf returns the network address of the node with the given ID. Returns
-// an empty string if the node is not found in the list.
-func (nl List) AddressOf(id sessions.NodeID) Address {
-	for _, node := range nl {
-		if node.NodeID == id {
-			return node.Address
-		}
-	}
-	return ""
+// String returns a string representation of the setup description.
+func (sd SetupDescription) String() string {
+	return fmt.Sprintf(`
+	{
+		Cpk: %v,
+		GaloisKeys: %v,
+		Rlk: %v,
+	}`, sd.Cpk, sd.Gks, sd.Rlk)
 }
-
-// Contains returns whether the list contains the node with the given ID.
-func (nl List) Contains(id sessions.NodeID) bool {
-	for _, node := range nl {
-		if node.NodeID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// String returns a string representation of the list of nodes.
-func (nl List) String() string {
-	str := "[ "
-	for _, node := range nl {
-		str += fmt.Sprintf(`{ID: %s, Address: %s} `,
-			node.NodeID, node.Address)
-	}
-	return str + "]"
-}
-
-// String returns a string representation of the node address.
-func (na Address) String() string {
-	return string(na)
-}
-
-// LoadConfigFromFile loads a node configuration from a JSON file.
-func LoadConfigFromFile(filename string) (Config, error) {
-	// Open the config file
-	file, err := os.Open(filename)
-	if err != nil {
-		return Config{}, err
-	}
-	defer file.Close()
-
-	// Decode the config file into the config variable
-	var config Config
-	decoder := json.NewDecoder(file)
-	err = decoder.Decode(&config)
-	if err != nil {
-		return Config{}, err
-	}
-
-	return config, nil
-}
-
-// ValidateConfig checks that the configuration is valid.
-func ValidateConfig(config Config, nl List) error {
-	if len(config.ID) == 0 {
-		return fmt.Errorf("config must specify a node ID")
-	}
-	if len(config.HelperID) == 0 {
-		return fmt.Errorf("config must specify a helper ID")
-	}
-	if len(config.SessionParameters) != 1 {
-		return fmt.Errorf("config must specify exactly one session, got %d", len(config.SessionParameters))
-	}
-	if len(nl) == 0 {
-		return fmt.Errorf("node list is empty or nil")
-	}
-	if nl.AddressOf(config.HelperID) == "" {
-		return fmt.Errorf("no address for helper node `%s` in the node list", config.HelperID)
-	}
-	return nil
-}
-
-// TLSConfig is a struct for specifying TLS-related configuration.
-// TLS is not supported yet.
-//
-//nolint:gosec // sha1 needed to check certificate
-type TLSConfig struct {
-	InsecureChannels bool                       // if set, disables TLS authentication
-	FromDirectory    string                     // path to a directory containing the TLS material as files
-	PeerPKs          map[sessions.NodeID]string // Mapping of <node, pubKey> where pubKey is PEM encoded
-	PeerCerts        map[sessions.NodeID]string // Mapping of <node, certifcate> where pubKey is PEM encoded ASN.1 DER string
-	CACert           string                     // Root CA certificate as a PEM encoded ASN.1 DER string
-	OwnCert          string                     // Own certificate as a PEM encoded ASN.1 DER string
-	OwnPk            string                     // Own public key as a PEM encoded string
-	OwnSk            string                     // Own secret key as a PEM encoded string
-}
-
-// SecretProvider is a function that returns the secrets of a node for a session,
-// given the session ID and the node ID.
-type SecretProvider func(sessions.ID, sessions.NodeID) (*sessions.Secrets, error)

@@ -1,24 +1,29 @@
-package sessions
+// Package heliumtest provides test fixtures for Helium applications and for the
+// framework's own tests: local session fixtures with their key material, a key
+// provider generating the setup keys on the fly, a library of test circuits and a
+// local circuit runtime.
+package heliumtest
 
 import (
 	"fmt"
 
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
 
-type TestSession struct {
-	SessParams    Parameters
-	FHEParameters FHEParameters
+type Sessions struct {
+	SessParams    helium.Parameters
+	FHEParameters helium.FHEParameters
 	RlweParams    rlwe.Parameters
 	SkIdeal       *rlwe.SecretKey
-	NodeSessions  map[NodeID]*Session
-	HelperSession *Session
+	Nodes         map[helium.NodeID]*helium.Session
+	Helper        *helium.Session
 
 	// key backend
-	*CachedKeyBackend
+	*helium.CachedKeyBackend
 
 	// lattigo helpers
 	//Encoder   *bgv.Encoder
@@ -27,15 +32,15 @@ type TestSession struct {
 	Decryptor *rlwe.Decryptor
 }
 
-func NewTestSession(N, T int, fheParamLitteral FHEParamerersLiteralProvider, helperID NodeID) (*TestSession, error) {
-	nids := make([]NodeID, N)
-	nspk := make(map[NodeID]drlwe.ShamirPublicPoint)
+func NewSessions(N, T int, fheParamLitteral helium.FHEParametersLiteralProvider, helperID helium.NodeID) (*Sessions, error) {
+	nids := make([]helium.NodeID, N)
+	nspk := make(map[helium.NodeID]drlwe.ShamirPublicPoint)
 	for i := range nids {
-		nids[i] = NodeID(fmt.Sprintf("node-%d", i))
+		nids[i] = helium.NodeID(fmt.Sprintf("node-%d", i))
 		nspk[nids[i]] = drlwe.ShamirPublicPoint(i + 1)
 	}
 
-	var sessParams = Parameters{
+	var sessParams = helium.Parameters{
 		ID:            "testsess",
 		FHEParameters: fheParamLitteral,
 		Threshold:     T,
@@ -44,52 +49,52 @@ func NewTestSession(N, T int, fheParamLitteral FHEParamerersLiteralProvider, hel
 		PublicSeed:    []byte{'c', 'r', 's'},
 	}
 
-	return NewTestSessionFromParams(sessParams, helperID)
+	return NewSessionsFromParams(sessParams, helperID)
 
 }
 
-func NewTestSessionFromParams(sp Parameters, helperID NodeID) (*TestSession, error) {
-	ts := new(TestSession)
+func NewSessionsFromParams(sp helium.Parameters, helperID helium.NodeID) (*Sessions, error) {
+	ts := new(Sessions)
 
 	ts.SessParams = sp
 
 	var err error
-	ts.FHEParameters, err = NewFHEParameters(sp.FHEParameters)
+	ts.FHEParameters, err = helium.NewFHEParameters(sp.FHEParameters)
 	if err != nil {
 		return nil, err
 	}
 	ts.RlweParams = *ts.FHEParameters.GetRLWEParameters()
 
 	// Generates test session secrets for the nodes
-	nodeSecrets, err := GenTestSecretKeys(sp)
+	nodeSecrets, err := GenSecretKeys(sp)
 	if err != nil {
 		return nil, err
 	}
 
 	ts.SkIdeal = rlwe.NewSecretKey(ts.RlweParams)
-	ts.NodeSessions = make(map[NodeID]*Session, len(sp.Nodes))
+	ts.Nodes = make(map[helium.NodeID]*helium.Session, len(sp.Nodes))
 	for _, nid := range sp.Nodes {
 
 		spi := sp
 
 		// computes the ideal secret-key for the test
-		ts.NodeSessions[nid], err = NewSession(nid, spi, nodeSecrets[nid])
+		ts.Nodes[nid], err = helium.NewSession(nid, spi, nodeSecrets[nid])
 		if err != nil {
 			return nil, err
 		}
-		sk, err := ts.NodeSessions[nid].GetSecretKey()
+		sk, err := ts.Nodes[nid].GetSecretKey()
 		if err != nil {
 			return nil, err
 		}
 		ts.RlweParams.RingQP().AtLevel(ts.SkIdeal.Value.Q.Level(), ts.SkIdeal.Value.P.Level()).Add(sk.Value, ts.SkIdeal.Value, ts.SkIdeal.Value)
 	}
 
-	ts.HelperSession, err = NewSession(helperID, sp, nil)
+	ts.Helper, err = helium.NewSession(helperID, sp, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	ts.CachedKeyBackend = NewCachedPublicKeyBackend(NewTestKeyBackend(ts.RlweParams, ts.SkIdeal))
+	ts.CachedKeyBackend = helium.NewCachedPublicKeyBackend(NewKeyProvider(ts.RlweParams, ts.SkIdeal))
 
 	ts.KeyGen = rlwe.NewKeyGenerator(ts.RlweParams)
 	ts.Encryptor = rlwe.NewEncryptor(ts.RlweParams, ts.SkIdeal)
@@ -97,15 +102,15 @@ func NewTestSessionFromParams(sp Parameters, helperID NodeID) (*TestSession, err
 	return ts, nil
 }
 
-func GenTestSecretKeys(sessParams Parameters) (secs map[NodeID]*Secrets, err error) {
+func GenSecretKeys(sessParams helium.Parameters) (secs map[helium.NodeID]*helium.Secrets, err error) {
 	params, err := rlwe.NewParametersFromLiteral(sessParams.FHEParameters.GetRLWEParametersLiteral())
 	if err != nil {
 		return nil, err
 	}
 
-	secs = make(map[NodeID]*Secrets, len(sessParams.Nodes))
+	secs = make(map[helium.NodeID]*helium.Secrets, len(sessParams.Nodes))
 	for _, nid := range sessParams.Nodes {
-		ss := new(Secrets)
+		ss := new(helium.Secrets)
 		secs[nid] = ss
 		ss.PrivateSeed = []byte(nid) // uses the node id as the private seed for testing
 	}
@@ -115,7 +120,7 @@ func GenTestSecretKeys(sessParams Parameters) (secs map[NodeID]*Secrets, err err
 	}
 
 	// simulates the generation of the shamir threshold keys
-	shares := make(map[NodeID]map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
+	shares := make(map[helium.NodeID]map[helium.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 	thresholdizer := drlwe.NewThresholdizer(params)
 
 	for nidi, ssi := range secs {
@@ -125,12 +130,12 @@ func GenTestSecretKeys(sessParams Parameters) (secs map[NodeID]*Secrets, err err
 			return nil, err
 		}
 
-		ski, err := genSecretKey(params, prngi)
+		ski, err := helium.NewSecretKeyFromSeed(params, ssi.PrivateSeed)
 		if err != nil {
 			return nil, err
 		}
 
-		shares[nidi] = make(map[NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
+		shares[nidi] = make(map[helium.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
 
 		// TODO: add seeding to Thresholdizer and replace the following code with the Thresholdizer.GenShamirPolynomial method
 		usampleri := ringqp.NewUniformSampler(prngi, *params.RingQP())

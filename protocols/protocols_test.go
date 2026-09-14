@@ -1,12 +1,14 @@
 package protocols
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
 	"testing"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
@@ -42,8 +44,8 @@ func TestProtocols(t *testing.T) {
 
 		params := TestPN12QP109
 
-		hid := sessions.NodeID("helper")
-		testSess, err := sessions.NewTestSession(ts.N, ts.T, params, hid)
+		hid := helium.NodeID("helper")
+		testSess, err := heliumtest.NewSessions(ts.N, ts.T, params, hid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +74,7 @@ func TestProtocols(t *testing.T) {
 			t.Run(fmt.Sprintf("N=%d/T=%d/Type=%s", ts.N, ts.T, pd.Signature.Type), func(t *testing.T) {
 				var input Input
 
-				p, err := NewProtocol(pd, testSess.HelperSession)
+				p, err := NewProtocol(pd, testSess.Helper)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -105,14 +107,14 @@ func TestProtocols(t *testing.T) {
 	}
 }
 
-func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *testing.T) AggregationOutput {
+func runProto(pd Descriptor, testSess heliumtest.Sessions, input Input, t *testing.T) AggregationOutput {
 
-	helperP, err := NewProtocol(pd, testSess.HelperSession)
+	helperP, err := NewProtocol(pd, testSess.Helper)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := sessions.NewBackgroundContext(testSess.SessParams.ID)
+	ctx := context.Background()
 	incoming := make(chan Share)
 	resc := make(chan AggregationOutput, 1)
 	errc := make(chan error, 1)
@@ -121,7 +123,7 @@ func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *test
 		resc <- <-aggOutC
 	}()
 
-	for nid, nodeSess := range testSess.NodeSessions {
+	for nid, nodeSess := range testSess.Nodes {
 		nodeP, err := NewProtocol(pd, nodeSess)
 
 		if err != nil {
@@ -139,7 +141,7 @@ func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *test
 			continue
 		}
 
-		if pd.Signature.Type == DEC && sessions.NodeID(pd.Signature.Args["target"]) == nid {
+		if pd.Signature.Type == DEC && helium.NodeID(pd.Signature.Args["target"]) == nid {
 			require.NotNil(t, err, "decryption receiver should not generate a share")
 			continue
 		}
@@ -168,9 +170,9 @@ func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *test
 	return aggOut
 }
 
-func checkOutput(out interface{}, pd Descriptor, testSess sessions.TestSession, t *testing.T) {
+func checkOutput(out interface{}, pd Descriptor, testSess heliumtest.Sessions, t *testing.T) {
 
-	nParties := len(testSess.NodeSessions)
+	nParties := len(testSess.Nodes)
 	sk := testSess.SkIdeal
 	params := testSess.RlweParams
 	decompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
@@ -194,7 +196,7 @@ func checkOutput(out interface{}, pd Descriptor, testSess sessions.TestSession, 
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	case DEC:
-		recSk, err := testSess.NodeSessions[sessions.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
+		recSk, err := testSess.Nodes[helium.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
 		if err != nil {
 			t.Fatal(err)
 		}

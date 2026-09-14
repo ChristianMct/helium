@@ -1,35 +1,35 @@
-package circuits
+package heliumtest
 
 import (
 	"fmt"
 	"log"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
-// TestRuntime is an implementation of the Runtime interface for testing circuits
+// Runtime is an implementation of the helium.CircuitRuntime interface for testing circuits
 // locally, without any node. Inputs are provided as plaintexts and encrypted on
 // the fly under the test session's ideal secret key; outputs are collected.
-type TestRuntime struct {
-	*sessions.TestSession
+type Runtime struct {
+	*Sessions
 
-	circuit Circuit
-	md      *Metadata
-	inputs  func(OperandID) *rlwe.Plaintext
+	circuit helium.Circuit
+	md      *helium.Metadata
+	inputs  func(helium.OperandID) *rlwe.Plaintext
 
-	evaluator Evaluator
-	outputs   map[string]*OutputOperand
+	evaluator helium.Evaluator
+	outputs   map[string]*helium.OutputOperand
 }
 
-// NewTestRuntime creates a TestRuntime for the evaluation of circuit c as described by cd,
+// NewRuntime creates a Runtime for the evaluation of circuit c as described by cd,
 // with the inputs provided by the given function.
-func NewTestRuntime(tsess *sessions.TestSession, c Circuit, cd Descriptor, inputs func(OperandID) *rlwe.Plaintext) (*TestRuntime, error) {
+func NewRuntime(tsess *Sessions, c helium.Circuit, cd helium.Descriptor, inputs func(helium.OperandID) *rlwe.Plaintext) (*Runtime, error) {
 	itf, err := c.Describe(cd.Signature, tsess.FHEParameters)
 	if err != nil {
 		return nil, err
 	}
-	md, err := Resolve(cd, itf, tsess.SessParams.Nodes)
+	md, err := helium.Resolve(cd, itf, tsess.SessParams.Nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -43,26 +43,26 @@ func NewTestRuntime(tsess *sessions.TestSession, c Circuit, cd Descriptor, input
 		gks = append(gks, tsess.KeyGen.GenGaloisKeyNew(galEl, tsess.SkIdeal))
 	}
 
-	tr := &TestRuntime{
-		TestSession: tsess,
-		circuit:     c,
-		md:          md,
-		inputs:      inputs,
-		evaluator:   NewEvaluator(tsess.FHEParameters, rlwe.NewMemEvaluationKeySet(rlk, gks...)),
-		outputs:     make(map[string]*OutputOperand, len(itf.Outputs)),
+	tr := &Runtime{
+		Sessions:  tsess,
+		circuit:   c,
+		md:        md,
+		inputs:    inputs,
+		evaluator: helium.NewEvaluator(tsess.FHEParameters, rlwe.NewMemEvaluationKeySet(rlk, gks...)),
+		outputs:   make(map[string]*helium.OutputOperand, len(itf.Outputs)),
 	}
 	for name, id := range md.Outputs {
-		tr.outputs[name] = NewOutputOperand(id)
+		tr.outputs[name] = helium.NewOutputOperand(id)
 	}
 	return tr, nil
 }
 
 // Run evaluates the circuit and returns its outputs, by name.
-func (tr *TestRuntime) Run() (map[string]Operand, error) {
+func (tr *Runtime) Run() (map[string]helium.Operand, error) {
 	if err := tr.circuit.Eval(tr); err != nil {
 		return nil, err
 	}
-	outs := make(map[string]Operand, len(tr.outputs))
+	outs := make(map[string]helium.Operand, len(tr.outputs))
 	for name, oo := range tr.outputs {
 		op, set := oo.Get()
 		if !set {
@@ -74,36 +74,36 @@ func (tr *TestRuntime) Run() (map[string]Operand, error) {
 }
 
 // Metadata returns the resolved metadata of the circuit evaluation.
-func (tr *TestRuntime) Metadata() *Metadata {
+func (tr *Runtime) Metadata() *helium.Metadata {
 	return tr.md
 }
 
-func (tr *TestRuntime) Descriptor() Descriptor {
+func (tr *Runtime) Descriptor() helium.Descriptor {
 	return tr.md.Descriptor.Clone()
 }
 
-func (tr *TestRuntime) Parameters() sessions.FHEParameters {
+func (tr *Runtime) Parameters() helium.FHEParameters {
 	return tr.FHEParameters
 }
 
-func (tr *TestRuntime) Keys(Keys) {}
+func (tr *Runtime) Keys(helium.Keys) {}
 
-func (tr *TestRuntime) Input(p Port) *FutureOperand {
+func (tr *Runtime) Input(p helium.Port) *helium.FutureOperand {
 	id, has := tr.md.InputID(p)
 	if !has {
 		panic(fmt.Errorf("input %s is not declared in the circuit interface", p))
 	}
-	fo := NewFutureOperand(id)
+	fo := helium.NewFutureOperand(id)
 	fo.Set(tr.encrypt(id))
 	return fo
 }
 
-func (tr *TestRuntime) InputSum(name string, _ ...string) *FutureOperand {
+func (tr *Runtime) InputSum(name string, _ ...string) *helium.FutureOperand {
 	id, has := tr.md.SumID(name)
 	if !has {
 		panic(fmt.Errorf("summed input %s is not declared in the circuit interface", name))
 	}
-	fo := NewFutureOperand(id)
+	fo := helium.NewFutureOperand(id)
 
 	ptAgg := rlwe.NewPlaintext(tr.RlweParams, tr.RlweParams.MaxLevel())
 	for _, cid := range tr.md.SumInputs[name] {
@@ -122,7 +122,7 @@ func (tr *TestRuntime) InputSum(name string, _ ...string) *FutureOperand {
 	return fo
 }
 
-func (tr *TestRuntime) Output(name string) *OutputOperand {
+func (tr *Runtime) Output(name string) *helium.OutputOperand {
 	oo, has := tr.outputs[name]
 	if !has {
 		panic(fmt.Errorf("output %s is not declared in the circuit interface", name))
@@ -130,15 +130,15 @@ func (tr *TestRuntime) Output(name string) *OutputOperand {
 	return oo
 }
 
-func (tr *TestRuntime) Evaluator() Evaluator {
+func (tr *Runtime) Evaluator() helium.Evaluator {
 	return tr.evaluator
 }
 
-func (tr *TestRuntime) Logf(msg string, v ...any) {
-	log.Printf("[TestRuntime] %s\n", fmt.Sprintf(msg, v...))
+func (tr *Runtime) Logf(msg string, v ...any) {
+	log.Printf("[heliumtest] %s\n", fmt.Sprintf(msg, v...))
 }
 
-func (tr *TestRuntime) encrypt(id OperandID) *rlwe.Ciphertext {
+func (tr *Runtime) encrypt(id helium.OperandID) *rlwe.Ciphertext {
 	pt := tr.inputs(id)
 	if pt == nil {
 		panic(fmt.Errorf("input provider returned nil input for %s", id))

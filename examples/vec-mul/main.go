@@ -8,76 +8,75 @@ import (
 	"time"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/objectstore"
-	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium/heliumtest"
+	"github.com/ChristianMct/helium/helper"
 	"github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
 var (
 	// sessionParams defines the session parameters for the example application
-	sessionParams = sessions.Parameters{
-		ID:    "example-session",                                         // the id of the session must be unique
-		Nodes: []sessions.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
+	sessionParams = helium.Parameters{
+		ID:    "example-session",                                       // the id of the session must be unique
+		Nodes: []helium.NodeID{"node-1", "node-2", "node-3", "node-4"}, // the nodes that will participate in the session
 		FHEParameters: bgv.ParametersLiteral{ // the FHE parameters
 			LogN:             14,
 			LogQ:             []int{56, 55, 55, 54, 54, 54},
 			LogP:             []int{55, 55},
 			PlaintextModulus: 65537,
 		},
-		Threshold:  3,                                                                                             // the number of honest nodes assumed by the system.
-		ShamirPks:  map[sessions.NodeID]mhe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
-		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                                 // the CRS
+		Threshold:  3,                                                                                           // the number of honest nodes assumed by the system.
+		ShamirPks:  map[helium.NodeID]mhe.ShamirPublicPoint{"node-1": 1, "node-2": 2, "node-3": 3, "node-4": 4}, // the shamir public-key of the nodes for the t-out-of-n-threshold scheme.
+		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                               // the CRS
 	}
 
 	// the configuration of peer nodes
-	peerNodeConfig = helium.Config{
-		ID:                "",       // read from command line args
-		HelperID:          "helper", // the node id of the helper node
-		SessionParameters: []sessions.Parameters{sessionParams},
-
-		// in this example, peer node can only participate in one protocol at a time
-		ProtocolsConfig: protocols.Config{MaxParticipation: 1},
-
-		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},   // use a volatile in-memory store for state
-		TLSConfig:         helium.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
+	peerNodeConfig = helper.Config{
+		Config: helium.Config{
+			ID:                "", // read from command line args
+			SessionParameters: sessionParams,
+			// in this example, peer node can only participate in one protocol at a time
+			MaxParticipation: 1,
+			ObjectStore:      helium.ObjectStoreConfig{BackendName: "mem"}, // use a volatile in-memory store for state
+		},
+		HelperID: "helper",                                 // the node id of the helper node
+		TLS:      helper.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
 	}
 
 	// the configuration of the helper node. Similar as for peer node, but enables multiple circuit evaluations at once.
-	helperConfig = helium.Config{
-		ID:                "", // read from command line args
-		HelperID:          "helper",
-		SessionParameters: []sessions.Parameters{sessionParams},
-
+	helperConfig = helper.Config{
+		Config: helium.Config{
+			ID:                "", // read from command line args
+			SessionParameters: sessionParams,
+			MaxEvaluation:     16,
+			ObjectStore:       helium.ObjectStoreConfig{BackendName: "mem"},
+		},
+		HelperID: "helper",
 		// each node is not chosen as participant for more than one protocol at the time.
-		CoordinatorConfig: protocols.CoordinatorConfig{MaxProtoPerNode: 1},
-		CircuitsConfig:    circuits.Config{MaxEvaluation: 16},
-		ObjectStoreConfig: objectstore.Config{BackendName: "mem"},
-		TLSConfig:         helium.TLSConfig{InsecureChannels: true},
+		MaxProtoPerNode: 1,
+		TLS:             helper.TLSConfig{InsecureChannels: true},
 	}
 
 	// the node list for the example system
-	nodelist = helium.List{
-		helium.Info{NodeID: "helper", Address: "helper:40000"},
-		helium.Info{NodeID: "node-1"}, helium.Info{NodeID: "node-2"},
-		helium.Info{NodeID: "node-3"}, helium.Info{NodeID: "node-4"},
+	nodelist = helper.List{
+		helper.Info{NodeID: "helper", Address: "helper:40000"},
+		helper.Info{NodeID: "node-1"}, helper.Info{NodeID: "node-2"},
+		helper.Info{NodeID: "node-3"}, helper.Info{NodeID: "node-4"},
 	}
 
 	// the application defines the MHE circuits to be evaluated, their required setup, and the
-	// Main function run by every node (set in main, see runApp).
+	// Main function run by every node.
 	app = helium.App{
-		SetupDescription: &helium.SetupDescription{
+		Setup: &helium.SetupDescription{
 			Cpk: true,       // the circuit requires the collective public-key (for encryption)
 			Rlk: true,       // the circuit requires the relinearization key (for homomorphic multiplication)
 			Gks: []uint64{}, // the circuit does not require any galois keys (for homomorphic rotation)
 		},
-		Circuits: map[circuits.Name]circuits.Circuit{
+		Circuits: map[helium.Name]helium.Circuit{
 			// defines a circuit named "mul-4" that multiplies 4 inputs. Its interface (inputs, outputs
 			// and required keys) is derived by symbolic execution of the function: the relinearization
 			// key is inferred from the use of MulRelinNew.
-			"mul-4": circuits.FromFunc(func(rt circuits.Runtime) error {
+			"mul-4": helium.FromFunc(func(rt helium.CircuitRuntime) error {
 
 				// declares the inputs of the parties. The party ids are place-holders, the mapping to actual
 				// node ids is provided when requesting the circuit's evaluation.
@@ -106,7 +105,7 @@ var (
 		},
 		// the application's Main function: every node runs it, the helper acting as the evaluator
 		// and the peers providing their inputs
-		Main: func(ctx context.Context, rt *helium.Runtime) error {
+		Main: func(ctx context.Context, rt helium.Runtime) error {
 
 			params := rt.Parameters().(bgv.Parameters)
 
@@ -122,10 +121,10 @@ var (
 
 			// evaluates the circuit: the helper evaluates it, the peers provide their input
 			outs, err := rt.Evaluate(ctx,
-				circuits.Descriptor{
-					Signature: circuits.Signature{Name: "mul-4"}, // the name of the circuit to be evaluated
-					CircuitID: "mul-4-0",                         // a unique, user-defined id for the circuit evaluation
-					NodeMapping: map[string]sessions.NodeID{ // the mapping from party ids in the circuit to actual node ids
+				helium.Descriptor{
+					Signature: helium.Signature{Name: "mul-4"}, // the name of the circuit to be evaluated
+					CircuitID: "mul-4-0",                       // a unique, user-defined id for the circuit evaluation
+					NodeMapping: map[string]helium.NodeID{ // the mapping from party ids in the circuit to actual node ids
 						"p0": "node-1",
 						"p1": "node-2",
 						"p2": "node-3",
@@ -157,9 +156,9 @@ var (
 )
 
 var (
-	nodeID   sessions.NodeID
-	nodeAddr helium.Address
-	helperID sessions.NodeID = "helper"
+	nodeID   helium.NodeID
+	nodeAddr helper.Address
+	helperID helium.NodeID = "helper"
 	input    uint64
 )
 
@@ -180,7 +179,7 @@ func main() {
 	log.Printf("%s | [main] started\n", nodeID)
 
 	// completes the config according to the node id
-	var config helium.Config
+	var config helper.Config
 	if nodeID == helperID {
 		config = helperConfig
 	} else {
@@ -188,18 +187,18 @@ func main() {
 	}
 	config.ID = nodeID
 
-	ctx := sessions.NewBackgroundContext(config.SessionParameters[0].ID)
+	ctx := context.Background()
 	start := time.Now()
 
 	if nodeID == helperID {
-		hsv, err := helium.RunHeliumServer(ctx, config, nodelist, app)
+		hsv, err := helper.RunServer(ctx, config, nodelist, app)
 		if err != nil {
 			log.Fatalf("%s | [main] error running node: %v\n", nodeID, err)
 		}
 		fmt.Println(hsv.GetStats())
 		hsv.GracefulStop()
 	} else {
-		hc, err := helium.RunHeliumClient(ctx, config, nodelist, loadSecrets(sessionParams, nodeID), app)
+		hc, err := helper.RunClient(ctx, config, nodelist, loadSecrets(sessionParams, nodeID), app)
 		if err != nil {
 			log.Fatalf("%s | [main] error running node: %v\n", nodeID, err)
 		}
@@ -210,15 +209,15 @@ func main() {
 }
 
 // simulates loading the secrets. In a real application, the secrets would be loaded from a secure storage.
-func loadSecrets(params sessions.Parameters, nid sessions.NodeID) helium.SecretProvider {
+func loadSecrets(params helium.Parameters, nid helium.NodeID) helium.SecretProvider {
 
-	var sp helium.SecretProvider = func(sid sessions.ID, nid sessions.NodeID) (*sessions.Secrets, error) {
+	var sp helium.SecretProvider = func(sid helium.SessionID, nid helium.NodeID) (*helium.Secrets, error) {
 
 		if sid != params.ID {
 			return nil, fmt.Errorf("no secret for session %s", sid)
 		}
 
-		ss, err := sessions.GenTestSecretKeys(params)
+		ss, err := heliumtest.GenSecretKeys(params)
 		if err != nil {
 			return nil, err
 		}

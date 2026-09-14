@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -16,7 +16,7 @@ import (
 
 // sumCRS returns the seed of the common random polynomial used to encrypt the
 // contributions to a summed input, so that the evaluator can sum them.
-func sumCRS(sess *sessions.Session, cid sessions.CircuitID, name string) []byte {
+func sumCRS(sess *helium.Session, cid helium.CircuitID, name string) []byte {
 	var crs []byte
 	crs = append(crs, sess.PublicSeed...)
 	crs = append(crs, []byte(fmt.Sprintf("%s/%s", cid, name))...)
@@ -24,7 +24,7 @@ func sumCRS(sess *sessions.Session, cid sessions.CircuitID, name string) []byte 
 }
 
 // sumContribution returns the summed input name the operand contributes to, if any.
-func sumContribution(md *Metadata, id OperandID) (string, bool) {
+func sumContribution(md *helium.Metadata, id helium.OperandID) (string, bool) {
 	for name, ids := range md.SumInputs {
 		for _, cid := range ids {
 			if cid == id {
@@ -37,7 +37,7 @@ func sumContribution(md *Metadata, id OperandID) (string, bool) {
 
 // sendInputs obtains the node's inputs from the input provider, encrypts them and sends
 // them to the evaluator.
-func (e *Engine) sendInputs(ctx context.Context, md *Metadata, ids []OperandID) error {
+func (e *Engine) sendInputs(ctx context.Context, md *helium.Metadata, ids []helium.OperandID) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -61,7 +61,7 @@ func (e *Engine) sendInputs(ctx context.Context, md *Metadata, ids []OperandID) 
 	}
 
 	expected := utils.NewSet(ids)
-	provided := utils.NewEmptySet[OperandID]()
+	provided := utils.NewEmptySet[helium.OperandID]()
 	for in := range inChan {
 		if !expected.Contains(in.ID) {
 			e.Logf("skipping unexpected input %s", in.ID)
@@ -75,7 +75,7 @@ func (e *Engine) sendInputs(ctx context.Context, md *Metadata, ids []OperandID) 
 		if err != nil {
 			return fmt.Errorf("cannot encrypt input %s: %w", in.ID, err)
 		}
-		if err := e.trans.PutOperand(ctx, md.Descriptor, Operand{ID: in.ID, Ciphertext: ct}); err != nil {
+		if err := e.trans.PutOperand(ctx, md.Descriptor, helium.Operand{ID: in.ID, Ciphertext: ct}); err != nil {
 			return fmt.Errorf("cannot send input %s: %w", in.ID, err)
 		}
 		provided.Add(in.ID)
@@ -91,12 +91,12 @@ func (e *Engine) sendInputs(ctx context.Context, md *Metadata, ids []OperandID) 
 // inputEncryptor encodes and encrypts a node's inputs under the collective public key,
 // or under the node's group secret key with a common random polynomial for summed inputs.
 type inputEncryptor struct {
-	sess      *sessions.Session
+	sess      *helium.Session
 	encoder   any
 	encryptor *rlwe.Encryptor
 }
 
-func newInputEncryptor(sess *sessions.Session, cpk *rlwe.PublicKey) (*inputEncryptor, error) {
+func newInputEncryptor(sess *helium.Session, cpk *rlwe.PublicKey) (*inputEncryptor, error) {
 	ie := &inputEncryptor{sess: sess, encryptor: rlwe.NewEncryptor(sess.Params, cpk)}
 	switch p := sess.Params.(type) {
 	case bgv.Parameters:
@@ -109,7 +109,7 @@ func newInputEncryptor(sess *sessions.Session, cpk *rlwe.PublicKey) (*inputEncry
 	return ie, nil
 }
 
-func (ie *inputEncryptor) encrypt(md *Metadata, in Input) (*rlwe.Ciphertext, error) {
+func (ie *inputEncryptor) encrypt(md *helium.Metadata, in Input) (*rlwe.Ciphertext, error) {
 	sumName, isSum := sumContribution(md, in.ID)
 
 	var pt *rlwe.Plaintext

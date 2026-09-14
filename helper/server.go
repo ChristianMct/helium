@@ -1,4 +1,4 @@
-package helium
+package helper
 
 import (
 	"context"
@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ChristianMct/helium/api"
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/api/pb"
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/coordinator"
+	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/ChristianMct/helium/utils"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -30,18 +30,18 @@ const (
 	KeepaliveTimeout = 5 * time.Second
 )
 
-// HeliumServer is the helper node of the helper-assisted setting. It runs the
-// protocol engine, the coordinator and the circuit engine of the helper, owns
-// the node-level event log, and serves the peer nodes over gRPC.
+// Server is the helper node of the helper-assisted setting. It runs the protocol
+// engine, the coordinator and the circuit engine of the helper, owns the node-level
+// event log, and serves the peer nodes over gRPC.
 //
-// Run runs an App on the server: the setup phase, then the app's Main function
-// through which the application evaluates circuits and runs protocols (see Runtime).
-// In the current implementation, a server cannot be run twice.
-type HeliumServer struct {
-	id       sessions.NodeID
+// Run runs an application on the server: the setup phase, then the app's Main
+// function through which the application evaluates circuits and runs protocols
+// (see helium.Runtime). In the current implementation, a server cannot be run twice.
+type Server struct {
+	id       helium.NodeID
 	config   Config
 	nodeList List
-	sess     *sessions.Session
+	sess     *helium.Session
 
 	engine *protocols.MHEMPC
 	coord  *protocols.CentralCoordinator
@@ -49,7 +49,7 @@ type HeliumServer struct {
 	compute *circuits.Engine
 
 	// node-level event log
-	log *coordinator.Log[Event]
+	log *coordinator.Log[node.Event]
 
 	// grpc API
 	*grpc.Server
@@ -57,8 +57,10 @@ type HeliumServer struct {
 	statsHandler
 }
 
-// NewHeliumServer creates a new helium server from the provided config and node list.
-func NewHeliumServer(config Config, nl List) (*HeliumServer, error) {
+var _ node.Starter = (*Server)(nil)
+
+// NewServer creates a new helper server from the provided config and node list.
+func NewServer(config Config, nl List) (*Server, error) {
 	if err := ValidateConfig(config, nl); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -66,41 +68,41 @@ func NewHeliumServer(config Config, nl List) (*HeliumServer, error) {
 		return nil, fmt.Errorf("the server must be the helper node, got id %s and helper id %s", config.ID, config.HelperID)
 	}
 
-	hsv := new(HeliumServer)
+	hsv := new(Server)
 	hsv.id = config.ID
 	hsv.config = config
 	hsv.nodeList = nl
 
 	var err error
-	hsv.sess, err = sessions.NewSession(config.ID, config.SessionParameters[0], nil) // the helper node has no secrets
+	hsv.sess, err = helium.NewSession(config.ID, config.SessionParameters, nil) // the helper node has no secrets
 	if err != nil {
 		return nil, fmt.Errorf("cannot create session: %w", err)
 	}
 
-	os, err := objectstore.NewObjectStoreFromConfig(config.ObjectStoreConfig)
+	os, err := objectstore.NewObjectStoreFromConfig(config.ObjectStore)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create object store: %w", err)
 	}
 
-	hsv.engine, err = protocols.NewMHEMPC(hsv.id, hsv.sess, config.ProtocolsConfig, noShareTransport{},
+	hsv.engine, err = protocols.NewMHEMPC(hsv.id, hsv.sess, protocols.Config{MaxParticipation: config.MaxParticipation}, noShareTransport{},
 		protocols.NewObjectStoreResultBackend(os, hsv.sess.ID), hsv.getKeySwitchInput)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create protocol engine: %w", err)
 	}
 
-	hsv.coord, err = protocols.NewCentralCoordinator(hsv.id, hsv.sess, config.CoordinatorConfig, hsv.engine)
+	hsv.coord, err = protocols.NewCentralCoordinator(hsv.id, hsv.sess, protocols.CoordinatorConfig{MaxProtoPerNode: config.MaxProtoPerNode}, hsv.engine)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create coordinator: %w", err)
 	}
 
 	hsv.KeyProvider = protocols.NewKeyProvider(hsv.engine)
 
-	hsv.compute, err = circuits.NewEngine(hsv.id, hsv.sess, config.CircuitsConfig, noOperandTransport{}, sessions.NewCachedPublicKeyBackend(hsv.KeyProvider))
+	hsv.compute, err = circuits.NewEngine(hsv.id, hsv.sess, circuits.Config{MaxEvaluation: config.MaxEvaluation}, noOperandTransport{}, helium.NewCachedPublicKeyBackend(hsv.KeyProvider))
 	if err != nil {
-		return nil, fmt.Errorf("cannot create compute engine: %w", err)
+		return nil, fmt.Errorf("cannot create circuit engine: %w", err)
 	}
 
-	hsv.log = coordinator.NewLog[Event]()
+	hsv.log = coordinator.NewLog[node.Event]()
 
 	interceptors := []grpc.UnaryServerInterceptor{
 		// t.serverSigChecker,
@@ -124,22 +126,22 @@ func NewHeliumServer(config Config, nl List) (*HeliumServer, error) {
 }
 
 // ID returns the node id of the server.
-func (hsv *HeliumServer) ID() sessions.NodeID {
+func (hsv *Server) ID() helium.NodeID {
 	return hsv.id
 }
 
-// Session returns the server's session.
-func (hsv *HeliumServer) Session() *sessions.Session {
+// Session returns the server's session state.
+func (hsv *Server) Session() *helium.Session {
 	return hsv.sess
 }
 
 // Protocols returns the helper's protocol engine.
-func (hsv *HeliumServer) Protocols() *protocols.MHEMPC {
+func (hsv *Server) Protocols() *protocols.MHEMPC {
 	return hsv.engine
 }
 
 // Circuits returns the helper's circuit engine.
-func (hsv *HeliumServer) Circuits() *circuits.Engine {
+func (hsv *Server) Circuits() *circuits.Engine {
 	return hsv.compute
 }
 
@@ -148,20 +150,19 @@ func (hsv *HeliumServer) Circuits() *circuits.Engine {
 // through which the application requests circuit evaluations and protocols. Once Main
 // returns, the helper terminates the coordination (the peers' event streams end once
 // all circuits and protocols are done) and Run returns Main's error, if any.
-func (hsv *HeliumServer) Run(ctx context.Context, app App) error {
+func (hsv *Server) Run(ctx context.Context, app helium.App) error {
 
-	if app.SetupDescription == nil {
+	if app.Setup == nil {
 		return fmt.Errorf("app must provide a setup description") // TODO: inference of setup description from registered circuits.
 	}
 	if err := hsv.compute.RegisterCircuits(app.Circuits); err != nil {
 		return fmt.Errorf("could not register all circuits: %w", err)
 	}
 
-	ctx = hsv.nodeContext(ctx)
-	rt := newRuntime(hsv.id, hsv.sess, hsv.engine, hsv.compute, hsv)
+	rt := node.New(hsv.id, hsv.sess, hsv.engine, hsv.compute, hsv)
 
 	// restores the completed protocols from the persistent state
-	sigs := SetupDescriptionToSignatureList(*app.SetupDescription)
+	sigs := node.SetupSignatures(*app.Setup)
 	restored, err := hsv.engine.RestoreCompleted(sigs...)
 	if err != nil {
 		return fmt.Errorf("cannot restore completed protocols: %w", err)
@@ -187,8 +188,8 @@ func (hsv *HeliumServer) Run(ctx context.Context, app App) error {
 	}()
 
 	// runs the engines on the gated coordination streams
-	protoCoord := &gatedCoordinator[protocols.Event]{register: hsv.coord.Register, publish: hsv.coord.Publish, g: rt.protoGate}
-	circCoord := &gatedCoordinator[circuits.Event]{register: hsv.registerCircuits, publish: hsv.publishCircuitEvent, g: rt.circGate}
+	protoCoord := rt.ProtocolCoordinator(hsv.coord)
+	circCoord := rt.CircuitCoordinator(&serverCircuitCoordinator{hsv})
 	var engines sync.WaitGroup
 	var protoErr, circErr error
 	engines.Add(2)
@@ -224,7 +225,7 @@ func (hsv *HeliumServer) Run(ctx context.Context, app App) error {
 		mainErr = app.Main(ctx, rt)
 		hsv.Logf("app main returned (err: %v)", mainErr)
 	}
-	rt.finish()
+	rt.Finish()
 
 	// terminates the coordination: waits for the running circuits to complete, then closes
 	// the coordinator, which closes the event log once all protocols are done
@@ -235,48 +236,47 @@ func (hsv *HeliumServer) Run(ctx context.Context, app App) error {
 	return errors.Join(mainErr, closeErr, protoErr, circErr)
 }
 
-// startCircuit implements starter: it appends the Started event of the circuit to the log.
-func (hsv *HeliumServer) startCircuit(_ context.Context, cd circuits.Descriptor) error {
+// StartCircuit implements node.Starter: it appends the Started event of the circuit to the log.
+func (hsv *Server) StartCircuit(_ context.Context, cd helium.Descriptor) error {
 	if err := hsv.compute.Validate(cd); err != nil {
 		return err
 	}
 	ev := circuits.Event{EventType: circuits.Started, Descriptor: cd}
-	return hsv.log.Append(Event{Circuit: &ev})
+	return hsv.log.Append(node.Event{Circuit: &ev})
 }
 
-// startProtocol implements starter: it requests the execution of the protocol to the coordinator.
-func (hsv *HeliumServer) startProtocol(ctx context.Context, sig protocols.Signature) error {
+// StartProtocol implements node.Starter: it requests the execution of the protocol to the coordinator.
+func (hsv *Server) StartProtocol(ctx context.Context, sig protocols.Signature) error {
 	return hsv.coord.RunSignature(ctx, sig)
 }
 
-// nodeContext returns a context with the node and session ids of the server.
-func (hsv *HeliumServer) nodeContext(ctx context.Context) context.Context {
-	return sessions.NewContext(sessions.ContextWithNodeID(ctx, hsv.id), hsv.sess.ID)
-}
-
-func (hsv *HeliumServer) appendProtocolEvents(evs ...protocols.Event) {
+func (hsv *Server) appendProtocolEvents(evs ...protocols.Event) {
 	for i := range evs {
 		ev := evs[i]
-		if err := hsv.log.Append(Event{Protocol: &ev}); err != nil {
+		if err := hsv.log.Append(node.Event{Protocol: &ev}); err != nil {
 			hsv.Logf("cannot append %s to log: %s", ev, err)
 		}
 	}
 }
 
 // getKeySwitchInput is the protocols.KeySwitchInputProvider of the helper's engine.
-func (hsv *HeliumServer) getKeySwitchInput(ctx context.Context, pd protocols.Descriptor) (*protocols.KeySwitchInput, error) {
+func (hsv *Server) getKeySwitchInput(ctx context.Context, pd protocols.Descriptor) (*protocols.KeySwitchInput, error) {
 	return hsv.compute.GetKeySwitchInput(ctx, pd)
 }
 
 // Log returns a copy of the node-level event log.
-func (hsv *HeliumServer) Log() []Event {
+func (hsv *Server) Log() []node.Event {
 	return hsv.log.Events()
 }
 
-// registerCircuits is the register function of the helper's circuit coordinator, backed
-// by the node-level log.
-func (hsv *HeliumServer) registerCircuits(ctx context.Context) (past []circuits.Event, live <-chan circuits.Event, err error) {
-	p, l := hsv.log.Register(ctx)
+// serverCircuitCoordinator is the circuits.Coordinator of the helper's circuit engine,
+// backed by the node-level log.
+type serverCircuitCoordinator struct {
+	hsv *Server
+}
+
+func (sc *serverCircuitCoordinator) Register(ctx context.Context) (past []circuits.Event, live <-chan circuits.Event, err error) {
+	p, l := sc.hsv.log.Register(ctx)
 	for _, ev := range p {
 		if ev.Circuit != nil {
 			past = append(past, *ev.Circuit)
@@ -299,9 +299,8 @@ func (hsv *HeliumServer) registerCircuits(ctx context.Context) (past []circuits.
 	return past, ch, nil
 }
 
-// publishCircuitEvent is the publish function of the helper's circuit coordinator.
-func (hsv *HeliumServer) publishCircuitEvent(_ context.Context, ev circuits.Event) error {
-	return hsv.log.Append(Event{Circuit: &ev})
+func (sc *serverCircuitCoordinator) Publish(_ context.Context, ev circuits.Event) error {
+	return sc.hsv.log.Append(node.Event{Circuit: &ev})
 }
 
 // noShareTransport is the protocols.ShareTransport of the helper's engine: the helper
@@ -320,11 +319,11 @@ func (noShareTransport) GetAggregationOutput(_ context.Context, pd protocols.Des
 // evaluates all circuits and never sends inputs nor queries operands.
 type noOperandTransport struct{}
 
-func (noOperandTransport) PutOperand(_ context.Context, cd circuits.Descriptor, _ circuits.Operand) error {
+func (noOperandTransport) PutOperand(_ context.Context, cd helium.Descriptor, _ helium.Operand) error {
 	return fmt.Errorf("the helper node does not send inputs (circuit %s)", cd.HID())
 }
 
-func (noOperandTransport) GetOperand(_ context.Context, id circuits.OperandID) (*circuits.Operand, error) {
+func (noOperandTransport) GetOperand(_ context.Context, id helium.OperandID) (*helium.Operand, error) {
 	return nil, fmt.Errorf("the helper node does not query operands (operand %s)", id)
 }
 
@@ -332,7 +331,7 @@ func (noOperandTransport) GetOperand(_ context.Context, id circuits.OperandID) (
 
 // Register is a gRPC handler for the Register method of the Helium service. It streams the
 // node-level event log to the peer, and tracks the peer's connection for the coordinator.
-func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) error {
+func (hsv *Server) Register(_ *pb.Void, stream pb.Helium_RegisterServer) error {
 	ctx := stream.Context()
 	nodeID := senderIDFromIncomingContext(ctx)
 	if len(nodeID) == 0 {
@@ -356,7 +355,7 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 		hsv.Logf("disconnected %s", nodeID)
 	}()
 
-	send := func(ev Event) error {
+	send := func(ev node.Event) error {
 		apiEv, err := getNodeEvent(ev)
 		if err != nil {
 			return err
@@ -382,21 +381,16 @@ func (hsv *HeliumServer) Register(_ *pb.Void, stream pb.Helium_RegisterServer) e
 }
 
 // PutShare is a gRPC handler for the PutShare method of the Helium service.
-func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *pb.Share) (*pb.Void, error) {
+func (hsv *Server) PutShare(ctx context.Context, apiShare *pb.Share) (*pb.Void, error) {
 
-	ctx, err := getContextFromIncomingContext(inctx)
-	if err != nil {
-		return nil, err
-	}
-
-	s, err := api.ToShare(apiShare)
+	s, err := ToShare(apiShare)
 	if err != nil {
 		hsv.Logf("got an invalid share: %s", err)
 		return nil, status.Errorf(codes.InvalidArgument, "invalid share: %s", err)
 	}
 
 	if err := hsv.engine.HandleShare(ctx, s); err != nil {
-		hsv.Logf("rejected share from %s: %s", senderIDFromIncomingContext(inctx), err)
+		hsv.Logf("rejected share from %s: %s", senderIDFromIncomingContext(ctx), err)
 		return nil, status.Errorf(codes.FailedPrecondition, "share rejected: %s", err)
 	}
 
@@ -404,44 +398,34 @@ func (hsv *HeliumServer) PutShare(inctx context.Context, apiShare *pb.Share) (*p
 }
 
 // GetAggregationOutput is a gRPC handler for the GetAggregationOutput method of the Helium service.
-func (hsv *HeliumServer) GetAggregationOutput(inctx context.Context, apipd *pb.ProtocolDescriptor) (*pb.AggregationOutput, error) {
+func (hsv *Server) GetAggregationOutput(ctx context.Context, apipd *pb.ProtocolDescriptor) (*pb.AggregationOutput, error) {
 
-	ctx, err := getContextFromIncomingContext(inctx)
-	if err != nil {
-		return nil, err
-	}
-
-	pd := api.ToProtocolDesc(apipd)
+	pd := ToProtocolDesc(apipd)
 	out, err := hsv.engine.GetAggregationOutput(ctx, *pd)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "no output for protocol %s: %s", pd.HID(), err)
 	}
 
-	s, err := api.GetShare(&out.Share)
+	s, err := GetShare(&out.Share)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "error converting share to API: %s", err)
 	}
 
-	hsv.Logf("aggregation output %s query from %s", pd.HID(), senderIDFromIncomingContext(inctx))
+	hsv.Logf("aggregation output %s query from %s", pd.HID(), senderIDFromIncomingContext(ctx))
 
 	return &pb.AggregationOutput{AggregatedShare: s}, nil
 }
 
 // GetCiphertext is a gRPC handler for the GetCiphertext method of the Helium service.
 // It returns the operand with the requested id.
-func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.CiphertextID) (*pb.Ciphertext, error) {
+func (hsv *Server) GetCiphertext(ctx context.Context, ctid *pb.CiphertextID) (*pb.Ciphertext, error) {
 
-	ctx, err := getContextFromIncomingContext(inctx)
-	if err != nil {
-		return nil, err
-	}
-
-	op, err := hsv.compute.GetOperand(ctx, circuits.OperandID(ctid.CiphertextId))
+	op, err := hsv.compute.GetOperand(ctx, helium.OperandID(ctid.CiphertextId))
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "%s", err)
 	}
 
-	apiCt, err := api.GetOperand(op)
+	apiCt, err := GetOperand(op)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "error converting operand to API: %s", err)
 	}
@@ -450,16 +434,11 @@ func (hsv *HeliumServer) GetCiphertext(inctx context.Context, ctid *pb.Ciphertex
 }
 
 // PutCiphertext is a gRPC handler for the PutCiphertext method of the Helium service.
-// It delivers an input operand to the compute engine.
-func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Ciphertext) (*pb.CiphertextID, error) {
-	op, err := api.ToOperand(apict)
+// It delivers an input operand to the circuit engine.
+func (hsv *Server) PutCiphertext(ctx context.Context, apict *pb.Ciphertext) (*pb.CiphertextID, error) {
+	op, err := ToOperand(apict)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operand: %s", err)
-	}
-
-	ctx, err := getContextFromIncomingContext(inctx)
-	if err != nil {
-		return nil, err
 	}
 
 	if err := hsv.compute.HandleOperand(ctx, *op); err != nil {
@@ -469,6 +448,6 @@ func (hsv *HeliumServer) PutCiphertext(inctx context.Context, apict *pb.Cipherte
 }
 
 // Logf logs a message with the server's prefix.
-func (hsv *HeliumServer) Logf(msg string, v ...any) {
-	log.Printf("%s | [HeliumServer] %s\n", hsv.id, fmt.Sprintf(msg, v...))
+func (hsv *Server) Logf(msg string, v ...any) {
+	log.Printf("%s | [helper.Server] %s\n", hsv.id, fmt.Sprintf(msg, v...))
 }

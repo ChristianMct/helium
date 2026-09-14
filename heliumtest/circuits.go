@@ -1,20 +1,21 @@
-package circuits
+package heliumtest
 
 import (
 	"fmt"
 
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
 )
 
-// TestCircuits contains a set of test circuits for the helium framework.
+// Circuits contains a set of test circuits for the helium framework.
 // The circuits are pure encrypted functions; decryption of their outputs is
 // requested separately by the application. Their required keys are inferred
 // by symbolic execution, except for bgv-add-n which declares its interface.
-var TestCircuits = map[Name]Circuit{
+var Circuits = map[helium.Name]helium.Circuit{
 
 	// bgv-add-2 outputs the sum of the inputs of p1 and p2.
-	"bgv-add-2": FromFunc(func(rt Runtime) error {
+	"bgv-add-2": helium.FromFunc(func(rt helium.CircuitRuntime) error {
 		params := rt.Parameters().(bgv.Parameters)
 		in1, in2 := rt.Input("//p1/in"), rt.Input("//p2/in")
 		out := rt.Output("out")
@@ -28,7 +29,7 @@ var TestCircuits = map[Name]Circuit{
 	}),
 
 	// bgv-mul-2 outputs the product of the inputs of p1 and p2.
-	"bgv-mul-2": FromFunc(func(rt Runtime) error {
+	"bgv-mul-2": helium.FromFunc(func(rt helium.CircuitRuntime) error {
 		params := rt.Parameters().(bgv.Parameters)
 		in1, in2 := rt.Input("//p1/in"), rt.Input("//p2/in")
 		out := rt.Output("out")
@@ -44,26 +45,26 @@ var TestCircuits = map[Name]Circuit{
 	// bgv-add-n outputs the sum of the inputs of p1 to pn, where n is a signature argument.
 	// Its interface is declared explicitly.
 	"bgv-add-n": {
-		Interface: func(sig Signature) (Interface, error) {
-			n, err := ArgumentOfType[int](sig, "n")
+		Interface: func(sig helium.Signature) (helium.Interface, error) {
+			n, err := helium.ArgumentOfType[int](sig, "n")
 			if err != nil {
-				return Interface{}, err
+				return helium.Interface{}, err
 			}
-			itf := Interface{Outputs: []string{"out"}}
+			itf := helium.Interface{Outputs: []string{"out"}}
 			for i := 0; i < n; i++ {
-				itf.Inputs = append(itf.Inputs, Port(fmt.Sprintf("//p%d/in", i+1)))
+				itf.Inputs = append(itf.Inputs, helium.Port(fmt.Sprintf("//p%d/in", i+1)))
 			}
 			return itf, nil
 		},
-		Eval: func(rt Runtime) error {
-			n, err := ArgumentOfType[int](rt.Descriptor().Signature, "n")
+		Eval: func(rt helium.CircuitRuntime) error {
+			n, err := helium.ArgumentOfType[int](rt.Descriptor().Signature, "n")
 			if err != nil {
 				return err
 			}
 			params := rt.Parameters().(bgv.Parameters)
-			in := make([]*FutureOperand, n)
+			in := make([]*helium.FutureOperand, n)
 			for i := 0; i < n; i++ {
-				in[i] = rt.Input(Port(fmt.Sprintf("//p%d/in", i+1)))
+				in[i] = rt.Input(helium.Port(fmt.Sprintf("//p%d/in", i+1)))
 			}
 			out := rt.Output("out")
 
@@ -80,7 +81,7 @@ var TestCircuits = map[Name]Circuit{
 	},
 
 	// bgv-add-all outputs the sum of the inputs of all the session nodes, as a summed input.
-	"bgv-add-all": FromFunc(func(rt Runtime) error {
+	"bgv-add-all": helium.FromFunc(func(rt helium.CircuitRuntime) error {
 		sum := rt.InputSum("sum")
 		out := rt.Output("out")
 		out.Set(sum.Get().Ciphertext)
@@ -89,10 +90,10 @@ var TestCircuits = map[Name]Circuit{
 
 	// bgv-rot-2 outputs the input of p1 rotated by k slots (a signature argument) plus the
 	// input of p2 with its rows swapped. The Galois keys are inferred.
-	"bgv-rot-2": FromFunc(rotate2),
+	"bgv-rot-2": helium.FromFunc(rotate2),
 
 	// bgv-innersum outputs the inner sum of 8 consecutive slots of the input of p1.
-	"bgv-innersum": FromFunc(func(rt Runtime) error {
+	"bgv-innersum": helium.FromFunc(func(rt helium.CircuitRuntime) error {
 		params := rt.Parameters().(bgv.Parameters)
 		in1 := rt.Input("//p1/in")
 		out := rt.Output("out")
@@ -106,7 +107,7 @@ var TestCircuits = map[Name]Circuit{
 	}),
 
 	// ckks-add-2 outputs the sum of the inputs of p1 and p2.
-	"ckks-add-2": FromFunc(func(rt Runtime) error {
+	"ckks-add-2": helium.FromFunc(func(rt helium.CircuitRuntime) error {
 		params := rt.Parameters().(ckks.Parameters)
 		in1, in2 := rt.Input("//p1/in"), rt.Input("//p2/in")
 		out := rt.Output("out")
@@ -120,7 +121,7 @@ var TestCircuits = map[Name]Circuit{
 	}),
 
 	// ckks-mul-2 outputs the product of the inputs of p1 and p2.
-	"ckks-mul-2": FromFunc(func(rt Runtime) error {
+	"ckks-mul-2": helium.FromFunc(func(rt helium.CircuitRuntime) error {
 		params := rt.Parameters().(ckks.Parameters)
 		in1, in2 := rt.Input("//p1/in"), rt.Input("//p2/in")
 		out := rt.Output("out")
@@ -135,12 +136,12 @@ var TestCircuits = map[Name]Circuit{
 
 	// ckks-rot-2 outputs the input of p1 rotated by k slots (a signature argument) plus the
 	// conjugate of the input of p2. The Galois keys are inferred.
-	"ckks-rot-2": FromFunc(rotate2),
+	"ckks-rot-2": helium.FromFunc(rotate2),
 }
 
 // rotate2 is the scheme-agnostic evaluation function of the bgv-rot-2 and ckks-rot-2 circuits.
-func rotate2(rt Runtime) error {
-	k, err := ArgumentOfType[int](rt.Descriptor().Signature, "k")
+func rotate2(rt helium.CircuitRuntime) error {
+	k, err := helium.ArgumentOfType[int](rt.Descriptor().Signature, "k")
 	if err != nil {
 		return err
 	}

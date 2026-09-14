@@ -8,7 +8,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
@@ -30,16 +30,16 @@ type Config struct {
 // delivered to the engine by calling its HandleOperand method.
 type OperandTransport interface {
 	// PutOperand sends an input operand of circuit cd to its evaluator.
-	PutOperand(ctx context.Context, cd Descriptor, op Operand) error
+	PutOperand(ctx context.Context, cd helium.Descriptor, op helium.Operand) error
 	// GetOperand queries an operand from its owner.
-	GetOperand(ctx context.Context, id OperandID) (*Operand, error)
+	GetOperand(ctx context.Context, id helium.OperandID) (*helium.Operand, error)
 }
 
 // InputProvider is the user-provided function called by the engine to obtain the node's
 // inputs to a circuit. It is called once per circuit evaluation with the ids of the operands
 // the node must provide, and returns a channel delivering them. The channel must be closed
 // once all inputs are sent.
-type InputProvider func(ctx context.Context, cd Descriptor, ids []OperandID) (<-chan Input, error)
+type InputProvider func(ctx context.Context, cd helium.Descriptor, ids []helium.OperandID) (<-chan Input, error)
 
 // Input is a node's input to a circuit. The following value types are supported:
 //   - *rlwe.Ciphertext: an already-encrypted input (not supported for summed inputs),
@@ -47,12 +47,12 @@ type InputProvider func(ctx context.Context, cd Descriptor, ids []OperandID) (<-
 //   - a Go slice supported by the session's scheme encoder (e.g., []uint64 for BGV,
 //     []float64 for CKKS), encoded and encrypted by the engine.
 type Input struct {
-	ID    OperandID
+	ID    helium.OperandID
 	Value any
 }
 
 // NoInput is an InputProvider for nodes that never provide inputs.
-var NoInput InputProvider = func(context.Context, Descriptor, []OperandID) (<-chan Input, error) {
+var NoInput InputProvider = func(context.Context, helium.Descriptor, []helium.OperandID) (<-chan Input, error) {
 	return nil, fmt.Errorf("node has no input")
 }
 
@@ -73,21 +73,21 @@ var NoInput InputProvider = func(context.Context, Descriptor, []OperandID) (<-ch
 // The outputs of completed circuits are held in an operand store and fetched lazily
 // from their owner when not available locally (see GetOperand).
 type Engine struct {
-	self    sessions.NodeID
-	sess    *sessions.Session
+	self    helium.NodeID
+	sess    *helium.Session
 	conf    Config
 	trans   OperandTransport
-	keys    sessions.PublicKeyProvider
+	keys    helium.PublicKeyProvider
 	inputs  InputProvider
-	library map[Name]Circuit
+	library map[helium.Name]helium.Circuit
 
 	mu          sync.Mutex
-	running     map[sessions.CircuitID]*runningCircuit
-	completed   map[sessions.CircuitID]Descriptor
-	failed      map[sessions.CircuitID]Descriptor
-	waiters     map[sessions.CircuitID][]chan completion
+	running     map[helium.CircuitID]*runningCircuit
+	completed   map[helium.CircuitID]helium.Descriptor
+	failed      map[helium.CircuitID]helium.Descriptor
+	waiters     map[helium.CircuitID][]chan completion
 	idleWaiters []chan struct{}
-	operands    map[OperandID]*Operand
+	operands    map[helium.OperandID]*helium.Operand
 	outbox      []Event
 	publishing  bool // whether events are being published (outside of the lock)
 	notify      chan struct{}
@@ -98,9 +98,9 @@ type Engine struct {
 
 // runningCircuit is the engine state for a running circuit.
 type runningCircuit struct {
-	cd      Descriptor
-	md      *Metadata
-	circuit Circuit
+	cd      helium.Descriptor
+	md      *helium.Metadata
+	circuit helium.Circuit
 	ctx     context.Context
 
 	executing       bool // whether the evaluator is ready to receive inputs
@@ -108,10 +108,10 @@ type runningCircuit struct {
 	inputsScheduled bool // participant: whether the input provision has been scheduled
 
 	// evaluator only
-	inputs  map[OperandID]*FutureOperand
-	outputs map[string]*OutputOperand
+	inputs  map[helium.OperandID]*helium.FutureOperand
+	outputs map[string]*helium.OutputOperand
 	sumsMu  sync.Mutex
-	sums    map[string]*FutureOperand
+	sums    map[string]*helium.FutureOperand
 
 	done chan struct{} // closed when the circuit leaves the running state
 }
@@ -120,7 +120,7 @@ type runningCircuit struct {
 // provides the collective public key (to encrypt inputs) and the evaluation keys
 // (to evaluate circuits). Circuits are registered with RegisterCircuit and the
 // node's inputs are provided by the InputProvider set with SetInputProvider.
-func NewEngine(self sessions.NodeID, sess *sessions.Session, conf Config, trans OperandTransport, keys sessions.PublicKeyProvider) (*Engine, error) {
+func NewEngine(self helium.NodeID, sess *helium.Session, conf Config, trans OperandTransport, keys helium.PublicKeyProvider) (*Engine, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("session must not be nil")
 	}
@@ -140,30 +140,30 @@ func NewEngine(self sessions.NodeID, sess *sessions.Session, conf Config, trans 
 		trans:     trans,
 		keys:      keys,
 		inputs:    NoInput,
-		library:   make(map[Name]Circuit),
-		running:   make(map[sessions.CircuitID]*runningCircuit),
-		completed: make(map[sessions.CircuitID]Descriptor),
-		failed:    make(map[sessions.CircuitID]Descriptor),
-		waiters:   make(map[sessions.CircuitID][]chan completion),
-		operands:  make(map[OperandID]*Operand),
+		library:   make(map[helium.Name]helium.Circuit),
+		running:   make(map[helium.CircuitID]*runningCircuit),
+		completed: make(map[helium.CircuitID]helium.Descriptor),
+		failed:    make(map[helium.CircuitID]helium.Descriptor),
+		waiters:   make(map[helium.CircuitID][]chan completion),
+		operands:  make(map[helium.OperandID]*helium.Operand),
 		notify:    make(chan struct{}, 1),
 		evalSem:   make(chan struct{}, conf.MaxEvaluation),
 	}, nil
 }
 
 // NodeID returns the id of the node running this engine.
-func (e *Engine) NodeID() sessions.NodeID {
+func (e *Engine) NodeID() helium.NodeID {
 	return e.self
 }
 
 // Session returns the session of this engine.
-func (e *Engine) Session() *sessions.Session {
+func (e *Engine) Session() *helium.Session {
 	return e.sess
 }
 
 // RegisterCircuit registers a circuit to the engine's library.
 // It returns an error if the circuit is already registered.
-func (e *Engine) RegisterCircuit(name Name, c Circuit) error {
+func (e *Engine) RegisterCircuit(name helium.Name, c helium.Circuit) error {
 	if c.Eval == nil {
 		return fmt.Errorf("circuit %s has no evaluation function", name)
 	}
@@ -178,7 +178,7 @@ func (e *Engine) RegisterCircuit(name Name, c Circuit) error {
 
 // RegisterCircuits registers a set of circuits to the engine's library.
 // It returns an error if any of the circuits is already registered.
-func (e *Engine) RegisterCircuits(cs map[Name]Circuit) error {
+func (e *Engine) RegisterCircuits(cs map[helium.Name]helium.Circuit) error {
 	for name, c := range cs {
 		if err := e.RegisterCircuit(name, c); err != nil {
 			return err
@@ -199,42 +199,42 @@ func (e *Engine) SetInputProvider(ip InputProvider) {
 
 // ---- roles
 
-func (e *Engine) isEvaluator(md *Metadata) bool {
+func (e *Engine) isEvaluator(md *helium.Metadata) bool {
 	return md.IsEvaluator(e.self)
 }
 
-func (e *Engine) isParticipant(md *Metadata) bool {
+func (e *Engine) isParticipant(md *helium.Metadata) bool {
 	return md.IsParticipant(e.self)
 }
 
 // resolve resolves the descriptor against the library and the session.
-func (e *Engine) resolve(cd Descriptor) (*Metadata, Circuit, error) {
+func (e *Engine) resolve(cd helium.Descriptor) (*helium.Metadata, helium.Circuit, error) {
 	c, has := e.library[cd.Name]
 	if !has {
-		return nil, Circuit{}, fmt.Errorf("no registered circuit for name \"%s\"", cd.Name)
+		return nil, helium.Circuit{}, fmt.Errorf("no registered circuit for name \"%s\"", cd.Name)
 	}
 	itf, err := c.Describe(cd.Signature, e.sess.Params)
 	if err != nil {
-		return nil, Circuit{}, fmt.Errorf("cannot describe circuit %s: %w", cd.Signature, err)
+		return nil, helium.Circuit{}, fmt.Errorf("cannot describe circuit %s: %w", cd.Signature, err)
 	}
-	md, err := Resolve(cd, itf, e.sess.Nodes)
+	md, err := helium.Resolve(cd, itf, e.sess.Nodes)
 	if err != nil {
-		return nil, Circuit{}, fmt.Errorf("cannot resolve circuit %s: %w", cd.HID(), err)
+		return nil, helium.Circuit{}, fmt.Errorf("cannot resolve circuit %s: %w", cd.HID(), err)
 	}
 	return md, c, nil
 }
 
 // Validate returns an error if the circuit described by cd cannot be evaluated
 // with the engine's library and session.
-func (e *Engine) Validate(cd Descriptor) error {
+func (e *Engine) Validate(cd helium.Descriptor) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, _, err := e.resolve(cd)
 	return err
 }
 
-// Metadata returns the resolved metadata of the circuit described by cd.
-func (e *Engine) Metadata(cd Descriptor) (*Metadata, error) {
+// helium.Metadata returns the resolved metadata of the circuit described by cd.
+func (e *Engine) Metadata(cd helium.Descriptor) (*helium.Metadata, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	md, _, err := e.resolve(cd)
@@ -274,7 +274,7 @@ func (e *Engine) HandleEvent(ctx context.Context, ev Event) error {
 // HandleOperand processes an input operand sent by a participant in a circuit for
 // which this node is the evaluator. It returns ErrCircuitNotRunning if the circuit
 // is not running at this node.
-func (e *Engine) HandleOperand(_ context.Context, op Operand) error {
+func (e *Engine) HandleOperand(_ context.Context, op helium.Operand) error {
 	if err := op.ID.Validate(); err != nil {
 		return err
 	}
@@ -320,15 +320,15 @@ func (e *Engine) apply(ctx context.Context, ev Event) error {
 		}
 		rc := &runningCircuit{cd: cd, md: md, circuit: c, ctx: ctx, done: make(chan struct{})}
 		if e.isEvaluator(md) {
-			rc.inputs = make(map[OperandID]*FutureOperand)
+			rc.inputs = make(map[helium.OperandID]*helium.FutureOperand)
 			for _, id := range md.ExpectedInputs() {
-				rc.inputs[id] = NewFutureOperand(id)
+				rc.inputs[id] = helium.NewFutureOperand(id)
 			}
-			rc.outputs = make(map[string]*OutputOperand, len(md.Outputs))
+			rc.outputs = make(map[string]*helium.OutputOperand, len(md.Outputs))
 			for name, id := range md.Outputs {
-				rc.outputs[name] = NewOutputOperand(id)
+				rc.outputs[name] = helium.NewOutputOperand(id)
 			}
-			rc.sums = make(map[string]*FutureOperand)
+			rc.sums = make(map[string]*helium.FutureOperand)
 		}
 		delete(e.failed, cid)
 		e.running[cid] = rc
@@ -373,7 +373,7 @@ func (e *Engine) wakeIdle() {
 }
 
 // markCompleted records cd as completed and wakes up the waiters.
-func (e *Engine) markCompleted(cd Descriptor) {
+func (e *Engine) markCompleted(cd helium.Descriptor) {
 	cid := cd.CircuitID
 	if rc, has := e.running[cid]; has {
 		e.dropRunning(rc)
@@ -387,7 +387,7 @@ func (e *Engine) markCompleted(cd Descriptor) {
 }
 
 // markFailed records cd as failed and wakes up the waiters with an error.
-func (e *Engine) markFailed(cd Descriptor) {
+func (e *Engine) markFailed(cd helium.Descriptor) {
 	cid := cd.CircuitID
 	e.failed[cid] = cd
 	for _, w := range e.waiters[cid] {
@@ -398,7 +398,7 @@ func (e *Engine) markFailed(cd Descriptor) {
 
 // completion is the result of waiting for a circuit's termination.
 type completion struct {
-	cd  Descriptor
+	cd  helium.Descriptor
 	err error
 }
 
@@ -458,7 +458,7 @@ func (e *Engine) evaluate(rc *runningCircuit) {
 		return
 	}
 
-	outs := make([]Operand, 0, len(rc.outputs))
+	outs := make([]helium.Operand, 0, len(rc.outputs))
 	for name, oo := range rc.outputs {
 		op, set := oo.Get()
 		if !set {
@@ -485,7 +485,7 @@ func (e *Engine) evaluate(rc *runningCircuit) {
 }
 
 // runCircuit runs the circuit's evaluation function, turning panics into errors.
-func runCircuit(c Circuit, rt Runtime) (err error) {
+func runCircuit(c helium.Circuit, rt helium.CircuitRuntime) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic during circuit evaluation: %v", r)
@@ -509,7 +509,7 @@ func (e *Engine) failLocal(rc *runningCircuit, cause error) {
 }
 
 // evaluatorFor returns an evaluator initialized with the given keys.
-func (e *Engine) evaluatorFor(ctx context.Context, keys Keys) (Evaluator, error) {
+func (e *Engine) evaluatorFor(ctx context.Context, keys helium.Keys) (helium.Evaluator, error) {
 	var rlk *rlwe.RelinearizationKey
 	if keys.Rlk {
 		var err error
@@ -525,7 +525,7 @@ func (e *Engine) evaluatorFor(ctx context.Context, keys Keys) (Evaluator, error)
 		}
 		gks = append(gks, gk)
 	}
-	return NewEvaluator(e.sess.Params, rlwe.NewMemEvaluationKeySet(rlk, gks...)), nil
+	return helium.NewEvaluator(e.sess.Params, rlwe.NewMemEvaluationKeySet(rlk, gks...)), nil
 }
 
 // provideInputs provides the node's inputs to circuit rc. It runs outside of the lock.
@@ -626,7 +626,7 @@ func (e *Engine) Logf(msg string, v ...any) {
 }
 
 // sortedIDs returns a sorted copy of the ids.
-func sortedIDs(ids []OperandID) []OperandID {
+func sortedIDs(ids []helium.OperandID) []helium.OperandID {
 	s := slices.Clone(ids)
 	slices.Sort(s)
 	return s

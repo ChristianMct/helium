@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
@@ -13,7 +13,7 @@ import (
 // local store first. If this node is evaluating the circuit the operand belongs to,
 // the method waits for the operand to be available. Otherwise, the operand is queried
 // from its owner through the transport and stored locally.
-func (e *Engine) GetOperand(ctx context.Context, id OperandID) (*Operand, error) {
+func (e *Engine) GetOperand(ctx context.Context, id helium.OperandID) (*helium.Operand, error) {
 	if err := id.Validate(); err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (e *Engine) GetOperand(ctx context.Context, id OperandID) (*Operand, error)
 
 // AwaitCompleted blocks until the circuit with the given id has terminated. It returns
 // the circuit's descriptor if it completed, and an error if it failed.
-func (e *Engine) AwaitCompleted(ctx context.Context, cid sessions.CircuitID) (Descriptor, error) {
+func (e *Engine) AwaitCompleted(ctx context.Context, cid helium.CircuitID) (helium.Descriptor, error) {
 	e.mu.Lock()
 	if cd, has := e.completed[cid]; has {
 		e.mu.Unlock()
@@ -80,7 +80,7 @@ func (e *Engine) AwaitCompleted(ctx context.Context, cid sessions.CircuitID) (De
 	}
 	if cd, has := e.failed[cid]; has {
 		e.mu.Unlock()
-		return Descriptor{}, fmt.Errorf("circuit %s failed", cd.HID())
+		return helium.Descriptor{}, fmt.Errorf("circuit %s failed", cd.HID())
 	}
 	w := make(chan completion, 1)
 	e.waiters[cid] = append(e.waiters[cid], w)
@@ -90,7 +90,7 @@ func (e *Engine) AwaitCompleted(ctx context.Context, cid sessions.CircuitID) (De
 	case c := <-w:
 		return c.cd, c.err
 	case <-ctx.Done():
-		return Descriptor{}, ctx.Err()
+		return helium.Descriptor{}, ctx.Err()
 	}
 }
 
@@ -115,7 +115,7 @@ func (e *Engine) AwaitIdle(ctx context.Context) error {
 }
 
 // IsRunning returns whether the circuit with the given id is running at this node.
-func (e *Engine) IsRunning(cid sessions.CircuitID) bool {
+func (e *Engine) IsRunning(cid helium.CircuitID) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, has := e.running[cid]
@@ -123,7 +123,7 @@ func (e *Engine) IsRunning(cid sessions.CircuitID) bool {
 }
 
 // IsCompleted returns whether the circuit with the given id is completed.
-func (e *Engine) IsCompleted(cid sessions.CircuitID) bool {
+func (e *Engine) IsCompleted(cid helium.CircuitID) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, has := e.completed[cid]
@@ -131,7 +131,7 @@ func (e *Engine) IsCompleted(cid sessions.CircuitID) bool {
 }
 
 // CompletedDescriptor returns the descriptor of the completed circuit with the given id, if any.
-func (e *Engine) CompletedDescriptor(cid sessions.CircuitID) (Descriptor, bool) {
+func (e *Engine) CompletedDescriptor(cid helium.CircuitID) (helium.Descriptor, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	cd, has := e.completed[cid]
@@ -147,7 +147,7 @@ func (e *Engine) GetKeySwitchInput(ctx context.Context, pd protocols.Descriptor)
 		return nil, fmt.Errorf("invalid protocol descriptor: no operand specified")
 	}
 
-	op, err := e.GetOperand(ctx, OperandID(opID))
+	op, err := e.GetOperand(ctx, helium.OperandID(opID))
 	if err != nil {
 		return nil, err
 	}

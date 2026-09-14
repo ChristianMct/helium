@@ -1,9 +1,8 @@
-package circuits
+package helium
 
 import (
 	"fmt"
 
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"github.com/tuneinsight/lattigo/v5/he"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -42,7 +41,7 @@ type Evaluator interface {
 }
 
 // NewEvaluator returns an Evaluator for the given parameters and evaluation keys.
-func NewEvaluator(params sessions.FHEParameters, evk rlwe.EvaluationKeySet) Evaluator {
+func NewEvaluator(params FHEParameters, evk rlwe.EvaluationKeySet) Evaluator {
 	switch p := params.(type) {
 	case bgv.Parameters:
 		return &bgvEvaluator{bgv.NewEvaluator(p, evk)}

@@ -1,4 +1,11 @@
-package helium
+// Package node implements the node-side runtime of a Helium application: the
+// wiring of the protocol and circuit engines, and the rendez-vous between the
+// application's Main function and the coordination events (see gate).
+//
+// The package is agnostic of the setting in which the node runs: the
+// setting-specific packages (helper for the helper-assisted setting) provide the
+// coordination and transport, and drive a Runtime through the Starter interface.
+package node
 
 import (
 	"context"
@@ -8,48 +15,54 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/ChristianMct/helium/sessions"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
-// Runtime is the interface of the framework available to the application's Main
-// function. It lets the application evaluate circuits and run decryption protocols;
-// its methods block until the corresponding circuit or protocol has terminated.
+// Starter is implemented by the coordinating node to start circuits and protocols.
+// A node that does not coordinate (a peer in the helper-assisted setting) passes a
+// nil Starter: its Runtime calls are expectations, fulfilled by the coordinator's
+// events.
+type Starter interface {
+	// StartCircuit requests the evaluation of the circuit described by cd.
+	StartCircuit(ctx context.Context, cd helium.Descriptor) error
+	// StartProtocol requests the execution of a protocol with the given signature.
+	StartProtocol(ctx context.Context, sig protocols.Signature) error
+}
+
+// Runtime implements helium.Runtime over a protocol engine and a circuit engine.
 //
-// All the nodes run the same Main function, and a node takes part in a circuit or a
-// protocol only once its Main has requested it: the coordination events of a circuit
-// or protocol in which the node has a role are held until the matching Runtime call
-// (see gate). On the helper node, the calls also start the circuits and protocols.
+// A node takes part in a circuit or a protocol only once the application's Main
+// function has requested it: the coordination events of a circuit or protocol in
+// which the node has a role are held by a gate until the matching Runtime call.
 type Runtime struct {
-	self sessions.NodeID
-	sess *sessions.Session
+	self helium.NodeID
+	sess *helium.Session
 
 	protocols *protocols.MHEMPC
 	circuits  *circuits.Engine
 	protoGate *gate[protocols.Event]
 	circGate  *gate[circuits.Event]
-	starter   starter // nil if the node is not the coordinator
+	starter   Starter // nil if the node is not the coordinator
 
 	mu     sync.Mutex
-	inputs map[sessions.CircuitID]map[string]any
+	inputs map[helium.CircuitID]map[string]any
 }
 
-// starter is implemented by the coordinating node to start circuits and protocols.
-type starter interface {
-	startCircuit(ctx context.Context, cd circuits.Descriptor) error
-	startProtocol(ctx context.Context, sig protocols.Signature) error
-}
+var _ helium.Runtime = (*Runtime)(nil)
 
-func newRuntime(self sessions.NodeID, sess *sessions.Session, pe *protocols.MHEMPC, ce *circuits.Engine, st starter) *Runtime {
+// New creates the runtime of a node over the given engines. The starter is nil for
+// nodes that do not coordinate the circuits and protocols.
+func New(self helium.NodeID, sess *helium.Session, pe *protocols.MHEMPC, ce *circuits.Engine, st Starter) *Runtime {
 	rt := &Runtime{
 		self:      self,
 		sess:      sess,
 		protocols: pe,
 		circuits:  ce,
 		starter:   st,
-		inputs:    make(map[sessions.CircuitID]map[string]any),
+		inputs:    make(map[helium.CircuitID]map[string]any),
 	}
 	rt.protoGate = newGate(rt.protocolGatePolicy())
 	rt.circGate = newGate(rt.circuitGatePolicy())
@@ -57,57 +70,39 @@ func newRuntime(self sessions.NodeID, sess *sessions.Session, pe *protocols.MHEM
 	return rt
 }
 
-// Operand is a handle on a system-wide operand (an input or output of a circuit).
-// Its ciphertext is fetched lazily from its owner.
-type Operand struct {
-	ID circuits.OperandID
-	rt *Runtime
-}
-
-// Get returns the ciphertext of the operand, fetching it from its owner if necessary.
-func (op Operand) Get(ctx context.Context) (*rlwe.Ciphertext, error) {
-	if op.rt == nil {
-		return nil, fmt.Errorf("operand %s is not bound to a runtime", op.ID)
-	}
-	o, err := op.rt.circuits.GetOperand(ctx, op.ID)
-	if err != nil {
-		return nil, err
-	}
-	return o.Ciphertext, nil
-}
-
 // ID returns the id of the node running the application.
-func (rt *Runtime) ID() sessions.NodeID {
+func (rt *Runtime) ID() helium.NodeID {
 	return rt.self
 }
 
-// Session returns the session of the node.
-func (rt *Runtime) Session() *sessions.Session {
+// Session returns the session state of the node.
+func (rt *Runtime) Session() *helium.Session {
 	return rt.sess
 }
 
 // Parameters returns the FHE parameters of the session.
-func (rt *Runtime) Parameters() sessions.FHEParameters {
+func (rt *Runtime) Parameters() helium.FHEParameters {
 	return rt.sess.Params
 }
 
-// IsCoordinator returns whether the node coordinates the circuits and protocols (the helper).
+// IsCoordinator returns whether the node coordinates the circuits and protocols.
 func (rt *Runtime) IsCoordinator() bool {
 	return rt.starter != nil
 }
 
-// Operand returns a handle on the operand with the given id.
-func (rt *Runtime) Operand(id circuits.OperandID) Operand {
-	return Operand{ID: id, rt: rt}
+// Operand returns a reference to the operand with the given id.
+func (rt *Runtime) Operand(id helium.OperandID) helium.OperandRef {
+	return helium.NewOperandRef(id, rt.getOperand)
 }
 
-// Evaluate evaluates the circuit described by cd and returns handles on its outputs, by
-// name. The inputs are the node's inputs to the circuit, by input name (the name part of
-// the node's input ports, or the name of a summed input): plaintext values ([]uint64,
-// []int64 for BGV, []float64, []complex128 for CKKS), *rlwe.Plaintext, *rlwe.Ciphertext
-// or Operand. The method blocks until the circuit has terminated at this node. On the
-// coordinator, it also starts the circuit.
-func (rt *Runtime) Evaluate(ctx context.Context, cd circuits.Descriptor, inputs map[string]any) (map[string]Operand, error) {
+func (rt *Runtime) getOperand(ctx context.Context, id helium.OperandID) (*helium.Operand, error) {
+	return rt.circuits.GetOperand(ctx, id)
+}
+
+// Evaluate evaluates the circuit described by cd and returns references to its outputs,
+// by name. It blocks until the circuit has terminated at this node; on the coordinating
+// node, it also starts the circuit.
+func (rt *Runtime) Evaluate(ctx context.Context, cd helium.Descriptor, inputs map[string]any) (map[string]helium.OperandRef, error) {
 	md, err := rt.circuits.Metadata(cd)
 	if err != nil {
 		return nil, fmt.Errorf("invalid circuit %s: %w", cd.HID(), err)
@@ -129,7 +124,7 @@ func (rt *Runtime) Evaluate(ctx context.Context, cd circuits.Descriptor, inputs 
 		return nil, err
 	}
 	if rt.starter != nil && !known {
-		if err := rt.starter.startCircuit(ctx, cd); err != nil {
+		if err := rt.starter.StartCircuit(ctx, cd); err != nil {
 			return nil, err
 		}
 	}
@@ -138,18 +133,18 @@ func (rt *Runtime) Evaluate(ctx context.Context, cd circuits.Descriptor, inputs 
 		return nil, err
 	}
 
-	outs := make(map[string]Operand, len(md.Outputs))
+	outs := make(map[string]helium.OperandRef, len(md.Outputs))
 	for name, id := range md.Outputs {
-		outs[name] = Operand{ID: id, rt: rt}
+		outs[name] = rt.Operand(id)
 	}
 	return outs, nil
 }
 
 // Decrypt runs the decryption protocol of operand op towards the target node, with the
 // given smudging noise (in bits). It blocks until the protocol has completed, and returns
-// the plaintext on the target node (nil elsewhere). On the coordinator, it also starts
-// the protocol.
-func (rt *Runtime) Decrypt(ctx context.Context, op Operand, target sessions.NodeID, smudging float64) (*rlwe.Plaintext, error) {
+// the plaintext at the target node (nil elsewhere). On the coordinating node, it also
+// starts the protocol.
+func (rt *Runtime) Decrypt(ctx context.Context, op helium.OperandRef, target helium.NodeID, smudging float64) (*rlwe.Plaintext, error) {
 	sig := protocols.Signature{Type: protocols.DEC, Args: map[string]string{
 		"op":       string(op.ID),
 		"target":   string(target),
@@ -161,7 +156,7 @@ func (rt *Runtime) Decrypt(ctx context.Context, op Operand, target sessions.Node
 		return nil, err
 	}
 	if rt.starter != nil && !known {
-		if err := rt.starter.startProtocol(ctx, sig); err != nil {
+		if err := rt.starter.StartProtocol(ctx, sig); err != nil {
 			return nil, err
 		}
 	}
@@ -176,20 +171,33 @@ func (rt *Runtime) Decrypt(ctx context.Context, op Operand, target sessions.Node
 	return rt.protocols.DecryptOutput(ctx, pd)
 }
 
-// finish signals the gates that the application is done.
-func (rt *Runtime) finish() {
-	rt.protoGate.finish()
-	rt.circGate.finish()
-}
-
 // Logf logs a message with the node's prefix.
 func (rt *Runtime) Logf(msg string, v ...any) {
 	log.Printf("%s | [App] %s\n", rt.self, fmt.Sprintf(msg, v...))
 }
 
-// provideInputs is the circuits.InputProvider of the node's engine: it provides the inputs
-// given to Evaluate.
-func (rt *Runtime) provideInputs(ctx context.Context, cd circuits.Descriptor, ids []circuits.OperandID) (<-chan circuits.Input, error) {
+// ProtocolCoordinator wraps a protocol coordinator with this runtime's gate: the
+// events of the protocols in which the node has a role reach the protocol engine
+// only once the application has requested them.
+func (rt *Runtime) ProtocolCoordinator(coord protocols.Coordinator) protocols.Coordinator {
+	return &gatedCoordinator[protocols.Event]{register: coord.Register, publish: coord.Publish, g: rt.protoGate}
+}
+
+// CircuitCoordinator wraps a circuit coordinator with this runtime's gate.
+func (rt *Runtime) CircuitCoordinator(coord circuits.Coordinator) circuits.Coordinator {
+	return &gatedCoordinator[circuits.Event]{register: coord.Register, publish: coord.Publish, g: rt.circGate}
+}
+
+// Finish signals the gates that the application is done: the gated streams end once
+// their upstream coordination stream is also closed.
+func (rt *Runtime) Finish() {
+	rt.protoGate.finish()
+	rt.circGate.finish()
+}
+
+// provideInputs is the circuits.InputProvider of the node's engine: it provides the
+// inputs given to Evaluate.
+func (rt *Runtime) provideInputs(ctx context.Context, cd helium.Descriptor, ids []helium.OperandID) (<-chan circuits.Input, error) {
 	rt.mu.Lock()
 	inputs, has := rt.inputs[cd.CircuitID]
 	rt.mu.Unlock()
@@ -204,7 +212,7 @@ func (rt *Runtime) provideInputs(ctx context.Context, cd circuits.Descriptor, id
 		if !has {
 			return nil, fmt.Errorf("missing input %q for circuit %s", id.Name(), cd.HID())
 		}
-		if op, isOp := v.(Operand); isOp {
+		if op, isOp := v.(helium.OperandRef); isOp {
 			ct, err := op.Get(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("cannot get operand %s: %w", op.ID, err)
@@ -237,7 +245,7 @@ func (rt *Runtime) protocolGatePolicy() gatePolicy[protocols.Event] {
 
 // circuitGatePolicy gates the circuits in which the node has a role (evaluator or participant).
 func (rt *Runtime) circuitGatePolicy() gatePolicy[circuits.Event] {
-	roles := make(map[sessions.CircuitID]bool) // accessed by the gate goroutine only
+	roles := make(map[helium.CircuitID]bool) // accessed by the gate goroutine only
 	return gatePolicy[circuits.Event]{
 		key: func(ev circuits.Event) string { return string(ev.CircuitID) },
 		gated: func(ev circuits.Event) bool {

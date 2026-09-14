@@ -1,4 +1,4 @@
-package sessions
+package helium
 
 import (
 	"context"
@@ -131,32 +131,4 @@ func (ckb *CachedKeyBackend) GetRelinearizationKey(ctx context.Context) (*rlwe.R
 		return rk, nil
 	}
 	return nil, err
-}
-
-// TestKeyProvider is an implementation of a PublicKeyProvider that generates
-// the keys on the fly, and is used for testing purposes.
-// The implementation is not safe for concurrent use.
-type TestKeyProvider struct {
-	skIdeal *rlwe.SecretKey
-	keygen  rlwe.KeyGenerator
-}
-
-// NewTestKeyBackend creates a new TestKeyProvider for the given parameters and ideal secret key.
-func NewTestKeyBackend(params rlwe.Parameters, skIdeal *rlwe.SecretKey) *TestKeyProvider {
-	return &TestKeyProvider{skIdeal: skIdeal, keygen: *rlwe.NewKeyGenerator(params)}
-}
-
-// GetCollectivePublicKey returns the collective public key for the session in ctx.
-func (tkb *TestKeyProvider) GetCollectivePublicKey(ctx context.Context) (*rlwe.PublicKey, error) {
-	return tkb.keygen.GenPublicKeyNew(tkb.skIdeal), nil
-}
-
-// GetGaloisKey returns the galois key for the session in ctx and the given Galois element.
-func (tkb *TestKeyProvider) GetGaloisKey(ctx context.Context, galEl uint64) (*rlwe.GaloisKey, error) {
-	return tkb.keygen.GenGaloisKeyNew(galEl, tkb.skIdeal), nil
-}
-
-// GetRelinearizationKey returns the relinearization key for the session in ctx.
-func (tkb *TestKeyProvider) GetRelinearizationKey(ctx context.Context) (*rlwe.RelinearizationKey, error) {
-	return tkb.keygen.GenRelinearizationKeyNew(tkb.skIdeal), nil
 }

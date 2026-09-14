@@ -1,15 +1,23 @@
-// Package sessions implements helium sessions.
-package sessions
+// Package helium provides the types and methods to implement an end-to-end MHE
+// application: the vocabulary of a Helium session (node and session identifiers,
+// parameters, key material), the language for defining circuits, and the contracts
+// that an application implements (App) and is given (Runtime).
+//
+// A Helium application is defined by an App value and run on a node. The node
+// implementations live in the setting-specific packages: helper for the
+// helper-assisted setting. The engines executing the MHE protocols and the circuits
+// live in the protocols and circuits packages; an application does not use them
+// directly.
+package helium
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
 
+	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/he"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
@@ -17,47 +25,32 @@ import (
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
 
-type FHEParameters interface { // TODO: Lattigo could have a common interface for parameters
-	GetRLWEParameters() *rlwe.Parameters
-}
-
 // NodeID is the unique identifier of a node.
 type NodeID string
 
-// ID is the unique identifier of a session.
-type ID string
+// SessionID is the unique identifier of a session.
+type SessionID string
 
-// CircuitID is the unique identifier of a running circuit.
+// CircuitID is the unique identifier of a circuit evaluation.
 type CircuitID string
 
-type CiphertextID string
+// FHEParameters are the FHE parameters of a session, as instantiated from their
+// literal representation (e.g., bgv.Parameters or ckks.Parameters).
+type FHEParameters = rlwe.ParameterProvider
 
-// Session holds the session's critical state.
-type Session struct {
-	Parameters
-	Secrets
-	NodeID NodeID
-
-	Params FHEParameters
-
-	secretKey *rlwe.SecretKey
-	rlkEphSk  *rlwe.SecretKey
-}
-
-type Secrets struct {
-	PrivateSeed        []byte
-	ThresholdSecretKey *drlwe.ShamirSecretShare
-}
-
-type FHEParamerersLiteralProvider interface {
+// FHEParametersLiteralProvider is the literal representation of a session's FHE
+// parameters (e.g., bgv.ParametersLiteral or ckks.ParametersLiteral).
+type FHEParametersLiteralProvider interface {
 	GetRLWEParametersLiteral() rlwe.ParametersLiteral
 }
 
-// Parameters contains data used to initialize a Session.
+// Parameters describes a Helium session: the nodes taking part in it, the FHE
+// parameters, the threshold of the access structure and the common random seed.
+// It is the same for all the nodes of a session.
 type Parameters struct {
-	ID            ID
+	ID            SessionID
 	Nodes         []NodeID
-	FHEParameters FHEParamerersLiteralProvider
+	FHEParameters FHEParametersLiteralProvider
 	Threshold     int
 	ShamirPks     map[NodeID]drlwe.ShamirPublicPoint
 	PublicSeed    []byte
@@ -88,11 +81,34 @@ func (p *Parameters) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// NewSession creates a new session.
+// Secrets holds the secret material of a node for a session.
+type Secrets struct {
+	PrivateSeed        []byte
+	ThresholdSecretKey *drlwe.ShamirSecretShare
+}
+
+// SecretProvider is a function that returns the secrets of a node for a session,
+// given the session ID and the node ID.
+type SecretProvider func(SessionID, NodeID) (*Secrets, error)
+
+// Session is the state of a node within a session: the session parameters, the
+// node's own identity and, for session nodes, its secret-key material.
+type Session struct {
+	Parameters
+	Secrets
+	NodeID NodeID
+
+	Params FHEParameters
+
+	secretKey *rlwe.SecretKey
+	rlkEphSk  *rlwe.SecretKey
+}
+
+// NewSession creates the session state of node nodeID for the given parameters.
+// Session nodes must provide their secrets; the helper node passes nil.
 func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *Session, err error) {
 	sess = new(Session)
 	sess.NodeID = nodeID
-	//sess.ObjectStore = objStore
 
 	if len(sessParams.ID) == 0 {
 		return nil, fmt.Errorf("invalid session parameters: unspecified session id")
@@ -128,7 +144,7 @@ func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *S
 	}
 
 	sess.FHEParameters = sessParams.FHEParameters
-	sess.Params, err = newParamsFromLiteral(sessParams.FHEParameters)
+	sess.Params, err = NewFHEParameters(sessParams.FHEParameters)
 	if err != nil {
 		return nil, fmt.Errorf("could not create session parameters: %s", err)
 	}
@@ -168,7 +184,8 @@ func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *S
 	return sess, nil
 }
 
-func newParamsFromLiteral(paramsLit FHEParamerersLiteralProvider) (params FHEParameters, err error) {
+// NewFHEParameters instantiates the FHE parameters from their literal representation.
+func NewFHEParameters(paramsLit FHEParametersLiteralProvider) (params FHEParameters, err error) {
 	switch pl := paramsLit.(type) {
 	case bgv.ParametersLiteral:
 		params, err = bgv.NewParametersFromLiteral(pl)
@@ -178,6 +195,17 @@ func newParamsFromLiteral(paramsLit FHEParamerersLiteralProvider) (params FHEPar
 		err = fmt.Errorf("unknown FHE parameters type")
 	}
 	return
+}
+
+// NewSecretKeyFromSeed derives a node's session secret key from its private seed. It
+// is the same key that NewSession derives for a node holding these secrets, exposed
+// for the generation of the threshold secret shares.
+func NewSecretKeyFromSeed(params FHEParameters, seed []byte) (*rlwe.SecretKey, error) {
+	prng, err := sampling.NewKeyedPRNG(seed)
+	if err != nil {
+		return nil, err
+	}
+	return genSecretKey(params, prng)
 }
 
 func genSecretKey(pp rlwe.ParameterProvider, prng sampling.PRNG) (sk *rlwe.SecretKey, err error) {
@@ -204,6 +232,8 @@ func genSecretKey(pp rlwe.ParameterProvider, prng sampling.PRNG) (sk *rlwe.Secre
 	return
 }
 
+// GetSecretKeyForGroup returns the node's additive share of the ideal secret key
+// for the given group of parties.
 func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey, err error) {
 	switch {
 	case len(parties) == len(sess.Nodes):
@@ -233,7 +263,7 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 	}
 }
 
-// GetSecretKey loads the secret key from the ObjectStore.
+// GetSecretKey returns the node's secret key for the session.
 func (sess *Session) GetSecretKey() (*rlwe.SecretKey, error) {
 	if sess.secretKey == nil {
 		return nil, fmt.Errorf("node has no secret-key in the session")
@@ -241,6 +271,8 @@ func (sess *Session) GetSecretKey() (*rlwe.SecretKey, error) {
 	return sess.secretKey, nil
 }
 
+// GetRLKEphemeralSecretKey returns the node's ephemeral secret key for the
+// relinearization-key generation protocol.
 func (sess *Session) GetRLKEphemeralSecretKey() (*rlwe.SecretKey, error) {
 	if sess.rlkEphSk == nil {
 		return nil, fmt.Errorf("node has no rlk ephemeral secret-key in the session")
@@ -248,7 +280,7 @@ func (sess *Session) GetRLKEphemeralSecretKey() (*rlwe.SecretKey, error) {
 	return sess.rlkEphSk, nil
 }
 
-// GetThresholdSecretKey loads the secret key from the ObjectStore.
+// GetThresholdSecretKey returns the node's share of the threshold secret key.
 func (sess *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
 	if sess.ThresholdSecretKey == nil {
 		return nil, fmt.Errorf("node has no threshold secret-key in the session")
@@ -256,6 +288,7 @@ func (sess *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
 	return sess.ThresholdSecretKey, nil
 }
 
+// GetShamirPublicPoints returns the Shamir public points of the session nodes.
 func (sess *Session) GetShamirPublicPoints() map[NodeID]drlwe.ShamirPublicPoint {
 	spts := make(map[NodeID]drlwe.ShamirPublicPoint, len(sess.ShamirPks))
 	for p, spt := range sess.ShamirPks {
@@ -264,6 +297,7 @@ func (sess *Session) GetShamirPublicPoints() map[NodeID]drlwe.ShamirPublicPoint 
 	return spts
 }
 
+// GetShamirPublicPointsList returns the Shamir public points of the session nodes as a list.
 func (sess *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
 	spts := make([]drlwe.ShamirPublicPoint, 0, len(sess.ShamirPks))
 	for _, spt := range sess.ShamirPks {
@@ -272,23 +306,9 @@ func (sess *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
 	return spts
 }
 
+// Contains returns whether nodeID is a session node.
 func (sess *Session) Contains(nodeID NodeID) bool {
 	return utils.NewSet(sess.Nodes).Contains(nodeID)
-}
-
-func (sess *Session) GetSessionFromID(sessionID ID) (*Session, bool) {
-	if sess.ID == sessionID {
-		return sess, true
-	}
-	return nil, false
-}
-
-func (sess *Session) GetSessionFromContext(ctx context.Context) (*Session, bool) {
-	sessID, has := IDFromContext(ctx)
-	if !has {
-		return nil, false
-	}
-	return sess.GetSessionFromID(sessID)
 }
 
 func (sess *Session) String() string {
@@ -302,28 +322,8 @@ func (sess *Session) String() string {
 	}`, sess.ID, sess.NodeID, sess.Nodes, sess.Threshold, sess.PublicSeed)
 }
 
-func NewFHEParameters(p FHEParamerersLiteralProvider) (FHEParameters, error) {
-	switch pp := p.(type) {
-	case bgv.ParametersLiteral:
-		return bgv.NewParametersFromLiteral(pp)
-	case ckks.ParametersLiteral:
-		return ckks.NewParametersFromLiteral(pp)
-	default:
-		return nil, fmt.Errorf("unknown FHE parameters litteral type")
-	}
-}
-
-func NewEvaluator(p FHEParameters, ks rlwe.EvaluationKeySet) he.Evaluator {
-	switch pp := p.(type) {
-	case bgv.Parameters:
-		return bgv.NewEvaluator(pp, ks)
-	case ckks.Parameters:
-		return ckks.NewEvaluator(pp, ks)
-	default:
-		panic(fmt.Errorf("unknown FHE parameters type: %T", pp))
-	}
-}
-
+// NewCiphertext returns a new, zero ciphertext for the given parameters, degree and
+// level (the maximum level if none is given).
 func NewCiphertext(p FHEParameters, degree int, level ...int) *rlwe.Ciphertext {
 	switch pp := p.(type) {
 	case bgv.Parameters:
@@ -342,3 +342,6 @@ func NewCiphertext(p FHEParameters, degree int, level ...int) *rlwe.Ciphertext {
 		panic(fmt.Errorf("unknown FHE parameters type"))
 	}
 }
+
+// ObjectStoreConfig is the configuration of a node's persistent object store.
+type ObjectStoreConfig = objectstore.Config

@@ -16,11 +16,13 @@ The code is expected to evolve without guaranteeing backward compatibility and i
 
 ## Synopsis
 Helium is a Go package that provides the types and methods to implement an end-to-end MHE application.
-Helium's main types are:
+An application uses two packages: `helium`, which provides the vocabulary of a session and the language for
+defining circuits, and the package of the setting it runs in (currently `helium/helper`, for the
+helper-assisted setting). Helium's main types are:
 - The `helium.App` type which lets the user define an application by specifying the required MHE setup, the circuits, and the `Main` function run by every node.
-- The `helium.Runtime` type, the interface of the framework available to `Main`: it evaluates circuits and runs decryption protocols, blocking until they have completed. A node takes part only in the circuits and protocols its `Main` requests.
-- The `helium.HeliumServer` (helper node) and `helium.HeliumClient` (peer node) types which run `helium.App` applications: they run the MHE setup phase, then the application's `Main`.
-- Under the hood, two engines drive the nodes as state machines: `protocols.MHEMPC` executes the MHE protocols and `circuits.Engine` evaluates the circuits, both driven by the coordination events of the helper's `protocols.CentralCoordinator`.
+- The `helium.Runtime` interface, the interface of the framework available to `Main`: it evaluates circuits and runs decryption protocols, blocking until they have completed. A node takes part only in the circuits and protocols its `Main` requests.
+- The `helper.Server` (helper node) and `helper.Client` (peer node) types which run `helium.App` applications: they run the MHE setup phase, then the application's `Main`.
+- Under the hood, two engines drive the nodes as state machines: `protocols.MHEMPC` executes the MHE protocols and `circuits.Engine` evaluates the circuits, both driven by the coordination events of the helper's `protocols.CentralCoordinator`. The `node` package wires them together and is agnostic of the setting. An application does not use these packages directly.
 
 A circuit is a Go function mapping encrypted input operands to encrypted output operands. Its inputs, outputs and required
 evaluation keys form its interface, which is either declared explicitly or derived by symbolic execution of the function:
@@ -32,11 +34,11 @@ Here is an overview of an Helium application:
   app = helium.App{
 
     // describes the required MHE setup
-    SetupDescription: &helium.SetupDescription{ Cpk: true, Rlk: true},
+    Setup: &helium.SetupDescription{ Cpk: true, Rlk: true},
     
     // declares the application's circuits
-    Circuits: map[circuits.Name]circuits.Circuit{
-      "mul-2": circuits.FromFunc(func(rt circuits.Runtime) error {
+    Circuits: map[helium.Name]helium.Circuit{
+      "mul-2": helium.FromFunc(func(rt helium.CircuitRuntime) error {
         in0, in1 := rt.Input("//p0/in"), rt.Input("//p1/in") // the encrypted inputs of parties p0 and p1
         out := rt.Output("prod")                              // the encrypted output, owned by the evaluator
 
@@ -51,12 +53,12 @@ Here is an overview of an Helium application:
     },
 
     // the application's logic, run by every node
-    Main: func(ctx context.Context, rt *helium.Runtime) error {
+    Main: func(ctx context.Context, rt helium.Runtime) error {
       // the evaluation of the circuit "mul-2" as "mul-2-0", by the helper, with p0 and p1 mapped to actual nodes
-      cd := circuits.Descriptor{
-        Signature:   circuits.Signature{Name: "mul-2"},
+      cd := helium.Descriptor{
+        Signature:   helium.Signature{Name: "mul-2"},
         CircuitID:   "mul-2-0",
-        NodeMapping: map[string]sessions.NodeID{"p0": "node-1", "p1": "node-2"},
+        NodeMapping: map[string]helium.NodeID{"p0": "node-1", "p1": "node-2"},
         Evaluator:   "helper",
       }
 
@@ -81,10 +83,10 @@ Here is an overview of an Helium application:
 
 	if nodeID == helperID {
     // the helper runs the server-side of helium; the call returns once Main has returned and the coordination is done
-		hsv, err := helium.RunHeliumServer(ctx, config, nodelist, app)
+		hsv, err := helper.RunServer(ctx, config, nodelist, app)
 	} else {
     // non-helper nodes run the client side; the call returns once Main has returned and the helper has terminated
-		hc, err := helium.RunHeliumClient(ctx, config, nodelist, secrets, app)
+		hc, err := helper.RunClient(ctx, config, nodelist, secrets, app)
 	}
 ```
 

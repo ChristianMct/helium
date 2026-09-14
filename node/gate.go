@@ -1,4 +1,4 @@
-package helium
+package node
 
 import (
 	"context"
