@@ -11,7 +11,7 @@ type gatePolicy[E any] struct {
 	// descriptor share the key).
 	key func(E) string
 	// gated returns whether the events of the descriptor need to be claimed by the
-	// application before reaching the engine (i.e., the node has a role in it).
+	// application before reaching the runner (i.e., the node has a role in it).
 	gated func(E) bool
 	// terminal returns whether the event terminates the descriptor (completed/failed).
 	terminal func(E) bool
@@ -22,8 +22,8 @@ type gatePolicy[E any] struct {
 	logf func(string, ...any)
 }
 
-// gate is the rendez-vous point between the application (App.Main) and an engine: it
-// sits between a coordination stream and the engine consuming it, and holds the events
+// gate is the rendez-vous point between the application (App.Main) and a runner: it
+// sits between a coordination stream and the runner consuming it, and holds the events
 // of the descriptors in which the node has a role until the application claims them
 // (by calling the corresponding Runtime method). The events of other descriptors pass
 // through. Held events are released in order, and the events of a claimed descriptor

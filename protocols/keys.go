@@ -9,18 +9,18 @@ import (
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 )
 
-// KeyProvider is a view of an MHEMPC engine that exposes the outputs of the
+// KeyProvider is a view of a Runner that exposes the outputs of the
 // key-generation protocols as public keys. Its methods block until the
 // corresponding protocol has completed.
 type KeyProvider struct {
-	e *MHEMPC
+	r *Runner
 }
 
 var _ helium.PublicKeyProvider = (*KeyProvider)(nil)
 
-// NewKeyProvider returns a KeyProvider for the given engine.
-func NewKeyProvider(e *MHEMPC) *KeyProvider {
-	return &KeyProvider{e: e}
+// NewKeyProvider returns a KeyProvider for the given runner.
+func NewKeyProvider(r *Runner) *KeyProvider {
+	return &KeyProvider{r: r}
 }
 
 // GetCollectivePublicKey returns the collective public key when available.
@@ -51,11 +51,11 @@ func (kp *KeyProvider) GetRelinearizationKey(ctx context.Context) (*rlwe.Relinea
 }
 
 func (kp *KeyProvider) getResult(ctx context.Context, sig Signature) (interface{}, error) {
-	pd, err := kp.e.AwaitCompleted(ctx, sig)
+	pd, err := kp.r.AwaitCompleted(ctx, sig)
 	if err != nil {
 		return nil, fmt.Errorf("error while waiting for %s: %w", sig, err)
 	}
-	out, err := kp.e.GetOutput(ctx, pd)
+	out, err := kp.r.GetOutput(ctx, pd)
 	if err != nil {
 		return nil, err
 	}

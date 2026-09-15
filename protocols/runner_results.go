@@ -13,8 +13,8 @@ import (
 // this node aggregates pd, the method waits for the running protocol to complete.
 // Otherwise, the share is queried from the protocol's aggregator through the
 // transport and stored locally.
-func (e *MHEMPC) GetAggregationOutput(ctx context.Context, pd Descriptor) (*AggregationOutput, error) {
-	share, err := e.results.Get(pd)
+func (r *Runner) GetAggregationOutput(ctx context.Context, pd Descriptor) (*AggregationOutput, error) {
+	share, err := r.results.Get(pd)
 	if err == nil {
 		return &AggregationOutput{Descriptor: pd, Share: share}, nil
 	}
@@ -22,10 +22,10 @@ func (e *MHEMPC) GetAggregationOutput(ctx context.Context, pd Descriptor) (*Aggr
 		return nil, err
 	}
 
-	if e.isAggregator(pd) {
-		e.mu.Lock()
-		rp, running := e.running[pd.ID()]
-		e.mu.Unlock()
+	if r.isAggregator(pd) {
+		r.mu.Lock()
+		rp, running := r.running[pd.ID()]
+		r.mu.Unlock()
 		if !running {
 			return nil, fmt.Errorf("no aggregation output for %s: protocol is neither running nor completed at this node", pd.HID())
 		}
@@ -34,13 +34,13 @@ func (e *MHEMPC) GetAggregationOutput(ctx context.Context, pd Descriptor) (*Aggr
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		if share, err = e.results.Get(pd); err != nil {
+		if share, err = r.results.Get(pd); err != nil {
 			return nil, fmt.Errorf("protocol %s terminated without output: %w", pd.HID(), err)
 		}
 		return &AggregationOutput{Descriptor: pd, Share: share}, nil
 	}
 
-	share, err = e.trans.GetAggregationOutput(ctx, pd)
+	share, err = r.trans.GetAggregationOutput(ctx, pd)
 	if err != nil {
 		return nil, fmt.Errorf("error when querying transport for aggregation output of %s: %w", pd.HID(), err)
 	}
@@ -52,8 +52,8 @@ func (e *MHEMPC) GetAggregationOutput(ctx context.Context, pd Descriptor) (*Aggr
 	if len(share.From) == 0 {
 		share.From = shareProviders(pd)
 	}
-	if err := e.results.Put(pd, share); err != nil {
-		e.Logf("could not store fetched aggregation output for %s: %s", pd.HID(), err)
+	if err := r.results.Put(pd, share); err != nil {
+		r.Logf("could not store fetched aggregation output for %s: %s", pd.HID(), err)
 	}
 	return &AggregationOutput{Descriptor: pd, Share: share}, nil
 }
@@ -61,11 +61,11 @@ func (e *MHEMPC) GetAggregationOutput(ctx context.Context, pd Descriptor) (*Aggr
 // GetOutput returns the finalized output of the protocol described by pd (e.g., a
 // public key or a key-switched ciphertext), computing it from the aggregated share
 // (see GetAggregationOutput) and caching it.
-func (e *MHEMPC) GetOutput(ctx context.Context, pd Descriptor) (*Output, error) {
+func (r *Runner) GetOutput(ctx context.Context, pd Descriptor) (*Output, error) {
 	pid := pd.ID()
-	e.mu.Lock()
-	out, has := e.outputs[pid]
-	e.mu.Unlock()
+	r.mu.Lock()
+	out, has := r.outputs[pid]
+	r.mu.Unlock()
 	if has {
 		return &out, nil
 	}
@@ -76,19 +76,19 @@ func (e *MHEMPC) GetOutput(ctx context.Context, pd Descriptor) (*Output, error) 
 		return nil, fmt.Errorf("protocol type %s has no output", pd.Signature.Type)
 	}
 
-	aggOut, err := e.GetAggregationOutput(ctx, pd)
+	aggOut, err := r.GetAggregationOutput(ctx, pd)
 	if err != nil {
 		return nil, err
 	}
-	in, err := e.getInput(ctx, pd)
+	in, err := r.getInput(ctx, pd)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get input for %s: %w", pd.HID(), err)
 	}
-	proto, err := NewProtocol(pd, e.sess)
+	proto, err := NewProtocol(pd, r.sess)
 	if err != nil {
 		return nil, err
 	}
-	res := AllocateOutput(pd.Signature, *e.sess.Params.GetRLWEParameters())
+	res := AllocateOutput(pd.Signature, *r.sess.Params.GetRLWEParameters())
 	if allocErr, isErr := res.(error); isErr {
 		return nil, allocErr
 	}
@@ -97,24 +97,24 @@ func (e *MHEMPC) GetOutput(ctx context.Context, pd Descriptor) (*Output, error) 
 	}
 
 	out = Output{Descriptor: pd, Result: res}
-	e.mu.Lock()
-	e.outputs[pid] = out
-	e.mu.Unlock()
+	r.mu.Lock()
+	r.outputs[pid] = out
+	r.mu.Unlock()
 	return &out, nil
 }
 
 // AwaitCompleted blocks until a protocol with the given signature has completed,
 // and returns its descriptor.
-func (e *MHEMPC) AwaitCompleted(ctx context.Context, sig Signature) (Descriptor, error) {
+func (r *Runner) AwaitCompleted(ctx context.Context, sig Signature) (Descriptor, error) {
 	key := sig.String()
-	e.mu.Lock()
-	if pd, has := e.bySig[key]; has {
-		e.mu.Unlock()
+	r.mu.Lock()
+	if pd, has := r.bySig[key]; has {
+		r.mu.Unlock()
 		return pd, nil
 	}
 	w := make(chan Descriptor, 1)
-	e.waiters[key] = append(e.waiters[key], w)
-	e.mu.Unlock()
+	r.waiters[key] = append(r.waiters[key], w)
+	r.mu.Unlock()
 
 	select {
 	case pd := <-w:
@@ -126,33 +126,33 @@ func (e *MHEMPC) AwaitCompleted(ctx context.Context, sig Signature) (Descriptor,
 
 // CompletedDescriptor returns the descriptor of the last completed protocol with
 // the given signature, if any.
-func (e *MHEMPC) CompletedDescriptor(sig Signature) (Descriptor, bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	pd, has := e.bySig[sig.String()]
+func (r *Runner) CompletedDescriptor(sig Signature) (Descriptor, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pd, has := r.bySig[sig.String()]
 	return pd, has
 }
 
 // IsRunning returns whether the protocol described by pd is running at this node.
-func (e *MHEMPC) IsRunning(pd Descriptor) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	_, has := e.running[pd.ID()]
+func (r *Runner) IsRunning(pd Descriptor) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, has := r.running[pd.ID()]
 	return has
 }
 
 // IsCompleted returns whether the protocol described by pd is completed.
-func (e *MHEMPC) IsCompleted(pd Descriptor) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	_, has := e.completed[pd.ID()]
+func (r *Runner) IsCompleted(pd Descriptor) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, has := r.completed[pd.ID()]
 	return has
 }
 
 // RestoreCompleted marks as completed the protocols with the given signatures for
 // which the result backend holds a result (e.g., after a restart). For the RKG
 // signature, the first round is restored as well. It returns the restored descriptors.
-func (e *MHEMPC) RestoreCompleted(sigs ...Signature) ([]Descriptor, error) {
+func (r *Runner) RestoreCompleted(sigs ...Signature) ([]Descriptor, error) {
 	var restored []Descriptor
 	for _, sig := range sigs {
 		toRestore := []Signature{sig}
@@ -160,16 +160,16 @@ func (e *MHEMPC) RestoreCompleted(sigs ...Signature) ([]Descriptor, error) {
 			toRestore = append([]Signature{{Type: RKG1, Args: sig.Args}}, sig)
 		}
 		for _, s := range toRestore {
-			pd, has, err := e.results.CompletedDescriptor(s)
+			pd, has, err := r.results.CompletedDescriptor(s)
 			if err != nil {
 				return restored, fmt.Errorf("error while restoring %s: %w", s, err)
 			}
 			if !has {
 				continue
 			}
-			e.mu.Lock()
-			e.markCompleted(pd)
-			e.mu.Unlock()
+			r.mu.Lock()
+			r.markCompleted(pd)
+			r.mu.Unlock()
 			restored = append(restored, pd)
 		}
 	}
@@ -180,25 +180,25 @@ func (e *MHEMPC) RestoreCompleted(sigs ...Signature) ([]Descriptor, error) {
 //   - the CRP for the key-generation protocols (derived from the session's public seed),
 //   - the aggregated first-round share for RKG (fetched from the aggregator if needed),
 //   - the key-switch input from the KeySwitchInputProvider for DEC, CKS and PCKS.
-func (e *MHEMPC) getInput(ctx context.Context, pd Descriptor) (Input, error) {
+func (r *Runner) getInput(ctx context.Context, pd Descriptor) (Input, error) {
 	switch pd.Signature.Type {
 	case CKG, RTG, RKG1:
-		p, err := NewProtocol(pd, e.sess)
+		p, err := NewProtocol(pd, r.sess)
 		if err != nil {
 			return nil, err
 		}
 		return p.ReadCRP()
 	case RKG:
-		aggOutR1, err := e.GetAggregationOutput(ctx, rkg1Descriptor(pd))
+		aggOutR1, err := r.GetAggregationOutput(ctx, rkg1Descriptor(pd))
 		if err != nil {
 			return nil, fmt.Errorf("cannot get first round output: %w", err)
 		}
 		return aggOutR1.Share.MHEShare, nil
 	case DEC, CKS, PCKS:
-		if e.ksInput == nil {
+		if r.ksInput == nil {
 			return nil, fmt.Errorf("node has no key-switch input provider")
 		}
-		return e.ksInput(ctx, pd)
+		return r.ksInput(ctx, pd)
 	default:
 		return nil, fmt.Errorf("no input for protocol type %s", pd.Signature.Type)
 	}
@@ -208,15 +208,15 @@ func (e *MHEMPC) getInput(ctx context.Context, pd Descriptor) (Input, error) {
 // as seen by its target. The method retrieves the protocol output (see GetOutput), which
 // is encrypted under the target's share of the group secret key, and decrypts it. A target
 // that has no secret in the session (e.g., the helper node) obtains the plaintext directly.
-func (e *MHEMPC) DecryptOutput(ctx context.Context, pd Descriptor) (*rlwe.Plaintext, error) {
+func (r *Runner) DecryptOutput(ctx context.Context, pd Descriptor) (*rlwe.Plaintext, error) {
 	if pd.Signature.Type != DEC {
 		return nil, fmt.Errorf("protocol %s is not a decryption protocol", pd.HID())
 	}
-	if !e.isKeySwitchReceiver(pd) {
-		return nil, fmt.Errorf("node %s is not the target of %s", e.self, pd.HID())
+	if !r.isKeySwitchReceiver(pd) {
+		return nil, fmt.Errorf("node %s is not the target of %s", r.self, pd.HID())
 	}
 
-	out, err := e.GetOutput(ctx, pd)
+	out, err := r.GetOutput(ctx, pd)
 	if err != nil {
 		return nil, err
 	}
@@ -225,19 +225,19 @@ func (e *MHEMPC) DecryptOutput(ctx context.Context, pd Descriptor) (*rlwe.Plaint
 		return nil, fmt.Errorf("output of %s is not a ciphertext: %T", pd.HID(), out.Result)
 	}
 
-	pt := rlwe.NewPlaintext(e.sess.Params, ct.Level())
-	if !e.sess.Contains(e.self) {
+	pt := rlwe.NewPlaintext(r.sess.Params, ct.Level())
+	if !r.sess.Contains(r.self) {
 		// the target has no secret key: the output is encrypted under the zero key
 		pt.Value.Copy(ct.Value[0])
 		*pt.MetaData = *ct.MetaData
 		return pt, nil
 	}
 
-	sk, err := e.sess.GetSecretKeyForGroup(pd.Participants)
+	sk, err := r.sess.GetSecretKeyForGroup(pd.Participants)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get group secret key: %w", err)
 	}
-	rlwe.NewDecryptor(e.sess.Params, sk).Decrypt(ct, pt)
+	rlwe.NewDecryptor(r.sess.Params, sk).Decrypt(ct, pt)
 	return pt, nil
 }
 

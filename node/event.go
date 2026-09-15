@@ -8,7 +8,7 @@ import (
 )
 
 // Event is an entry of a node's coordination log: either a protocol event
-// (published by the coordinator and the protocol engine) or a circuit event
+// (published by the coordinator and the protocol runner) or a circuit event
 // (published by the circuit evaluator). Exactly one of the fields is set.
 type Event struct {
 	Protocol *protocols.Event

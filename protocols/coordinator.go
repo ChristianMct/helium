@@ -18,9 +18,9 @@ const defaultCoordinatorMaxProtoPerNode = 8 // max number of concurrent protocol
 // ErrCoordinatorClosed is returned when interacting with a closed coordinator.
 var ErrCoordinatorClosed = errors.New("coordinator is closed")
 
-// Coordinator is the interface through which an MHEMPC engine is driven.
+// Coordinator is the interface through which a Runner is driven.
 // The coordinator decides which protocols are started (Started events) and
-// which are aborted (Failed events); the engine executes them and publishes
+// which are aborted (Failed events); the runner executes them and publishes
 // its progress (Executing, Completed events). All events form a single,
 // causally-ordered log.
 type Coordinator interface {
@@ -29,16 +29,16 @@ type Coordinator interface {
 	// following ones (live). The live channel is closed when the coordination ends.
 	Register(ctx context.Context) (past []Event, live <-chan Event, err error)
 
-	// Publish appends an event emitted by the engine (Executing, Completed) to the log.
+	// Publish appends an event emitted by the runner (Executing, Completed) to the log.
 	Publish(ctx context.Context, ev Event) error
 }
 
-// AggregationStatus is the interface a deciding coordinator requires from the engine,
+// AggregationStatus is the interface a deciding coordinator requires from the runner,
 // to determine whether a running protocol can survive the disconnection of a participant.
-// It is implemented by MHEMPC.
+// It is implemented by Runner.
 type AggregationStatus interface {
 	// MissingShares returns the participants whose share has not yet been aggregated in pd.
-	// The returned known is false if the engine neither runs nor has completed pd.
+	// The returned known is false if the runner neither runs nor has completed pd.
 	MissingShares(pd Descriptor) (missing utils.Set[helium.NodeID], known bool)
 }
 
@@ -66,7 +66,7 @@ type scheduled struct {
 // aborts and retries them when a participant disconnects, and chains the rounds
 // of multi-round protocols (RKG).
 //
-// It serves the log to any number of subscribers (the local engine and, through
+// It serves the log to any number of subscribers (the local runner and, through
 // a transport, remote peers). This corresponds to the helper node in the
 // helper-assisted setting; in a peer-to-peer setting, an instance would take
 // the decisions for the protocols aggregated by its node.
@@ -113,13 +113,13 @@ func NewCentralCoordinator(self helium.NodeID, sess *helium.Session, conf Coordi
 
 // ---- Coordinator interface
 
-// Register implements Coordinator. It can be called by the local engine and on behalf of remote peers.
+// Register implements Coordinator. It can be called by the local runner and on behalf of remote peers.
 func (c *CentralCoordinator) Register(ctx context.Context) (past []Event, live <-chan Event, err error) {
 	past, live = c.log.Register(ctx)
 	return past, live, nil
 }
 
-// Publish implements Coordinator. Engines may publish Executing and Completed events for
+// Publish implements Coordinator. Runners may publish Executing and Completed events for
 // protocols started by this coordinator. Events for unknown (e.g., already failed) protocols
 // are ignored.
 func (c *CentralCoordinator) Publish(_ context.Context, ev Event) error {
@@ -156,7 +156,7 @@ func (c *CentralCoordinator) Publish(_ context.Context, ev Event) error {
 		}
 		c.reconcile()
 	default:
-		return fmt.Errorf("engines may only publish %s and %s events, got %s", Executing, Completed, ev.EventType)
+		return fmt.Errorf("runners may only publish %s and %s events, got %s", Executing, Completed, ev.EventType)
 	}
 	return nil
 }

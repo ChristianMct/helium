@@ -22,7 +22,7 @@ helper-assisted setting). Helium's main types are:
 - The `helium.App` type which lets the user define an application by specifying the required MHE setup, the circuits, and the `Main` function run by every node.
 - The `helium.Runtime` interface, the interface of the framework available to `Main`: it evaluates circuits and runs decryption protocols, blocking until they have completed. A node takes part only in the circuits and protocols its `Main` requests.
 - The `helper.Server` (helper node) and `helper.Client` (peer node) types which run `helium.App` applications: they run the MHE setup phase, then the application's `Main`.
-- Under the hood, two engines drive the nodes as state machines: `protocols.MHEMPC` executes the MHE protocols and `circuits.Engine` evaluates the circuits, both driven by the coordination events of the helper's `protocols.CentralCoordinator`. The `node` package wires them together and is agnostic of the setting. An application does not use these packages directly.
+- Under the hood, two runners drive the nodes as state machines: `protocols.Runner` executes the MHE protocols and `circuits.Runner` evaluates the circuits, both driven by the coordination events of the helper's `protocols.CentralCoordinator`. The `node` package wires them together and is agnostic of the setting. An application does not use these packages directly.
 
 A circuit is a Go function mapping encrypted input operands to encrypted output operands. Its inputs, outputs and required
 evaluation keys form its interface, which is either declared explicitly or derived by symbolic execution of the function:
@@ -106,7 +106,7 @@ and requires changes to the Lattigo library.
 Implementing this phase in the framework is planned.
 - Altough supported by the MHE scheme, external computation-receiver other than the helper (ie., re-encryption under arbitrary public-keys) are not yet supported.
 Supporting this feature is expected soon as it is rather easy to implement.
-- The current version of Helium targets a proof of concept for lightweight MPC in the helper-assisted model. The protocol and circuit engines are
+- The current version of Helium targets a proof of concept for lightweight MPC in the helper-assisted model. The protocol and circuit runners are
 agnostic of the network topology and derive the nodes' roles from the protocol and circuit descriptors; supporting peer-to-peer applications
 requires a coordinator and a transport for that setting.
 

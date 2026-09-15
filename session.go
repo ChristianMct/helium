@@ -5,7 +5,7 @@
 //
 // A Helium application is defined by an App value and run on a node. The node
 // implementations live in the setting-specific packages: helper for the
-// helper-assisted setting. The engines executing the MHE protocols and the circuits
+// helper-assisted setting. The runners executing the MHE protocols and the circuits
 // live in the protocols and circuits packages; an application does not use them
 // directly.
 package helium

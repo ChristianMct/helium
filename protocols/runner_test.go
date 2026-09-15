@@ -17,39 +17,39 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const testEngineTimeout = 2 * time.Minute
+const testTimeout = 2 * time.Minute
 
 var (
-	testEngineConf = Config{MaxParticipation: 1}
-	testCoordConf  = CoordinatorConfig{MaxProtoPerNode: 1}
+	testConf      = Config{MaxParticipation: 1}
+	testCoordConf = CoordinatorConfig{MaxProtoPerNode: 1}
 )
 
-// testEngines is a helper + N session nodes setting on an in-memory transport,
+// testRunners is a helper + N session nodes setting on an in-memory transport,
 // coordinated by the helper.
-type testEngines struct {
+type testRunners struct {
 	sess   *heliumtest.Sessions
 	hid    helium.NodeID
-	trans  *TestEngineTransport
+	trans  *TestTransport
 	coord  *CentralCoordinator
-	helper *MHEMPC
-	nodes  map[helium.NodeID]*MHEMPC
+	helper *Runner
+	nodes  map[helium.NodeID]*Runner
 	nids   []helium.NodeID // sorted session node ids
 	sigs   []Signature
 	ksin   KeySwitchInputProvider
 }
 
-func newTestEngines(t *testing.T, N, T int) *testEngines {
+func newTestRunners(t *testing.T, N, T int) *testRunners {
 	hid := helium.NodeID("helper")
 	testSess, err := heliumtest.NewSessions(N, T, TestPN12QP109, hid)
 	require.NoError(t, err)
 
 	ct := testSess.Encryptor.EncryptZeroNew(testSess.RlweParams.MaxLevel())
 	zeroKey := rlwe.NewSecretKey(testSess.RlweParams)
-	te := &testEngines{
+	te := &testRunners{
 		sess:  testSess,
 		hid:   hid,
-		trans: NewTestEngineTransport(),
-		nodes: make(map[helium.NodeID]*MHEMPC, N),
+		trans: NewTestTransport(),
+		nodes: make(map[helium.NodeID]*Runner, N),
 		ksin: func(ctx context.Context, pd Descriptor) (*KeySwitchInput, error) {
 			return &KeySwitchInput{OutputKey: zeroKey, InpuCt: ct}, nil
 		},
@@ -62,27 +62,27 @@ func newTestEngines(t *testing.T, N, T int) *testEngines {
 		},
 	}
 
-	te.helper = te.newEngine(t, hid, testSess.Helper)
+	te.helper = te.newRunner(t, hid, testSess.Helper)
 	te.coord, err = NewCentralCoordinator(hid, testSess.Helper, testCoordConf, te.helper)
 	require.NoError(t, err)
 	for nid, nsess := range testSess.Nodes {
-		te.nodes[nid] = te.newEngine(t, nid, nsess)
+		te.nodes[nid] = te.newRunner(t, nid, nsess)
 		te.nids = append(te.nids, nid)
 	}
 	slices.Sort(te.nids)
 	return te
 }
 
-func (te *testEngines) newEngine(t *testing.T, nid helium.NodeID, sess *helium.Session) *MHEMPC {
-	e, err := NewMHEMPC(nid, sess, testEngineConf, te.trans.For(nid),
+func (te *testRunners) newRunner(t *testing.T, nid helium.NodeID, sess *helium.Session) *Runner {
+	e, err := NewRunner(nid, sess, testConf, te.trans.For(nid),
 		NewObjectStoreResultBackend(objectstore.NewMemObjectStore(), sess.ID), te.ksin)
 	require.NoError(t, err)
-	te.trans.AddEngine(e)
+	te.trans.AddRunner(e)
 	return e
 }
 
 // run runs e in g, driven by the test coordinator.
-func (te *testEngines) run(g *errgroup.Group, ctx context.Context, e *MHEMPC) {
+func (te *testRunners) run(g *errgroup.Group, ctx context.Context, e *Runner) {
 	g.Go(func() error {
 		if err := e.Run(ctx, te.coord); err != nil {
 			return fmt.Errorf("error at node %s: %w", e.NodeID(), err)
@@ -92,7 +92,7 @@ func (te *testEngines) run(g *errgroup.Group, ctx context.Context, e *MHEMPC) {
 }
 
 // checkOutputs verifies that e can produce a correct output for every signature.
-func (te *testEngines) checkOutputs(t *testing.T, ctx context.Context, e *MHEMPC, sigs ...Signature) {
+func (te *testRunners) checkOutputs(t *testing.T, ctx context.Context, e *Runner, sigs ...Signature) {
 	if len(sigs) == 0 {
 		sigs = te.sigs
 	}
@@ -106,21 +106,21 @@ func (te *testEngines) checkOutputs(t *testing.T, ctx context.Context, e *MHEMPC
 }
 
 func testContext(t *testing.T) context.Context {
-	ctx, cancel := context.WithTimeout(context.Background(), testEngineTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	t.Cleanup(cancel)
 	return ctx
 }
 
-// TestMHEMPCSetupAndDec runs the full set of protocols (setup + decryption) between a helper
+// TestRunnerSetupAndDec runs the full set of protocols (setup + decryption) between a helper
 // and N nodes, and checks that every node obtains correct outputs.
-func TestMHEMPCSetupAndDec(t *testing.T) {
+func TestRunnerSetupAndDec(t *testing.T) {
 	for _, ts := range testSettings {
 		if ts.T == 0 {
 			ts.T = ts.N
 		}
 		t.Run(fmt.Sprintf("N=%d/T=%d", ts.N, ts.T), func(t *testing.T) {
 			ctx := testContext(t)
-			te := newTestEngines(t, ts.N, ts.T)
+			te := newTestRunners(t, ts.N, ts.T)
 
 			g, gctx := errgroup.WithContext(ctx)
 			te.run(g, gctx, te.helper)
@@ -141,7 +141,7 @@ func TestMHEMPCSetupAndDec(t *testing.T) {
 			}
 
 			// the key view works at every node
-			for _, e := range []*MHEMPC{te.helper, te.nodes[te.nids[0]]} {
+			for _, e := range []*Runner{te.helper, te.nodes[te.nids[0]]} {
 				kp := NewKeyProvider(e)
 				_, err := kp.GetCollectivePublicKey(ctx)
 				require.NoError(t, err)
@@ -172,16 +172,16 @@ func TestMHEMPCSetupAndDec(t *testing.T) {
 	}
 }
 
-// TestMHEMPCLateJoiner runs the protocols with only T nodes, then lets the remaining nodes
+// TestRunnerLateJoiner runs the protocols with only T nodes, then lets the remaining nodes
 // catch up from the event log and fetch the results lazily from the helper.
-func TestMHEMPCLateJoiner(t *testing.T) {
+func TestRunnerLateJoiner(t *testing.T) {
 	for _, ts := range testSettings {
 		if ts.T == 0 {
 			ts.T = ts.N
 		}
 		t.Run(fmt.Sprintf("N=%d/T=%d", ts.N, ts.T), func(t *testing.T) {
 			ctx := testContext(t)
-			te := newTestEngines(t, ts.N, ts.T)
+			te := newTestRunners(t, ts.N, ts.T)
 			early, late := te.nids[:ts.T], te.nids[ts.T:]
 
 			g, gctx := errgroup.WithContext(ctx)
@@ -214,11 +214,11 @@ func TestMHEMPCLateJoiner(t *testing.T) {
 	}
 }
 
-// TestMHEMPCRetry checks that a protocol is failed and retried with other participants
+// TestRunnerRetry checks that a protocol is failed and retried with other participants
 // when a participant disconnects before providing its share.
-func TestMHEMPCRetry(t *testing.T) {
+func TestRunnerRetry(t *testing.T) {
 	ctx := testContext(t)
-	te := newTestEngines(t, 3, 2)
+	te := newTestRunners(t, 3, 2)
 	n0, n1, n2 := te.nodes["node-0"], te.nodes["node-1"], te.nodes["node-2"]
 	sig := Signature{Type: CKG}
 
@@ -267,7 +267,7 @@ func TestMHEMPCRetry(t *testing.T) {
 
 	require.False(t, te.helper.IsRunning(pd1))
 	require.True(t, te.helper.IsCompleted(pd2))
-	for _, e := range []*MHEMPC{te.helper, n0, n1, n2} {
+	for _, e := range []*Runner{te.helper, n0, n1, n2} {
 		te.checkOutputs(t, ctx, e, sig)
 	}
 }
@@ -297,9 +297,9 @@ func (rt *recordingTransport) sent() []Descriptor {
 	return slices.Clone(rt.pds)
 }
 
-// TestMHEMPCStateMachine drives single engines by hand, without coordinator nor
+// TestRunnerStateMachine drives single runners by hand, without coordinator nor
 // concurrent nodes, and checks the state transitions and emitted actions.
-func TestMHEMPCStateMachine(t *testing.T) {
+func TestRunnerStateMachine(t *testing.T) {
 	ctx := testContext(t)
 	hid := helium.NodeID("helper")
 	testSess, err := heliumtest.NewSessions(3, 3, TestPN12QP109, hid)
@@ -317,9 +317,9 @@ func TestMHEMPCStateMachine(t *testing.T) {
 	completed := func(pd Descriptor) Event { return Event{EventType: Completed, Descriptor: pd} }
 	failed := func(pd Descriptor) Event { return Event{EventType: Failed, Descriptor: pd} }
 
-	newNode := func(nid helium.NodeID) (*MHEMPC, *recordingTransport) {
+	newNode := func(nid helium.NodeID) (*Runner, *recordingTransport) {
 		rt := &recordingTransport{}
-		e, err := NewMHEMPC(nid, testSess.Nodes[nid], testEngineConf, rt,
+		e, err := NewRunner(nid, testSess.Nodes[nid], testConf, rt,
 			NewObjectStoreResultBackend(objectstore.NewMemObjectStore(), testSess.SessParams.ID), nil)
 		require.NoError(t, err)
 		return e, rt
@@ -393,7 +393,7 @@ func TestMHEMPCStateMachine(t *testing.T) {
 
 	t.Run("aggregator", func(t *testing.T) {
 		rt := &recordingTransport{}
-		helper, err := NewMHEMPC(hid, testSess.Helper, testEngineConf, rt,
+		helper, err := NewRunner(hid, testSess.Helper, testConf, rt,
 			NewObjectStoreResultBackend(objectstore.NewMemObjectStore(), testSess.SessParams.ID), nil)
 		require.NoError(t, err)
 
@@ -439,7 +439,7 @@ func TestMHEMPCStateMachine(t *testing.T) {
 		checkOutput(out.Result, pdCkg, *testSess, t)
 
 		// a restarted helper restores the completion from its backend
-		restarted, err := NewMHEMPC(hid, testSess.Helper, testEngineConf, rt, helper.results, nil)
+		restarted, err := NewRunner(hid, testSess.Helper, testConf, rt, helper.results, nil)
 		require.NoError(t, err)
 		restored, err := restarted.RestoreCompleted(pdCkg.Signature, pdRtg.Signature)
 		require.NoError(t, err)

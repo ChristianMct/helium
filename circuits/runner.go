@@ -18,16 +18,16 @@ const defaultMaxEvaluation = 8 // max number of concurrent circuit evaluations
 // currently running at this node.
 var ErrCircuitNotRunning = errors.New("circuit is not running")
 
-// Config is the configuration of a compute Engine.
+// Config is the configuration of a Runner.
 type Config struct {
 	// MaxEvaluation is the maximum number of circuits evaluated concurrently by this node.
 	MaxEvaluation int
 }
 
-// OperandTransport is the transport interface required by the Engine. Operands are routed
+// OperandTransport is the transport interface required by a Runner. Operands are routed
 // by the transport from the circuit descriptor (inputs go to the evaluator) or from
 // the operand id (an operand is queried from its owner). Incoming operands are
-// delivered to the engine by calling its HandleOperand method.
+// delivered to the runner by calling its HandleOperand method.
 type OperandTransport interface {
 	// PutOperand sends an input operand of circuit cd to its evaluator.
 	PutOperand(ctx context.Context, cd helium.Descriptor, op helium.Operand) error
@@ -35,7 +35,7 @@ type OperandTransport interface {
 	GetOperand(ctx context.Context, id helium.OperandID) (*helium.Operand, error)
 }
 
-// InputProvider is the user-provided function called by the engine to obtain the node's
+// InputProvider is the user-provided function called by the runner to obtain the node's
 // inputs to a circuit. It is called once per circuit evaluation with the ids of the operands
 // the node must provide, and returns a channel delivering them. The channel must be closed
 // once all inputs are sent.
@@ -43,9 +43,9 @@ type InputProvider func(ctx context.Context, cd helium.Descriptor, ids []helium.
 
 // Input is a node's input to a circuit. The following value types are supported:
 //   - *rlwe.Ciphertext: an already-encrypted input (not supported for summed inputs),
-//   - *rlwe.Plaintext: a Lattigo plaintext, encrypted by the engine,
+//   - *rlwe.Plaintext: a Lattigo plaintext, encrypted by the runner,
 //   - a Go slice supported by the session's scheme encoder (e.g., []uint64 for BGV,
-//     []float64 for CKKS), encoded and encrypted by the engine.
+//     []float64 for CKKS), encoded and encrypted by the runner.
 type Input struct {
 	ID    helium.OperandID
 	Value any
@@ -56,7 +56,8 @@ var NoInput InputProvider = func(context.Context, helium.Descriptor, []helium.Op
 	return nil, fmt.Errorf("node has no input")
 }
 
-// Engine is the state of a node in the circuit evaluations of a session.
+// Runner is the state of a node in the circuit evaluations of a session. It is the
+// sibling of protocols.Runner, which runs the session's MHE protocols.
 //
 // The type is a state machine driven by the coordination events of a Coordinator
 // (HandleEvent) and by incoming operands (HandleOperand). It executes the circuits
@@ -72,7 +73,7 @@ var NoInput InputProvider = func(context.Context, helium.Descriptor, []helium.Op
 // (circuit evaluation, input provision) runs in goroutines started by the state machine.
 // The outputs of completed circuits are held in an operand store and fetched lazily
 // from their owner when not available locally (see GetOperand).
-type Engine struct {
+type Runner struct {
 	self    helium.NodeID
 	sess    *helium.Session
 	conf    Config
@@ -96,7 +97,7 @@ type Engine struct {
 	wg      sync.WaitGroup
 }
 
-// runningCircuit is the engine state for a running circuit.
+// runningCircuit is the runner state for a running circuit.
 type runningCircuit struct {
 	cd      helium.Descriptor
 	md      *helium.Metadata
@@ -116,11 +117,11 @@ type runningCircuit struct {
 	done chan struct{} // closed when the circuit leaves the running state
 }
 
-// NewEngine creates a new engine for the given node and session. The key provider
+// NewRunner creates a new runner for the given node and session. The key provider
 // provides the collective public key (to encrypt inputs) and the evaluation keys
 // (to evaluate circuits). Circuits are registered with RegisterCircuit and the
 // node's inputs are provided by the InputProvider set with SetInputProvider.
-func NewEngine(self helium.NodeID, sess *helium.Session, conf Config, trans OperandTransport, keys helium.PublicKeyProvider) (*Engine, error) {
+func NewRunner(self helium.NodeID, sess *helium.Session, conf Config, trans OperandTransport, keys helium.PublicKeyProvider) (*Runner, error) {
 	if sess == nil {
 		return nil, fmt.Errorf("session must not be nil")
 	}
@@ -133,7 +134,7 @@ func NewEngine(self helium.NodeID, sess *helium.Session, conf Config, trans Oper
 	if conf.MaxEvaluation <= 0 {
 		conf.MaxEvaluation = defaultMaxEvaluation
 	}
-	return &Engine{
+	return &Runner{
 		self:      self,
 		sess:      sess,
 		conf:      conf,
@@ -151,36 +152,36 @@ func NewEngine(self helium.NodeID, sess *helium.Session, conf Config, trans Oper
 	}, nil
 }
 
-// NodeID returns the id of the node running this engine.
-func (e *Engine) NodeID() helium.NodeID {
-	return e.self
+// NodeID returns the id of the node running this runner.
+func (r *Runner) NodeID() helium.NodeID {
+	return r.self
 }
 
-// Session returns the session of this engine.
-func (e *Engine) Session() *helium.Session {
-	return e.sess
+// Session returns the session of this runner.
+func (r *Runner) Session() *helium.Session {
+	return r.sess
 }
 
-// RegisterCircuit registers a circuit to the engine's library.
+// RegisterCircuit registers a circuit to the runner's library.
 // It returns an error if the circuit is already registered.
-func (e *Engine) RegisterCircuit(name helium.Name, c helium.Circuit) error {
+func (r *Runner) RegisterCircuit(name helium.Name, c helium.Circuit) error {
 	if c.Eval == nil {
 		return fmt.Errorf("circuit %s has no evaluation function", name)
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if _, has := e.library[name]; has {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, has := r.library[name]; has {
 		return fmt.Errorf("circuit name \"%s\" already registered", name)
 	}
-	e.library[name] = c
+	r.library[name] = c
 	return nil
 }
 
-// RegisterCircuits registers a set of circuits to the engine's library.
+// RegisterCircuits registers a set of circuits to the runner's library.
 // It returns an error if any of the circuits is already registered.
-func (e *Engine) RegisterCircuits(cs map[helium.Name]helium.Circuit) error {
+func (r *Runner) RegisterCircuits(cs map[helium.Name]helium.Circuit) error {
 	for name, c := range cs {
-		if err := e.RegisterCircuit(name, c); err != nil {
+		if err := r.RegisterCircuit(name, c); err != nil {
 			return err
 		}
 	}
@@ -188,36 +189,36 @@ func (e *Engine) RegisterCircuits(cs map[helium.Name]helium.Circuit) error {
 }
 
 // SetInputProvider sets the function providing the node's inputs to
-func (e *Engine) SetInputProvider(ip InputProvider) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (r *Runner) SetInputProvider(ip InputProvider) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if ip == nil {
 		ip = NoInput
 	}
-	e.inputs = ip
+	r.inputs = ip
 }
 
 // ---- roles
 
-func (e *Engine) isEvaluator(md *helium.Metadata) bool {
-	return md.IsEvaluator(e.self)
+func (r *Runner) isEvaluator(md *helium.Metadata) bool {
+	return md.IsEvaluator(r.self)
 }
 
-func (e *Engine) isParticipant(md *helium.Metadata) bool {
-	return md.IsParticipant(e.self)
+func (r *Runner) isParticipant(md *helium.Metadata) bool {
+	return md.IsParticipant(r.self)
 }
 
 // resolve resolves the descriptor against the library and the session.
-func (e *Engine) resolve(cd helium.Descriptor) (*helium.Metadata, helium.Circuit, error) {
-	c, has := e.library[cd.Name]
+func (r *Runner) resolve(cd helium.Descriptor) (*helium.Metadata, helium.Circuit, error) {
+	c, has := r.library[cd.Name]
 	if !has {
 		return nil, helium.Circuit{}, fmt.Errorf("no registered circuit for name \"%s\"", cd.Name)
 	}
-	itf, err := c.Describe(cd.Signature, e.sess.Params)
+	itf, err := c.Describe(cd.Signature, r.sess.Params)
 	if err != nil {
 		return nil, helium.Circuit{}, fmt.Errorf("cannot describe circuit %s: %w", cd.Signature, err)
 	}
-	md, err := helium.Resolve(cd, itf, e.sess.Nodes)
+	md, err := helium.Resolve(cd, itf, r.sess.Nodes)
 	if err != nil {
 		return nil, helium.Circuit{}, fmt.Errorf("cannot resolve circuit %s: %w", cd.HID(), err)
 	}
@@ -225,56 +226,56 @@ func (e *Engine) resolve(cd helium.Descriptor) (*helium.Metadata, helium.Circuit
 }
 
 // Validate returns an error if the circuit described by cd cannot be evaluated
-// with the engine's library and session.
-func (e *Engine) Validate(cd helium.Descriptor) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	_, _, err := e.resolve(cd)
+// with the runner's library and session.
+func (r *Runner) Validate(cd helium.Descriptor) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, _, err := r.resolve(cd)
 	return err
 }
 
 // Metadata returns the resolved metadata of the circuit described by cd.
-func (e *Engine) Metadata(cd helium.Descriptor) (*helium.Metadata, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	md, _, err := e.resolve(cd)
+func (r *Runner) Metadata(cd helium.Descriptor) (*helium.Metadata, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	md, _, err := r.resolve(cd)
 	return md, err
 }
 
 // ---- state machine inputs
 
-// Init initializes the engine state from a log of past coordination events
+// Init initializes the runner state from a log of past coordination events
 // (catch-up). The events are applied without side effects; the actions required
 // by the resulting state are then taken at once.
-func (e *Engine) Init(ctx context.Context, events []Event) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (r *Runner) Init(ctx context.Context, events []Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, ev := range events {
-		if err := e.apply(ctx, ev); err != nil {
+		if err := r.apply(ctx, ev); err != nil {
 			return fmt.Errorf("error applying event %s: %w", ev, err)
 		}
 	}
-	e.reconcile()
+	r.reconcile()
 	return nil
 }
 
 // HandleEvent processes a coordination event. It is idempotent with respect to
 // duplicated events, and tolerates receiving events about circuits in which
 // the node has no role.
-func (e *Engine) HandleEvent(ctx context.Context, ev Event) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if err := e.apply(ctx, ev); err != nil {
+func (r *Runner) HandleEvent(ctx context.Context, ev Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.apply(ctx, ev); err != nil {
 		return err
 	}
-	e.reconcile()
+	r.reconcile()
 	return nil
 }
 
 // HandleOperand processes an input operand sent by a participant in a circuit for
 // which this node is the evaluator. It returns ErrCircuitNotRunning if the circuit
 // is not running at this node.
-func (e *Engine) HandleOperand(_ context.Context, op helium.Operand) error {
+func (r *Runner) HandleOperand(_ context.Context, op helium.Operand) error {
 	if err := op.ID.Validate(); err != nil {
 		return err
 	}
@@ -282,15 +283,15 @@ func (e *Engine) HandleOperand(_ context.Context, op helium.Operand) error {
 		return fmt.Errorf("operand %s has no ciphertext", op.ID)
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	rc, has := e.running[op.ID.CircuitID()]
+	rc, has := r.running[op.ID.CircuitID()]
 	if !has {
 		return fmt.Errorf("%w: %s", ErrCircuitNotRunning, op.ID.CircuitID())
 	}
-	if !e.isEvaluator(rc.md) {
-		return fmt.Errorf("node %s is not the evaluator of circuit %s", e.self, rc.cd.HID())
+	if !r.isEvaluator(rc.md) {
+		return fmt.Errorf("node %s is not the evaluator of circuit %s", r.self, rc.cd.HID())
 	}
 	fop, expected := rc.inputs[op.ID]
 	if !expected {
@@ -303,23 +304,23 @@ func (e *Engine) HandleOperand(_ context.Context, op helium.Operand) error {
 // ---- state transitions (caller holds e.mu)
 
 // apply applies a coordination event to the state, without side effects.
-func (e *Engine) apply(ctx context.Context, ev Event) error {
+func (r *Runner) apply(ctx context.Context, ev Event) error {
 	cd := ev.Descriptor
 	cid := cd.CircuitID
 	switch ev.EventType {
 	case Started:
-		if _, has := e.completed[cid]; has {
+		if _, has := r.completed[cid]; has {
 			return nil
 		}
-		if _, has := e.running[cid]; has {
+		if _, has := r.running[cid]; has {
 			return nil
 		}
-		md, c, err := e.resolve(cd)
+		md, c, err := r.resolve(cd)
 		if err != nil {
 			return err
 		}
 		rc := &runningCircuit{cd: cd, md: md, circuit: c, ctx: ctx, done: make(chan struct{})}
-		if e.isEvaluator(md) {
+		if r.isEvaluator(md) {
 			rc.inputs = make(map[helium.OperandID]*helium.FutureOperand)
 			for _, id := range md.ExpectedInputs() {
 				rc.inputs[id] = helium.NewFutureOperand(id)
@@ -330,19 +331,19 @@ func (e *Engine) apply(ctx context.Context, ev Event) error {
 			}
 			rc.sums = make(map[string]*helium.FutureOperand)
 		}
-		delete(e.failed, cid)
-		e.running[cid] = rc
+		delete(r.failed, cid)
+		r.running[cid] = rc
 	case Executing:
-		if rc, has := e.running[cid]; has {
+		if rc, has := r.running[cid]; has {
 			rc.executing = true
 		}
 	case Completed:
-		e.markCompleted(cd)
+		r.markCompleted(cd)
 	case Failed:
-		if rc, has := e.running[cid]; has {
-			e.dropRunning(rc)
+		if rc, has := r.running[cid]; has {
+			r.dropRunning(rc)
 		}
-		e.markFailed(cd)
+		r.markFailed(cd)
 	default:
 		return fmt.Errorf("unknown event type: %d", ev.EventType)
 	}
@@ -350,50 +351,50 @@ func (e *Engine) apply(ctx context.Context, ev Event) error {
 }
 
 // dropRunning removes rc from the running
-func (e *Engine) dropRunning(rc *runningCircuit) {
-	delete(e.running, rc.cd.CircuitID)
+func (r *Runner) dropRunning(rc *runningCircuit) {
+	delete(r.running, rc.cd.CircuitID)
 	close(rc.done)
-	e.wakeIdle()
+	r.wakeIdle()
 }
 
-// idle returns whether the engine has no running circuit and no event left to publish.
-func (e *Engine) idle() bool {
-	return len(e.running) == 0 && len(e.outbox) == 0 && !e.publishing
+// idle returns whether the runner has no running circuit and no event left to publish.
+func (r *Runner) idle() bool {
+	return len(r.running) == 0 && len(r.outbox) == 0 && !r.publishing
 }
 
-// wakeIdle releases the AwaitIdle callers if the engine is idle.
-func (e *Engine) wakeIdle() {
-	if !e.idle() {
+// wakeIdle releases the AwaitIdle callers if the runner is idle.
+func (r *Runner) wakeIdle() {
+	if !r.idle() {
 		return
 	}
-	for _, w := range e.idleWaiters {
+	for _, w := range r.idleWaiters {
 		close(w)
 	}
-	e.idleWaiters = nil
+	r.idleWaiters = nil
 }
 
 // markCompleted records cd as completed and wakes up the waiters.
-func (e *Engine) markCompleted(cd helium.Descriptor) {
+func (r *Runner) markCompleted(cd helium.Descriptor) {
 	cid := cd.CircuitID
-	if rc, has := e.running[cid]; has {
-		e.dropRunning(rc)
+	if rc, has := r.running[cid]; has {
+		r.dropRunning(rc)
 	}
-	delete(e.failed, cid)
-	e.completed[cid] = cd
-	for _, w := range e.waiters[cid] {
+	delete(r.failed, cid)
+	r.completed[cid] = cd
+	for _, w := range r.waiters[cid] {
 		w <- completion{cd: cd}
 	}
-	delete(e.waiters, cid)
+	delete(r.waiters, cid)
 }
 
 // markFailed records cd as failed and wakes up the waiters with an error.
-func (e *Engine) markFailed(cd helium.Descriptor) {
+func (r *Runner) markFailed(cd helium.Descriptor) {
 	cid := cd.CircuitID
-	e.failed[cid] = cd
-	for _, w := range e.waiters[cid] {
+	r.failed[cid] = cd
+	for _, w := range r.waiters[cid] {
 		w <- completion{cd: cd, err: fmt.Errorf("circuit %s failed", cd.HID())}
 	}
-	delete(e.waiters, cid)
+	delete(r.waiters, cid)
 }
 
 // completion is the result of waiting for a circuit's termination.
@@ -407,32 +408,32 @@ type completion struct {
 //   - as input provider, starts the provision of the node's inputs to executing
 //
 // It is the only place where side effects are decided.
-func (e *Engine) reconcile() {
-	for _, rc := range e.running {
-		if e.isEvaluator(rc.md) && !rc.evalStarted {
+func (r *Runner) reconcile() {
+	for _, rc := range r.running {
+		if r.isEvaluator(rc.md) && !rc.evalStarted {
 			rc.evalStarted = true
 			rc.executing = true
-			e.emit(Event{EventType: Executing, Descriptor: rc.cd})
-			e.wg.Add(1)
-			go e.evaluate(rc)
+			r.emit(Event{EventType: Executing, Descriptor: rc.cd})
+			r.wg.Add(1)
+			go r.evaluate(rc)
 		}
-		if rc.executing && !rc.inputsScheduled && e.isParticipant(rc.md) {
+		if rc.executing && !rc.inputsScheduled && r.isParticipant(rc.md) {
 			rc.inputsScheduled = true
-			e.wg.Add(1)
-			go e.provideInputs(rc)
+			r.wg.Add(1)
+			go r.provideInputs(rc)
 		}
 	}
-	e.changed()
+	r.changed()
 }
 
 // evaluate evaluates the circuit rc as evaluator. It runs outside of the lock.
-func (e *Engine) evaluate(rc *runningCircuit) {
-	defer e.wg.Done()
+func (r *Runner) evaluate(rc *runningCircuit) {
+	defer r.wg.Done()
 	ctx := rc.ctx
 
 	select {
-	case e.evalSem <- struct{}{}:
-		defer func() { <-e.evalSem }()
+	case r.evalSem <- struct{}{}:
+		defer func() { <-r.evalSem }()
 	case <-rc.done:
 		return
 	case <-ctx.Done():
@@ -444,17 +445,17 @@ func (e *Engine) evaluate(rc *runningCircuit) {
 	default:
 	}
 
-	e.Logf("evaluating circuit %s", rc.cd.HID())
+	r.Logf("evaluating circuit %s", rc.cd.HID())
 
-	eval, err := e.evaluatorFor(ctx, rc.md.Keys)
+	eval, err := r.evaluatorFor(ctx, rc.md.Keys)
 	if err != nil {
-		e.failLocal(rc, fmt.Errorf("cannot get evaluator: %w", err))
+		r.failLocal(rc, fmt.Errorf("cannot get evaluator: %w", err))
 		return
 	}
 
-	rt := &engineRuntime{e: e, rc: rc, eval: eval}
+	rt := &circuitRuntime{r: r, rc: rc, eval: eval}
 	if err := runCircuit(rc.circuit, rt); err != nil {
-		e.failLocal(rc, err)
+		r.failLocal(rc, err)
 		return
 	}
 
@@ -462,26 +463,26 @@ func (e *Engine) evaluate(rc *runningCircuit) {
 	for name, oo := range rc.outputs {
 		op, set := oo.Get()
 		if !set {
-			e.failLocal(rc, fmt.Errorf("output %s was not set by the circuit", name))
+			r.failLocal(rc, fmt.Errorf("output %s was not set by the circuit", name))
 			return
 		}
 		outs = append(outs, op)
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for i := range outs {
 		op := outs[i]
-		e.operands[op.ID] = &op
+		r.operands[op.ID] = &op
 	}
-	if _, running := e.running[rc.cd.CircuitID]; !running {
-		e.Logf("circuit %s terminated before its evaluation completed", rc.cd.HID())
+	if _, running := r.running[rc.cd.CircuitID]; !running {
+		r.Logf("circuit %s terminated before its evaluation completed", rc.cd.HID())
 		return
 	}
-	e.markCompleted(rc.cd)
-	e.emit(Event{EventType: Completed, Descriptor: rc.cd})
-	e.Logf("completed circuit %s", rc.cd.HID())
-	e.changed()
+	r.markCompleted(rc.cd)
+	r.emit(Event{EventType: Completed, Descriptor: rc.cd})
+	r.Logf("completed circuit %s", rc.cd.HID())
+	r.changed()
 }
 
 // runCircuit runs the circuit's evaluation function, turning panics into errors.
@@ -495,83 +496,83 @@ func runCircuit(c helium.Circuit, rt helium.CircuitRuntime) (err error) {
 }
 
 // failLocal terminates a circuit evaluated by this node with a failure.
-func (e *Engine) failLocal(rc *runningCircuit, cause error) {
-	e.Logf("circuit %s failed: %s", rc.cd.HID(), cause)
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if cur, running := e.running[rc.cd.CircuitID]; !running || cur != rc {
+func (r *Runner) failLocal(rc *runningCircuit, cause error) {
+	r.Logf("circuit %s failed: %s", rc.cd.HID(), cause)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cur, running := r.running[rc.cd.CircuitID]; !running || cur != rc {
 		return // already terminated by an event
 	}
-	e.dropRunning(rc)
-	e.markFailed(rc.cd)
-	e.emit(Event{EventType: Failed, Descriptor: rc.cd})
-	e.changed()
+	r.dropRunning(rc)
+	r.markFailed(rc.cd)
+	r.emit(Event{EventType: Failed, Descriptor: rc.cd})
+	r.changed()
 }
 
 // evaluatorFor returns an evaluator initialized with the given keys.
-func (e *Engine) evaluatorFor(ctx context.Context, keys helium.Keys) (helium.Evaluator, error) {
+func (r *Runner) evaluatorFor(ctx context.Context, keys helium.Keys) (helium.Evaluator, error) {
 	var rlk *rlwe.RelinearizationKey
 	if keys.Rlk {
 		var err error
-		if rlk, err = e.keys.GetRelinearizationKey(ctx); err != nil {
+		if rlk, err = r.keys.GetRelinearizationKey(ctx); err != nil {
 			return nil, err
 		}
 	}
 	gks := make([]*rlwe.GaloisKey, 0, len(keys.GaloisEls))
 	for _, galEl := range keys.GaloisEls {
-		gk, err := e.keys.GetGaloisKey(ctx, galEl)
+		gk, err := r.keys.GetGaloisKey(ctx, galEl)
 		if err != nil {
 			return nil, err
 		}
 		gks = append(gks, gk)
 	}
-	return helium.NewEvaluator(e.sess.Params, rlwe.NewMemEvaluationKeySet(rlk, gks...)), nil
+	return helium.NewEvaluator(r.sess.Params, rlwe.NewMemEvaluationKeySet(rlk, gks...)), nil
 }
 
 // provideInputs provides the node's inputs to circuit rc. It runs outside of the lock.
-func (e *Engine) provideInputs(rc *runningCircuit) {
-	defer e.wg.Done()
+func (r *Runner) provideInputs(rc *runningCircuit) {
+	defer r.wg.Done()
 	ctx := rc.ctx
 	select {
 	case <-rc.done:
 		return
 	default:
 	}
-	ids := rc.md.InputsOf[e.self]
-	if err := e.sendInputs(ctx, rc.md, ids); err != nil {
-		e.Logf("error while providing inputs to %s: %s", rc.cd.HID(), err)
+	ids := rc.md.InputsOf[r.self]
+	if err := r.sendInputs(ctx, rc.md, ids); err != nil {
+		r.Logf("error while providing inputs to %s: %s", rc.cd.HID(), err)
 		return
 	}
-	e.Logf("provided %d input(s) to %s", len(ids), rc.cd.HID())
+	r.Logf("provided %d input(s) to %s", len(ids), rc.cd.HID())
 }
 
 // ---- outputs
 
-func (e *Engine) emit(ev Event) {
-	e.outbox = append(e.outbox, ev)
-	e.changed()
+func (r *Runner) emit(ev Event) {
+	r.outbox = append(r.outbox, ev)
+	r.changed()
 }
 
 // changed signals the Run loop that the state has changed (non-blocking).
-func (e *Engine) changed() {
+func (r *Runner) changed() {
 	select {
-	case e.notify <- struct{}{}:
+	case r.notify <- struct{}{}:
 	default:
 	}
 }
 
 // publish sends the emitted events to the coordinator, outside of the lock.
-func (e *Engine) publish(ctx context.Context, coord Coordinator) (err error) {
-	e.mu.Lock()
-	evs := e.outbox
-	e.outbox = nil
-	e.publishing = true
-	e.mu.Unlock()
+func (r *Runner) publish(ctx context.Context, coord Coordinator) (err error) {
+	r.mu.Lock()
+	evs := r.outbox
+	r.outbox = nil
+	r.publishing = true
+	r.mu.Unlock()
 	defer func() {
-		e.mu.Lock()
-		e.publishing = false
-		e.wakeIdle()
-		e.mu.Unlock()
+		r.mu.Lock()
+		r.publishing = false
+		r.wakeIdle()
+		r.mu.Unlock()
 	}()
 	for _, ev := range evs {
 		if err := coord.Publish(ctx, ev); err != nil {
@@ -581,16 +582,16 @@ func (e *Engine) publish(ctx context.Context, coord Coordinator) (err error) {
 	return nil
 }
 
-// Run connects the engine to a coordinator: the engine catches up with the past
+// Run connects the runner to a coordinator: the runner catches up with the past
 // events, processes the live ones with HandleEvent and publishes its own events.
 // The method returns when the coordinator closes the live channel, when publishing
 // fails, or when the context is cancelled.
-func (e *Engine) Run(ctx context.Context, coord Coordinator) (err error) {
+func (r *Runner) Run(ctx context.Context, coord Coordinator) (err error) {
 	past, live, err := coord.Register(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot register to coordinator: %w", err)
 	}
-	if err = e.Init(ctx, past); err != nil {
+	if err = r.Init(ctx, past); err != nil {
 		return err
 	}
 
@@ -601,11 +602,11 @@ func (e *Engine) Run(ctx context.Context, coord Coordinator) (err error) {
 				done = true
 				continue
 			}
-			if err = e.HandleEvent(ctx, ev); err != nil {
+			if err = r.HandleEvent(ctx, ev); err != nil {
 				done = true
 			}
-		case <-e.notify:
-			if err = e.publish(ctx, coord); err != nil {
+		case <-r.notify:
+			if err = r.publish(ctx, coord); err != nil {
 				done = true
 			}
 		case <-ctx.Done():
@@ -613,16 +614,16 @@ func (e *Engine) Run(ctx context.Context, coord Coordinator) (err error) {
 			done = true
 		}
 	}
-	e.wg.Wait()
-	if perr := e.publish(ctx, coord); err == nil {
+	r.wg.Wait()
+	if perr := r.publish(ctx, coord); err == nil {
 		err = perr
 	}
 	return err
 }
 
-// Logf logs a message with the engine's prefix.
-func (e *Engine) Logf(msg string, v ...any) {
-	log.Printf("%s | [compute] %s\n", e.self, fmt.Sprintf(msg, v...))
+// Logf logs a message with the runner's prefix.
+func (r *Runner) Logf(msg string, v ...any) {
+	log.Printf("%s | [circuits] %s\n", r.self, fmt.Sprintf(msg, v...))
 }
 
 // sortedIDs returns a sorted copy of the ids.

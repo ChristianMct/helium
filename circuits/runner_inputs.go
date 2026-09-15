@@ -19,7 +19,7 @@ import (
 func sumCRS(sess *helium.Session, cid helium.CircuitID, name string) []byte {
 	var crs []byte
 	crs = append(crs, sess.PublicSeed...)
-	crs = append(crs, []byte(fmt.Sprintf("%s/%s", cid, name))...)
+	crs = append(crs, fmt.Appendf(nil, "%s/%s", cid, name)...)
 	return crs
 }
 
@@ -37,23 +37,23 @@ func sumContribution(md *helium.Metadata, id helium.OperandID) (string, bool) {
 
 // sendInputs obtains the node's inputs from the input provider, encrypts them and sends
 // them to the evaluator.
-func (e *Engine) sendInputs(ctx context.Context, md *helium.Metadata, ids []helium.OperandID) error {
+func (r *Runner) sendInputs(ctx context.Context, md *helium.Metadata, ids []helium.OperandID) error {
 	if len(ids) == 0 {
 		return nil
 	}
 
-	cpk, err := e.keys.GetCollectivePublicKey(ctx)
+	cpk, err := r.keys.GetCollectivePublicKey(ctx)
 	if err != nil {
 		return fmt.Errorf("cannot retrieve the collective public key: %w", err)
 	}
-	enc, err := newInputEncryptor(e.sess, cpk)
+	enc, err := newInputEncryptor(r.sess, cpk)
 	if err != nil {
 		return err
 	}
 
-	e.mu.Lock()
-	ip := e.inputs
-	e.mu.Unlock()
+	r.mu.Lock()
+	ip := r.inputs
+	r.mu.Unlock()
 
 	inChan, err := ip(ctx, md.Descriptor.Clone(), sortedIDs(ids))
 	if err != nil {
@@ -64,22 +64,22 @@ func (e *Engine) sendInputs(ctx context.Context, md *helium.Metadata, ids []heli
 	provided := utils.NewEmptySet[helium.OperandID]()
 	for in := range inChan {
 		if !expected.Contains(in.ID) {
-			e.Logf("skipping unexpected input %s", in.ID)
+			r.Logf("skipping unexpected input %s", in.ID)
 			continue
 		}
 		if provided.Contains(in.ID) {
-			e.Logf("skipping duplicated input %s", in.ID)
+			r.Logf("skipping duplicated input %s", in.ID)
 			continue
 		}
 		ct, err := enc.encrypt(md, in)
 		if err != nil {
 			return fmt.Errorf("cannot encrypt input %s: %w", in.ID, err)
 		}
-		if err := e.trans.PutOperand(ctx, md.Descriptor, helium.Operand{ID: in.ID, Ciphertext: ct}); err != nil {
+		if err := r.trans.PutOperand(ctx, md.Descriptor, helium.Operand{ID: in.ID, Ciphertext: ct}); err != nil {
 			return fmt.Errorf("cannot send input %s: %w", in.ID, err)
 		}
 		provided.Add(in.ID)
-		e.Logf("sent input %s", in.ID)
+		r.Logf("sent input %s", in.ID)
 	}
 
 	if missing := expected.Diff(provided); len(missing) > 0 {

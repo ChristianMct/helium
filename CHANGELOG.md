@@ -5,7 +5,7 @@ This file contains a log of the main changes made to the framework.
 ## [Unreleased]
 
 This update collapses the MHE-MPC protocol logic, previously spread over the `node`,
-`services/setup`, `services/compute` and `protocols` packages, into two engine types, and
+`services/setup`, `services/compute` and `protocols` packages, into two runner types, and
 inverts the package graph so that an application deals with the `helium` package and the
 package of its setting only, in preparation for the peer-to-peer setting.
 
@@ -21,22 +21,22 @@ package of its setting only, in preparation for the peer-to-peer setting.
   configuration (`helper.Config`, `NodeList`, `NodeInfo`, `NodeAddress`, `TLSConfig`). It also hosts the
   protobuf translation layer, which the `api` package no longer provides.
 - The `node` package: the node-side runtime shared by all settings. It implements
-  `helium.Runtime` over the two engines (`node.New`), holds the rendez-vous gate between the
+  `helium.Runtime` over the two runners (`node.New`), holds the rendez-vous gate between the
   application and the coordination events, and exposes `node.Starter` for the setting-specific
   package to start circuits and protocols.
 - The `heliumtest` package: the local test fixtures (`Sessions` with their key material,
   `KeyProvider`, the `Circuits` test library, a local circuit `Runtime` and `CheckSetup`),
   usable both by applications and by the framework's own tests.
-- The `protocols.MHEMPC` type: a state machine executing the MHE protocols (in the aggregator,
+- The `protocols.Runner` type: a state machine executing the MHE protocols (in the aggregator,
   participant and receiver roles) as driven by the events of a `protocols.Coordinator`, and holding
   the protocols' results (fetched lazily from the aggregator when not available locally).
 - The `protocols.CentralCoordinator` type: the coordination decisions (participant selection,
   retries, multi-round protocols) and the event log of the helper-assisted setting.
 - The `protocols.Executing` event, published by a protocol's aggregator when it is ready to receive
   shares; participants send their share only after this event.
-- The `protocols.KeyProvider` view, returning the setup keys from an `MHEMPC` engine.
+- The `protocols.KeyProvider` view, returning the setup keys from a `protocols.Runner`.
 - The `coordinator.Log` generic event log.
-- The `circuits.Engine` type: a state machine evaluating circuits as protocols between the
+- The `circuits.Runner` type: a state machine evaluating circuits as protocols between the
   input-providing nodes and an evaluator (`Started` → `Executing` → inputs → `Completed`), driven by
   the events of a `circuits.Coordinator`, and holding the outputs (fetched lazily from the evaluator).
 - The `helium.Interface` type describing a circuit's inputs, summed inputs, outputs and required
@@ -49,7 +49,7 @@ package of its setting only, in preparation for the peer-to-peer setting.
   the required keys can be inferred; `Scheme` gives access to the underlying `bgv`/`ckks` evaluator.
 - The `helium.OperandID` type: system-wide operand ids of the form `//<node>/<circuit-id>/<name>`,
   resolved once from a descriptor and an interface (`helium.Resolve`).
-- The `MHEMPC.DecryptOutput` method, returning the plaintext output of a decryption protocol to its target.
+- The `protocols.Runner.DecryptOutput` method, returning the plaintext output of a decryption protocol to its target.
 
 ### Changed
 
@@ -58,7 +58,7 @@ package of its setting only, in preparation for the peer-to-peer setting.
   `PublicKeyProvider` and the key stores) and the whole circuit-definition language (`Circuit`,
   `CircuitRuntime`, `Evaluator`, `Signature`, `Descriptor`, `Port`, `Keys`, `Interface`, `Operand`,
   `Parse`, `Resolve`), plus the application contracts (`App`, `Runtime`, `Config`,
-  `SetupDescription`). The engines (`protocols`, `circuits`), the node runtime (`node`) and the
+  `SetupDescription`). The runners (`protocols`, `circuits`), the node runtime (`node`) and the
   setting (`helper`) import it. As a result, an application imports `helium` and `helper` only,
   instead of the five packages it previously needed.
 - Circuits are now pure functions from encrypted inputs to encrypted outputs: `CircuitRuntime.Output`
@@ -69,11 +69,11 @@ package of its setting only, in preparation for the peer-to-peer setting.
   and return once the node is done; the input provider argument, the `cdescs`/`outs` channels and the
   client-side circuit evaluation request are removed.
 - The `circuits.InputProvider` is called with the ids of the operands the node must provide; it is
-  now an engine-level mechanism fed by `Runtime.Evaluate`.
-- `circuits.Engine.AwaitCompleted` returns an error when the circuit has failed.
+  now a runner-level mechanism fed by `Runtime.Evaluate`.
+- `circuits.Runner.AwaitCompleted` returns an error when the circuit has failed.
 - `helium.Config` holds the setting-independent node configuration (`ID`, `SessionParameters`,
   `MaxParticipation`, `MaxEvaluation`, `ObjectStore`); `helper.Config` embeds it and adds `HelperID`,
-  `MaxProtoPerNode` and `TLS`. The engine configuration structs are no longer part of the
+  `MaxProtoPerNode` and `TLS`. The runner configuration structs are no longer part of the
   user-facing configuration.
 - The `NodeEvent` protobuf message is now a `oneof` of `ProtocolEvent` and `CircuitEvent`.
 - `Client.Connect` no longer blocks until the connection to the helper is established: it creates
@@ -94,7 +94,7 @@ package of its setting only, in preparation for the peer-to-peer setting.
 - The `api` package (`api/pb` remains): the protobuf translation layer moved to `helper`.
 - The old `node` package, the `setup.Service` (and its key backend), the `protocols.Executor` and
   `protocols.CompleteMap` types, and the `coordinator.TestCoordinator` type.
-- The `services` packages: `services/compute` is replaced by the `circuits.Engine` type.
+- The `services` packages: `services/compute` is replaced by the `circuits.Runner` type.
 - The `sessions.Ciphertext` type, replaced by `helium.Operand`.
 
 ## [v0.3.0] - 20.06.2025 

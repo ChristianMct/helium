@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeStatus is an AggregationStatus for testing the coordinator without an engine.
+// fakeStatus is an AggregationStatus for testing the coordinator without a runner.
 type fakeStatus struct {
 	mu      sync.Mutex
 	missing map[ID]utils.Set[helium.NodeID] // known protocols and their missing shares
@@ -102,10 +102,10 @@ func TestCentralCoordinator(t *testing.T) {
 		pd1 := Descriptor{Signature: ckg, Participants: []helium.NodeID{"node-0", "node-1"}, Aggregator: hid}
 		require.Equal(t, ev(Started, pd1), r.next())
 
-		// engine events are appended to the log
+		// runner events are appended to the log
 		require.NoError(t, c.Publish(ctx, ev(Executing, pd1)))
 		require.Equal(t, ev(Executing, pd1), r.next())
-		require.Error(t, c.Publish(ctx, ev(Started, pd1)), "engines cannot publish Started")
+		require.Error(t, c.Publish(ctx, ev(Started, pd1)), "runners cannot publish Started")
 
 		// disconnection of a participant that provided its share is harmless
 		fs.set(pd1, "node-1")

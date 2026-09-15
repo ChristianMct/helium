@@ -516,7 +516,7 @@ func (x *CircuitEvent) GetType() EventType {
 }
 
 // NodeEvent is an event of the node-level coordination log: either a protocol
-// event (emitted by the coordinator and the protocol engine) or a circuit event
+// event (emitted by the coordinator and the protocol runner) or a circuit event
 // (emitted by the circuit evaluator).
 type NodeEvent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`

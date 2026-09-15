@@ -56,38 +56,38 @@ func nodeIndex(nid helium.NodeID) int {
 	return i
 }
 
-// testEngines is a helper (evaluator) + N nodes (input providers) setting on an in-process transport.
-type testEngines struct {
+// testRunners is a helper (evaluator) + N nodes (input providers) setting on an in-process transport.
+type testRunners struct {
 	sess   *heliumtest.Sessions
 	hid    helium.NodeID
-	trans  *TestEngineTransport
+	trans  *TestTransport
 	coord  *LogCoordinator
-	helper *Engine
-	nodes  map[helium.NodeID]*Engine
+	helper *Runner
+	nodes  map[helium.NodeID]*Runner
 	nids   []helium.NodeID // sorted
 }
 
-// newTestEngines creates the engines. Nodes provide the value returned by inputs for each of their input ids.
-func newTestEngines(t *testing.T, N, T int, params helium.FHEParametersLiteralProvider, inputs func(nid helium.NodeID, id helium.OperandID) any) *testEngines {
+// newTestRunners creates the runners. Nodes provide the value returned by inputs for each of their input ids.
+func newTestRunners(t *testing.T, N, T int, params helium.FHEParametersLiteralProvider, inputs func(nid helium.NodeID, id helium.OperandID) any) *testRunners {
 	hid := helium.NodeID("helper")
 	testSess, err := heliumtest.NewSessions(N, T, params, hid)
 	require.NoError(t, err)
 
-	te := &testEngines{sess: testSess, hid: hid, trans: NewTestEngineTransport(), coord: NewLogCoordinator(), nodes: make(map[helium.NodeID]*Engine)}
+	te := &testRunners{sess: testSess, hid: hid, trans: NewTestTransport(), coord: NewLogCoordinator(), nodes: make(map[helium.NodeID]*Runner)}
 
-	newEngine := func(nid helium.NodeID, sess *helium.Session, ip InputProvider) *Engine {
-		e, err := NewEngine(nid, sess, Config{MaxEvaluation: 2}, te.trans.For(nid), testSess)
+	newRunner := func(nid helium.NodeID, sess *helium.Session, ip InputProvider) *Runner {
+		e, err := NewRunner(nid, sess, Config{MaxEvaluation: 2}, te.trans.For(nid), testSess)
 		require.NoError(t, err)
 		require.NoError(t, e.RegisterCircuits(heliumtest.Circuits))
 		e.SetInputProvider(ip)
-		te.trans.AddEngine(e)
+		te.trans.AddRunner(e)
 		return e
 	}
 
-	te.helper = newEngine(hid, testSess.Helper, NoInput)
+	te.helper = newRunner(hid, testSess.Helper, NoInput)
 	for nid, sess := range testSess.Nodes {
 		nid := nid
-		te.nodes[nid] = newEngine(nid, sess, func(ctx context.Context, cd helium.Descriptor, ids []helium.OperandID) (<-chan Input, error) {
+		te.nodes[nid] = newRunner(nid, sess, func(ctx context.Context, cd helium.Descriptor, ids []helium.OperandID) (<-chan Input, error) {
 			ch := make(chan Input, len(ids))
 			for _, id := range ids {
 				ch <- Input{ID: id, Value: inputs(nid, id)}
@@ -101,20 +101,20 @@ func newTestEngines(t *testing.T, N, T int, params helium.FHEParametersLiteralPr
 	return te
 }
 
-func (te *testEngines) run(g *errgroup.Group, ctx context.Context) {
-	for _, e := range append([]*Engine{te.helper}, te.enginesList()...) {
+func (te *testRunners) run(g *errgroup.Group, ctx context.Context) {
+	for _, e := range append([]*Runner{te.helper}, te.runnersList()...) {
 		e := e
 		g.Go(func() error {
 			if err := e.Run(ctx, te.coord); err != nil {
-				return fmt.Errorf("engine at node %s: %w", e.NodeID(), err)
+				return fmt.Errorf("runner at node %s: %w", e.NodeID(), err)
 			}
 			return nil
 		})
 	}
 }
 
-func (te *testEngines) enginesList() []*Engine {
-	es := make([]*Engine, 0, len(te.nids))
+func (te *testRunners) runnersList() []*Runner {
+	es := make([]*Runner, 0, len(te.nids))
 	for _, nid := range te.nids {
 		es = append(es, te.nodes[nid])
 	}
@@ -136,14 +136,14 @@ func testDescriptor(name helium.Name, args map[string]string, hid helium.NodeID)
 	}
 }
 
-func TestEngineBGV(t *testing.T) {
+func TestRunnerBGV(t *testing.T) {
 	for _, ts := range testSettings {
 		if ts.T == 0 {
 			ts.T = ts.N
 		}
 		t.Run(fmt.Sprintf("N=%d/T=%d", ts.N, ts.T), func(t *testing.T) {
 			ctx := testContext(t)
-			te := newTestEngines(t, ts.N, ts.T, bgvParamsLiteral, func(nid helium.NodeID, _ helium.OperandID) any {
+			te := newTestRunners(t, ts.N, ts.T, bgvParamsLiteral, func(nid helium.NodeID, _ helium.OperandID) any {
 				return []uint64{uint64(nodeIndex(nid) + 1)}
 			})
 			params := te.sess.FHEParameters.(bgv.Parameters)
@@ -204,14 +204,14 @@ func TestEngineBGV(t *testing.T) {
 	}
 }
 
-func TestEngineCKKS(t *testing.T) {
+func TestRunnerCKKS(t *testing.T) {
 	for _, ts := range testSettings {
 		if ts.T == 0 {
 			ts.T = ts.N
 		}
 		t.Run(fmt.Sprintf("N=%d/T=%d", ts.N, ts.T), func(t *testing.T) {
 			ctx := testContext(t)
-			te := newTestEngines(t, ts.N, ts.T, ckksParamsLiteral, func(nid helium.NodeID, _ helium.OperandID) any {
+			te := newTestRunners(t, ts.N, ts.T, ckksParamsLiteral, func(nid helium.NodeID, _ helium.OperandID) any {
 				return []float64{(float64(nodeIndex(nid)) + 1.0) / 3}
 			})
 			params := te.sess.FHEParameters.(ckks.Parameters)
@@ -258,17 +258,17 @@ func TestEngineCKKS(t *testing.T) {
 	}
 }
 
-// TestEngineLateJoiner checks that a node catching up from the log can fetch the outputs
+// TestRunnerLateJoiner checks that a node catching up from the log can fetch the outputs
 // of completed
-func TestEngineLateJoiner(t *testing.T) {
+func TestRunnerLateJoiner(t *testing.T) {
 	ctx := testContext(t)
-	te := newTestEngines(t, 3, 2, bgvParamsLiteral, func(nid helium.NodeID, _ helium.OperandID) any {
+	te := newTestRunners(t, 3, 2, bgvParamsLiteral, func(nid helium.NodeID, _ helium.OperandID) any {
 		return []uint64{uint64(nodeIndex(nid) + 1)}
 	})
 	cd := testDescriptor("bgv-add-2", nil, te.hid)
 
 	g, gctx := errgroup.WithContext(ctx)
-	for _, e := range []*Engine{te.helper, te.nodes["node-0"], te.nodes["node-1"]} {
+	for _, e := range []*Runner{te.helper, te.nodes["node-0"], te.nodes["node-1"]} {
 		e := e
 		g.Go(func() error { return e.Run(gctx, te.coord) })
 	}
@@ -321,9 +321,9 @@ func (rt *recordingTransport) sentIDs() []helium.OperandID {
 	return ids
 }
 
-// TestEngineStateMachine drives single engines by hand, without coordinator nor
+// TestRunnerStateMachine drives single runners by hand, without coordinator nor
 // concurrent nodes, and checks the state transitions and emitted actions.
-func TestEngineStateMachine(t *testing.T) {
+func TestRunnerStateMachine(t *testing.T) {
 	ctx := testContext(t)
 	hid := helium.NodeID("helper")
 	testSess, err := heliumtest.NewSessions(2, 2, bgvParamsLiteral, hid)
@@ -338,9 +338,9 @@ func TestEngineStateMachine(t *testing.T) {
 		Eval: func(rt helium.CircuitRuntime) error { return fmt.Errorf("boom") },
 	}
 
-	newEngine := func(nid helium.NodeID, sess *helium.Session) (*Engine, *recordingTransport) {
+	newRunner := func(nid helium.NodeID, sess *helium.Session) (*Runner, *recordingTransport) {
 		rt := &recordingTransport{}
-		e, err := NewEngine(nid, sess, Config{}, rt, testSess)
+		e, err := NewRunner(nid, sess, Config{}, rt, testSess)
 		require.NoError(t, err)
 		require.NoError(t, e.RegisterCircuits(heliumtest.Circuits))
 		require.NoError(t, e.RegisterCircuit("failing", failing))
@@ -371,7 +371,7 @@ func TestEngineStateMachine(t *testing.T) {
 	outID := helium.NewOperandID(hid, cdAdd.CircuitID, "out")
 
 	t.Run("evaluator", func(t *testing.T) {
-		e, rt := newEngine(hid, testSess.Helper)
+		e, rt := newRunner(hid, testSess.Helper)
 
 		require.ErrorIs(t, e.HandleOperand(ctx, encryptInput(in0, 1)), ErrCircuitNotRunning)
 		require.Error(t, e.Validate(helium.Descriptor{Signature: helium.Signature{Name: "unknown"}, CircuitID: "x", Evaluator: hid}))
@@ -410,7 +410,7 @@ func TestEngineStateMachine(t *testing.T) {
 	})
 
 	t.Run("participant", func(t *testing.T) {
-		e, rt := newEngine("node-0", testSess.Nodes["node-0"])
+		e, rt := newRunner("node-0", testSess.Nodes["node-0"])
 		e.SetInputProvider(func(ctx context.Context, cd helium.Descriptor, ids []helium.OperandID) (<-chan Input, error) {
 			ch := make(chan Input, len(ids))
 			for _, id := range ids {
@@ -448,7 +448,7 @@ func TestEngineStateMachine(t *testing.T) {
 	})
 
 	t.Run("init", func(t *testing.T) {
-		e, rt := newEngine("node-1", testSess.Nodes["node-1"])
+		e, rt := newRunner("node-1", testSess.Nodes["node-1"])
 		e.SetInputProvider(func(ctx context.Context, cd helium.Descriptor, ids []helium.OperandID) (<-chan Input, error) {
 			ch := make(chan Input, len(ids))
 			for _, id := range ids {

@@ -14,7 +14,7 @@ type Config struct {
 	// concurrently. Zero means no limit.
 	MaxParticipation int
 	// MaxEvaluation is the maximum number of circuits the node evaluates concurrently.
-	// Zero selects the engine's default.
+	// Zero selects the runner's default.
 	MaxEvaluation int
 	// ObjectStore configures the node's persistent store for the protocol results.
 	ObjectStore ObjectStoreConfig

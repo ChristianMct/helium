@@ -25,7 +25,7 @@ import (
 )
 
 // Client is a peer node of the helper-assisted setting. It runs the node's protocol
-// and circuit engines, and communicates with the helper server over gRPC: it receives
+// and circuit runners, and communicates with the helper server over gRPC: it receives
 // the coordination events from the server's log, sends its shares and inputs to the
 // server, and queries it for protocol outputs and operands.
 type Client struct {
@@ -34,10 +34,10 @@ type Client struct {
 	config        Config
 	sess          *helium.Session
 
-	engine *protocols.MHEMPC
+	protocols *protocols.Runner
 	*protocols.KeyProvider
-	compute *circuits.Engine
-	trans   *clientTransport
+	circuits *circuits.Runner
+	trans    *clientTransport
 
 	// coordination event stream
 	streamMu  sync.Mutex
@@ -92,17 +92,17 @@ func NewClient(config Config, nl helium.NodeList, secrets helium.SecretProvider)
 
 	hc.trans = &clientTransport{hc: hc}
 
-	hc.engine, err = protocols.NewMHEMPC(hc.id, hc.sess, protocols.Config{MaxParticipation: config.MaxParticipation}, hc.trans,
+	hc.protocols, err = protocols.NewRunner(hc.id, hc.sess, protocols.Config{MaxParticipation: config.MaxParticipation}, hc.trans,
 		protocols.NewObjectStoreResultBackend(os, hc.sess.ID), hc.getKeySwitchInput)
 	if err != nil {
-		return nil, fmt.Errorf("cannot create protocol engine: %w", err)
+		return nil, fmt.Errorf("cannot create protocol runner: %w", err)
 	}
 
-	hc.KeyProvider = protocols.NewKeyProvider(hc.engine)
+	hc.KeyProvider = protocols.NewKeyProvider(hc.protocols)
 
-	hc.compute, err = circuits.NewEngine(hc.id, hc.sess, circuits.Config{MaxEvaluation: config.MaxEvaluation}, hc.trans, helium.NewCachedPublicKeyBackend(hc.KeyProvider))
+	hc.circuits, err = circuits.NewRunner(hc.id, hc.sess, circuits.Config{MaxEvaluation: config.MaxEvaluation}, hc.trans, helium.NewCachedPublicKeyBackend(hc.KeyProvider))
 	if err != nil {
-		return nil, fmt.Errorf("cannot create circuit engine: %w", err)
+		return nil, fmt.Errorf("cannot create circuit runner: %w", err)
 	}
 
 	return hc, nil
@@ -118,14 +118,14 @@ func (hc *Client) Session() *helium.Session {
 	return hc.sess
 }
 
-// Protocols returns the client's protocol engine.
-func (hc *Client) Protocols() *protocols.MHEMPC {
-	return hc.engine
+// Protocols returns the client's protocol runner.
+func (hc *Client) Protocols() *protocols.Runner {
+	return hc.protocols
 }
 
-// Circuits returns the client's circuit engine.
-func (hc *Client) Circuits() *circuits.Engine {
-	return hc.compute
+// Circuits returns the client's circuit runner.
+func (hc *Client) Circuits() *circuits.Runner {
+	return hc.circuits
 }
 
 // Connect creates the connection to the helper server. It does not block: the
@@ -194,11 +194,11 @@ func (hc *Client) Run(ctx context.Context, app helium.App) error {
 	if hc.rpc == nil {
 		return fmt.Errorf("client is not connected")
 	}
-	if err := hc.compute.RegisterCircuits(app.Circuits); err != nil {
+	if err := hc.circuits.RegisterCircuits(app.Circuits); err != nil {
 		return fmt.Errorf("could not register all circuits: %w", err)
 	}
 
-	rt := node.New(hc.id, hc.sess, hc.engine, hc.compute, nil)
+	rt := node.New(hc.id, hc.sess, hc.protocols, hc.circuits, nil)
 
 	if err := hc.openEventStream(ctx); err != nil {
 		return fmt.Errorf("cannot register to the helper: %w", err)
@@ -206,19 +206,19 @@ func (hc *Client) Run(ctx context.Context, app helium.App) error {
 
 	protoCoord := rt.ProtocolCoordinator(&clientProtocolCoordinator{hc})
 	circCoord := rt.CircuitCoordinator(&clientCircuitCoordinator{hc})
-	var engines sync.WaitGroup
+	var runners sync.WaitGroup
 	var protoErr, circErr error
-	engines.Add(2)
+	runners.Add(2)
 	go func() {
-		defer engines.Done()
-		if protoErr = hc.engine.Run(ctx, protoCoord); protoErr != nil {
-			hc.Logf("protocol engine error: %s", protoErr)
+		defer runners.Done()
+		if protoErr = hc.protocols.Run(ctx, protoCoord); protoErr != nil {
+			hc.Logf("protocol runner error: %s", protoErr)
 		}
 	}()
 	go func() {
-		defer engines.Done()
-		if circErr = hc.compute.Run(ctx, circCoord); circErr != nil {
-			hc.Logf("circuit engine error: %s", circErr)
+		defer runners.Done()
+		if circErr = hc.circuits.Run(ctx, circCoord); circErr != nil {
+			hc.Logf("circuit runner error: %s", circErr)
 		}
 	}()
 
@@ -228,14 +228,14 @@ func (hc *Client) Run(ctx context.Context, app helium.App) error {
 		hc.Logf("app main returned (err: %v)", mainErr)
 	}
 	rt.Finish()
-	engines.Wait()
+	runners.Wait()
 
 	return errors.Join(mainErr, protoErr, circErr)
 }
 
-// getKeySwitchInput is the protocols.KeySwitchInputProvider of the client's engine.
+// getKeySwitchInput is the protocols.KeySwitchInputProvider of the client's runner.
 func (hc *Client) getKeySwitchInput(ctx context.Context, pd protocols.Descriptor) (*protocols.KeySwitchInput, error) {
-	return hc.compute.GetKeySwitchInput(ctx, pd)
+	return hc.circuits.GetKeySwitchInput(ctx, pd)
 }
 
 // openEventStream registers the client with the helper server, reads the past events
@@ -313,7 +313,7 @@ func (hc *Client) openEventStream(ctx context.Context) error {
 
 // ---- coordination streams, backed by the helper's event stream
 
-// clientProtocolCoordinator is the protocols.Coordinator of the client's protocol engine.
+// clientProtocolCoordinator is the protocols.Coordinator of the client's protocol runner.
 type clientProtocolCoordinator struct {
 	hc *Client
 }
@@ -338,7 +338,7 @@ func (cc *clientProtocolCoordinator) Publish(_ context.Context, ev protocols.Eve
 	return fmt.Errorf("peer nodes cannot publish events (event: %s)", ev)
 }
 
-// clientCircuitCoordinator is the circuits.Coordinator of the client's circuit engine.
+// clientCircuitCoordinator is the circuits.Coordinator of the client's circuit runner.
 type clientCircuitCoordinator struct {
 	hc *Client
 }

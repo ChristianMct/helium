@@ -8,48 +8,48 @@ import (
 	"github.com/ChristianMct/helium"
 )
 
-// TestEngineTransport is an in-memory OperandTransport connecting a set of Engines running in
-// the same process. Inputs are routed to the evaluator's engine, and operand
-// queries to the owner's engine.
-type TestEngineTransport struct {
+// TestTransport is an in-memory OperandTransport connecting a set of Runners running in
+// the same process. Inputs are routed to the evaluator's runner, and operand
+// queries to the owner's runner.
+type TestTransport struct {
 	mu      sync.Mutex
-	engines map[helium.NodeID]*Engine
+	runners map[helium.NodeID]*Runner
 }
 
-// NewTestEngineTransport creates a new, empty, TestEngineTransport.
-func NewTestEngineTransport() *TestEngineTransport {
-	return &TestEngineTransport{engines: make(map[helium.NodeID]*Engine)}
+// NewTestTransport creates a new, empty, TestTransport.
+func NewTestTransport() *TestTransport {
+	return &TestTransport{runners: make(map[helium.NodeID]*Runner)}
 }
 
-// AddEngine registers an engine as the endpoint for its node id.
-func (t *TestEngineTransport) AddEngine(e *Engine) {
+// AddRunner registers a runner as the endpoint for its node id.
+func (t *TestTransport) AddRunner(r *Runner) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.engines[e.NodeID()] = e
+	t.runners[r.NodeID()] = r
 }
 
 // For returns the OperandTransport to be used by node nid.
-func (t *TestEngineTransport) For(nid helium.NodeID) OperandTransport {
+func (t *TestTransport) For(nid helium.NodeID) OperandTransport {
 	return &testNodeTransport{t: t, self: nid}
 }
 
-func (t *TestEngineTransport) engine(nid helium.NodeID) (*Engine, error) {
+func (t *TestTransport) runner(nid helium.NodeID) (*Runner, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	e, has := t.engines[nid]
+	r, has := t.runners[nid]
 	if !has {
-		return nil, fmt.Errorf("no engine for node %s", nid)
+		return nil, fmt.Errorf("no runner for node %s", nid)
 	}
-	return e, nil
+	return r, nil
 }
 
 type testNodeTransport struct {
-	t    *TestEngineTransport
+	t    *TestTransport
 	self helium.NodeID
 }
 
 func (nt *testNodeTransport) PutOperand(ctx context.Context, cd helium.Descriptor, op helium.Operand) error {
-	dst, err := nt.t.engine(cd.Evaluator)
+	dst, err := nt.t.runner(cd.Evaluator)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func (nt *testNodeTransport) PutOperand(ctx context.Context, cd helium.Descripto
 }
 
 func (nt *testNodeTransport) GetOperand(ctx context.Context, id helium.OperandID) (*helium.Operand, error) {
-	src, err := nt.t.engine(id.NodeID())
+	src, err := nt.t.runner(id.NodeID())
 	if err != nil {
 		return nil, err
 	}

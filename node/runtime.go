@@ -1,5 +1,5 @@
 // Package node implements the node-side runtime of a Helium application: the
-// wiring of the protocol and circuit engines, and the rendez-vous between the
+// wiring of the protocol and circuit runners, and the rendez-vous between the
 // application's Main function and the coordination events (see gate).
 //
 // The package is agnostic of the setting in which the node runs: the
@@ -32,7 +32,7 @@ type Starter interface {
 	StartProtocol(ctx context.Context, sig protocols.Signature) error
 }
 
-// Runtime implements helium.Runtime over a protocol engine and a circuit engine.
+// Runtime implements helium.Runtime over a protocols.Runner and a circuits.Runner.
 //
 // A node takes part in a circuit or a protocol only once the application's Main
 // function has requested it: the coordination events of a circuit or protocol in
@@ -41,8 +41,8 @@ type Runtime struct {
 	self helium.NodeID
 	sess *helium.Session
 
-	protocols *protocols.MHEMPC
-	circuits  *circuits.Engine
+	protocols *protocols.Runner
+	circuits  *circuits.Runner
 	protoGate *gate[protocols.Event]
 	circGate  *gate[circuits.Event]
 	starter   Starter // nil if the node is not the coordinator
@@ -53,20 +53,20 @@ type Runtime struct {
 
 var _ helium.Runtime = (*Runtime)(nil)
 
-// New creates the runtime of a node over the given engines. The starter is nil for
+// New creates the runtime of a node over the given runners. The starter is nil for
 // nodes that do not coordinate the circuits and protocols.
-func New(self helium.NodeID, sess *helium.Session, pe *protocols.MHEMPC, ce *circuits.Engine, st Starter) *Runtime {
+func New(self helium.NodeID, sess *helium.Session, pr *protocols.Runner, cr *circuits.Runner, st Starter) *Runtime {
 	rt := &Runtime{
 		self:      self,
 		sess:      sess,
-		protocols: pe,
-		circuits:  ce,
+		protocols: pr,
+		circuits:  cr,
 		starter:   st,
 		inputs:    make(map[helium.CircuitID]map[string]any),
 	}
 	rt.protoGate = newGate(rt.protocolGatePolicy())
 	rt.circGate = newGate(rt.circuitGatePolicy())
-	ce.SetInputProvider(rt.provideInputs)
+	cr.SetInputProvider(rt.provideInputs)
 	return rt
 }
 
@@ -177,7 +177,7 @@ func (rt *Runtime) Logf(msg string, v ...any) {
 }
 
 // ProtocolCoordinator wraps a protocol coordinator with this runtime's gate: the
-// events of the protocols in which the node has a role reach the protocol engine
+// events of the protocols in which the node has a role reach the protocol runner
 // only once the application has requested them.
 func (rt *Runtime) ProtocolCoordinator(coord protocols.Coordinator) protocols.Coordinator {
 	return &gatedCoordinator[protocols.Event]{register: coord.Register, publish: coord.Publish, g: rt.protoGate}
@@ -195,7 +195,7 @@ func (rt *Runtime) Finish() {
 	rt.circGate.finish()
 }
 
-// provideInputs is the circuits.InputProvider of the node's engine: it provides the
+// provideInputs is the circuits.InputProvider of the node's circuit runner: it provides the
 // inputs given to Evaluate.
 func (rt *Runtime) provideInputs(ctx context.Context, cd helium.Descriptor, ids []helium.OperandID) (<-chan circuits.Input, error) {
 	rt.mu.Lock()

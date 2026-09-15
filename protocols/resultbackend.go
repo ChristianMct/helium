@@ -14,7 +14,7 @@ var ErrResultNotFound = errors.New("no stored result for protocol")
 
 // ResultBackend is the (persistent) store of the aggregated shares of completed
 // protocols. Aggregated shares are the transferable form of a protocol result;
-// the finalized outputs (keys, ciphertexts) are derived from them, see MHEMPC.GetOutput.
+// the finalized outputs (keys, ciphertexts) are derived from them, see Runner.GetOutput.
 //
 // Shares are indexed by protocol ID (i.e., by full descriptor), so that retried
 // executions of the same signature do not overwrite each other. The backend also

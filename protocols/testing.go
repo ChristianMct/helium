@@ -8,38 +8,38 @@ import (
 	"github.com/ChristianMct/helium"
 )
 
-// TestEngineTransport is an in-memory ShareTransport connecting a set of MHEMPC
-// engines running in the same process. Shares and queries are routed to the
-// engine of the protocol's aggregator. Shares sent by a given node can be held
+// TestTransport is an in-memory ShareTransport connecting a set of Runners
+// running in the same process. Shares and queries are routed to the runner of
+// the protocol's aggregator. Shares sent by a given node can be held
 // back with GateShares, to simulate slow or failing participants.
-type TestEngineTransport struct {
+type TestTransport struct {
 	mu      sync.Mutex
-	engines map[helium.NodeID]*MHEMPC
+	runners map[helium.NodeID]*Runner
 	gates   map[helium.NodeID]chan struct{}
 }
 
-// NewTestEngineTransport creates a new, empty, TestEngineTransport.
-func NewTestEngineTransport() *TestEngineTransport {
-	return &TestEngineTransport{
-		engines: make(map[helium.NodeID]*MHEMPC),
+// NewTestTransport creates a new, empty, TestTransport.
+func NewTestTransport() *TestTransport {
+	return &TestTransport{
+		runners: make(map[helium.NodeID]*Runner),
 		gates:   make(map[helium.NodeID]chan struct{}),
 	}
 }
 
-// AddEngine registers an engine as the endpoint for its node id.
-func (t *TestEngineTransport) AddEngine(e *MHEMPC) {
+// AddRunner registers a runner as the endpoint for its node id.
+func (t *TestTransport) AddRunner(r *Runner) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.engines[e.NodeID()] = e
+	t.runners[r.NodeID()] = r
 }
 
 // For returns the ShareTransport to be used by node nid.
-func (t *TestEngineTransport) For(nid helium.NodeID) ShareTransport {
-	return &testEngineNodeTransport{t: t, self: nid}
+func (t *TestTransport) For(nid helium.NodeID) ShareTransport {
+	return &testNodeTransport{t: t, self: nid}
 }
 
 // GateShares holds back all shares sent by node nid until the returned function is called.
-func (t *TestEngineTransport) GateShares(nid helium.NodeID) (release func()) {
+func (t *TestTransport) GateShares(nid helium.NodeID) (release func()) {
 	gate := make(chan struct{})
 	t.mu.Lock()
 	t.gates[nid] = gate
@@ -55,28 +55,28 @@ func (t *TestEngineTransport) GateShares(nid helium.NodeID) (release func()) {
 	}
 }
 
-func (t *TestEngineTransport) engine(nid helium.NodeID) (*MHEMPC, error) {
+func (t *TestTransport) runner(nid helium.NodeID) (*Runner, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	e, has := t.engines[nid]
+	r, has := t.runners[nid]
 	if !has {
-		return nil, fmt.Errorf("no engine for node %s", nid)
+		return nil, fmt.Errorf("no runner for node %s", nid)
 	}
-	return e, nil
+	return r, nil
 }
 
-func (t *TestEngineTransport) gate(nid helium.NodeID) chan struct{} {
+func (t *TestTransport) gate(nid helium.NodeID) chan struct{} {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.gates[nid]
 }
 
-type testEngineNodeTransport struct {
-	t    *TestEngineTransport
+type testNodeTransport struct {
+	t    *TestTransport
 	self helium.NodeID
 }
 
-func (nt *testEngineNodeTransport) PutShare(ctx context.Context, pd Descriptor, share Share) error {
+func (nt *testNodeTransport) PutShare(ctx context.Context, pd Descriptor, share Share) error {
 	if gate := nt.t.gate(nt.self); gate != nil {
 		select {
 		case <-gate:
@@ -84,15 +84,15 @@ func (nt *testEngineNodeTransport) PutShare(ctx context.Context, pd Descriptor, 
 			return ctx.Err()
 		}
 	}
-	dst, err := nt.t.engine(pd.Aggregator)
+	dst, err := nt.t.runner(pd.Aggregator)
 	if err != nil {
 		return err
 	}
 	return dst.HandleShare(ctx, share)
 }
 
-func (nt *testEngineNodeTransport) GetAggregationOutput(ctx context.Context, pd Descriptor) (Share, error) {
-	src, err := nt.t.engine(pd.Aggregator)
+func (nt *testNodeTransport) GetAggregationOutput(ctx context.Context, pd Descriptor) (Share, error) {
+	src, err := nt.t.runner(pd.Aggregator)
 	if err != nil {
 		return Share{}, err
 	}

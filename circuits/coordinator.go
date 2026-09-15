@@ -8,9 +8,9 @@ import (
 	"github.com/ChristianMct/helium/coordinator"
 )
 
-// Coordinator is the interface through which an Engine is driven. It mirrors
+// Coordinator is the interface through which a Runner is driven. It mirrors
 // protocols.Coordinator for circuit events: the node requesting an evaluation
-// publishes Started, the evaluator's engine publishes Executing, Completed and Failed.
+// publishes Started, the evaluator's runner publishes Executing, Completed and Failed.
 type Coordinator interface {
 	// Register subscribes to the circuit events: past holds the events emitted before the
 	// registration (catch-up), live delivers the following ones and is closed when
