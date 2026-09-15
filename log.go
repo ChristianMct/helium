@@ -1,5 +1,3 @@
-// Package coordinator provides the building blocks for coordinating helium nodes:
-// an append-only, subscribable event log.
 package helium
 
 import (
