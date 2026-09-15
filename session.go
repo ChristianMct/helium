@@ -18,7 +18,7 @@ import (
 	"github.com/ChristianMct/helium/utils"
 	"github.com/ChristianMct/helium/utils/objectstore"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
@@ -52,7 +52,7 @@ type Parameters struct {
 	Nodes         []NodeID
 	FHEParameters FHEParametersLiteralProvider
 	Threshold     int
-	ShamirPks     map[NodeID]drlwe.ShamirPublicPoint
+	ShamirPks     map[NodeID]mhe.ShamirPublicPoint
 	PublicSeed    []byte
 }
 
@@ -84,7 +84,7 @@ func (p *Parameters) UnmarshalJSON(data []byte) error {
 // Secrets holds the secret material of a node for a session.
 type Secrets struct {
 	PrivateSeed        []byte
-	ThresholdSecretKey *drlwe.ShamirSecretShare
+	ThresholdSecretKey *mhe.ShamirSecretShare
 }
 
 // SecretProvider is a function that returns the secrets of a node for a session,
@@ -134,7 +134,7 @@ func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *S
 	}
 	sess.PublicSeed = slices.Clone(sessParams.PublicSeed)
 
-	sess.ShamirPks = make(map[NodeID]drlwe.ShamirPublicPoint, len(sessParams.ShamirPks))
+	sess.ShamirPks = make(map[NodeID]mhe.ShamirPublicPoint, len(sessParams.ShamirPks))
 	needShamirPks := sess.Parameters.Threshold < len(sess.Parameters.Nodes)
 	for _, nid := range sess.Nodes {
 		var has bool
@@ -177,7 +177,7 @@ func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *S
 			if secrets.ThresholdSecretKey == nil {
 				return nil, fmt.Errorf("session nodes must specify threshold secret key when session threshold is less than the number of nodes")
 			}
-			sess.ThresholdSecretKey = &drlwe.ShamirSecretShare{Poly: *secrets.ThresholdSecretKey.CopyNew()} // TODO: add copy method to Lattigo
+			sess.ThresholdSecretKey = &mhe.ShamirSecretShare{Poly: *secrets.ThresholdSecretKey.CopyNew()} // TODO: add copy method to Lattigo
 		}
 	}
 
@@ -243,7 +243,7 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 		return sess.secretKey, nil
 	case len(parties) >= sess.Threshold:
 		sk = rlwe.NewSecretKey(sess.Params)
-		spks := make([]drlwe.ShamirPublicPoint, len(parties))
+		spks := make([]mhe.ShamirPublicPoint, len(parties))
 		for i, pid := range parties {
 			var has bool
 			if spks[i], has = sess.ShamirPks[pid]; !has {
@@ -253,7 +253,7 @@ func (sess *Session) GetSecretKeyForGroup(parties []NodeID) (sk *rlwe.SecretKey,
 		if sess.ThresholdSecretKey == nil {
 			return nil, fmt.Errorf("node has no threshold secret key")
 		}
-		drlwe.NewCombiner(*sess.Params.GetRLWEParameters(),
+		mhe.NewCombiner(*sess.Params.GetRLWEParameters(),
 			sess.GetShamirPublicPoints()[sess.NodeID],
 			sess.GetShamirPublicPointsList(),
 			sess.Threshold).GenAdditiveShare(spks, sess.ShamirPks[sess.NodeID], *sess.ThresholdSecretKey, sk)
@@ -281,7 +281,7 @@ func (sess *Session) GetRLKEphemeralSecretKey() (*rlwe.SecretKey, error) {
 }
 
 // GetThresholdSecretKey returns the node's share of the threshold secret key.
-func (sess *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
+func (sess *Session) GetThresholdSecretKey() (*mhe.ShamirSecretShare, error) {
 	if sess.ThresholdSecretKey == nil {
 		return nil, fmt.Errorf("node has no threshold secret-key in the session")
 	}
@@ -289,8 +289,8 @@ func (sess *Session) GetThresholdSecretKey() (*drlwe.ShamirSecretShare, error) {
 }
 
 // GetShamirPublicPoints returns the Shamir public points of the session nodes.
-func (sess *Session) GetShamirPublicPoints() map[NodeID]drlwe.ShamirPublicPoint {
-	spts := make(map[NodeID]drlwe.ShamirPublicPoint, len(sess.ShamirPks))
+func (sess *Session) GetShamirPublicPoints() map[NodeID]mhe.ShamirPublicPoint {
+	spts := make(map[NodeID]mhe.ShamirPublicPoint, len(sess.ShamirPks))
 	for p, spt := range sess.ShamirPks {
 		spts[p] = spt
 	}
@@ -298,8 +298,8 @@ func (sess *Session) GetShamirPublicPoints() map[NodeID]drlwe.ShamirPublicPoint 
 }
 
 // GetShamirPublicPointsList returns the Shamir public points of the session nodes as a list.
-func (sess *Session) GetShamirPublicPointsList() []drlwe.ShamirPublicPoint {
-	spts := make([]drlwe.ShamirPublicPoint, 0, len(sess.ShamirPks))
+func (sess *Session) GetShamirPublicPointsList() []mhe.ShamirPublicPoint {
+	spts := make([]mhe.ShamirPublicPoint, 0, len(sess.ShamirPks))
 	for _, spt := range sess.ShamirPks {
 		spts = append(spts, spt)
 	}

@@ -9,7 +9,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring/ringqp"
 	"github.com/tuneinsight/lattigo/v5/utils/sampling"
 )
@@ -34,10 +34,10 @@ type Sessions struct {
 
 func NewSessions(N, T int, fheParamLitteral helium.FHEParametersLiteralProvider, helperID helium.NodeID) (*Sessions, error) {
 	nids := make([]helium.NodeID, N)
-	nspk := make(map[helium.NodeID]drlwe.ShamirPublicPoint)
+	nspk := make(map[helium.NodeID]mhe.ShamirPublicPoint)
 	for i := range nids {
 		nids[i] = helium.NodeID(fmt.Sprintf("node-%d", i))
-		nspk[nids[i]] = drlwe.ShamirPublicPoint(i + 1)
+		nspk[nids[i]] = mhe.ShamirPublicPoint(i + 1)
 	}
 
 	var sessParams = helium.Parameters{
@@ -120,8 +120,8 @@ func GenSecretKeys(sessParams helium.Parameters) (secs map[helium.NodeID]*helium
 	}
 
 	// simulates the generation of the shamir threshold keys
-	shares := make(map[helium.NodeID]map[helium.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
-	thresholdizer := drlwe.NewThresholdizer(params)
+	shares := make(map[helium.NodeID]map[helium.NodeID]mhe.ShamirSecretShare, len(sessParams.Nodes))
+	thresholdizer := mhe.NewThresholdizer(params)
 
 	for nidi, ssi := range secs {
 
@@ -135,11 +135,11 @@ func GenSecretKeys(sessParams helium.Parameters) (secs map[helium.NodeID]*helium
 			return nil, err
 		}
 
-		shares[nidi] = make(map[helium.NodeID]drlwe.ShamirSecretShare, len(sessParams.Nodes))
+		shares[nidi] = make(map[helium.NodeID]mhe.ShamirSecretShare, len(sessParams.Nodes))
 
 		// TODO: add seeding to Thresholdizer and replace the following code with the Thresholdizer.GenShamirPolynomial method
 		usampleri := ringqp.NewUniformSampler(prngi, *params.RingQP())
-		shamirPoly := drlwe.ShamirPolynomial{Value: make([]ringqp.Poly, int(sessParams.Threshold))}
+		shamirPoly := mhe.ShamirPolynomial{Value: make([]ringqp.Poly, int(sessParams.Threshold))}
 		shamirPoly.Value[0] = *ski.Value.CopyNew()
 		for i := 1; i < sessParams.Threshold; i++ {
 			shamirPoly.Value[i] = params.RingQP().NewPoly()

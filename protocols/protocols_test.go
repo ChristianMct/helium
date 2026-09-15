@@ -12,7 +12,7 @@ import (
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
@@ -187,13 +187,13 @@ func checkOutput(out interface{}, pd Descriptor, testSess heliumtest.Sessions, t
 		require.True(t, isSwk)
 
 		noise := rlwe.NoiseGaloisKey(swk, sk, params)
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*mhe.NoiseGaloisKey(params, nParties)) + 1
 		require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
 	case RKG:
 		rlk, isRlk := out.(*rlwe.RelinearizationKey)
 		require.True(t, isRlk)
 
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*mhe.NoiseRelinearizationKey(params, nParties)) + 1
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	case DEC:
 		recSk, err := testSess.Nodes[helium.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)

@@ -15,7 +15,7 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/mhe"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -419,17 +419,17 @@ func (t Type) String() string {
 func (t Type) Share() LattigoShare {
 	switch t {
 	case SKG:
-		return &drlwe.ShamirSecretShare{}
+		return &mhe.ShamirSecretShare{}
 	case CKG:
-		return &drlwe.PublicKeyGenShare{}
+		return &mhe.PublicKeyGenShare{}
 	case RKG1, RKG:
-		return &drlwe.RelinearizationKeyGenShare{}
+		return &mhe.RelinearizationKeyGenShare{}
 	case RTG:
-		return &drlwe.GaloisKeyGenShare{}
+		return &mhe.GaloisKeyGenShare{}
 	case CKS, DEC:
-		return &drlwe.KeySwitchShare{}
+		return &mhe.KeySwitchShare{}
 	case PCKS:
-		return &drlwe.PublicKeySwitchShare{}
+		return &mhe.PublicKeySwitchShare{}
 	default:
 		return nil
 	}
@@ -514,8 +514,8 @@ func (pd *Descriptor) UnmarshalBinary(b []byte) (err error) {
 // Copy returns a copy of the Share.
 func (s Share) Copy() Share {
 	switch st := s.MHEShare.(type) {
-	case *drlwe.PublicKeyGenShare:
-		return Share{ShareMetadata: s.ShareMetadata, MHEShare: &drlwe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
+	case *mhe.PublicKeyGenShare:
+		return Share{ShareMetadata: s.ShareMetadata, MHEShare: &mhe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
 	default:
 		panic("not implemented") // TODO: implement on Lattigo side ?
 	}

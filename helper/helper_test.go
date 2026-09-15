@@ -14,7 +14,7 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/stretchr/testify/require"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/test/bufconn"
@@ -91,13 +91,13 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 	sp := testSessionParameters
 	sp.Threshold = T
 	sp.PublicSeed = []byte{'l', 'a', 't', 't', 'i', 'g', '0'}
-	sp.ShamirPks = make(map[helium.NodeID]drlwe.ShamirPublicPoint, N)
+	sp.ShamirPks = make(map[helium.NodeID]mhe.ShamirPublicPoint, N)
 	lt.nl = helium.NodeList{{NodeID: lt.helperID, NodeAddress: "local"}}
 	for i := 0; i < N; i++ {
 		nid := helium.NodeID("peer-" + strconv.Itoa(i))
 		lt.peerIDs = append(lt.peerIDs, nid)
 		sp.Nodes = append(sp.Nodes, nid)
-		sp.ShamirPks[nid] = drlwe.ShamirPublicPoint(i + 1)
+		sp.ShamirPks[nid] = mhe.ShamirPublicPoint(i + 1)
 		lt.nl = append(lt.nl, helium.NodeInfo{NodeID: nid})
 	}
 

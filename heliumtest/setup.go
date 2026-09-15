@@ -8,7 +8,7 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v5/mhe"
 )
 
 // CheckSetup checks that a public key provider produces valid keys for the given
@@ -27,7 +27,7 @@ func CheckSetup(ctx context.Context, t *testing.T, setup helium.SetupDescription
 		require.NoError(t, err)
 
 		decompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*mhe.NoiseGaloisKey(params, nParties)) + 1
 		require.Less(t, rlwe.NoiseGaloisKey(rtk, skIdeal, params), noiseBound, "rtk for galEl %d should be correct", galEl)
 
 	}
@@ -38,7 +38,7 @@ func CheckSetup(ctx context.Context, t *testing.T, setup helium.SetupDescription
 		require.NoError(t, err)
 
 		BaseRNSDecompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
-		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(BaseRNSDecompositionVectorSize))*mhe.NoiseRelinearizationKey(params, nParties)) + 1
 
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, skIdeal, params), noiseBound)
 	}
