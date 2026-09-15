@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/utils"
 )
 
@@ -77,7 +76,7 @@ type CentralCoordinator struct {
 	status AggregationStatus
 
 	mu      sync.Mutex
-	log     *coordinator.Log[Event]
+	log     *helium.Log[Event]
 	closing bool // Close was called: the log closes once idle
 
 	online    map[helium.NodeID]utils.Set[ID] // connected peers -> running protocols they participate in
@@ -102,7 +101,7 @@ func NewCentralCoordinator(self helium.NodeID, sess *helium.Session, conf Coordi
 		sess:      sess,
 		conf:      conf,
 		status:    status,
-		log:       coordinator.NewLog[Event](),
+		log:       helium.NewLog[Event](),
 		online:    make(map[helium.NodeID]utils.Set[ID]),
 		running:   make(map[ID]*scheduled),
 		completed: make(map[ID]Descriptor),

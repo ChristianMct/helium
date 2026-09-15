@@ -12,7 +12,6 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/api/pb"
 	"github.com/ChristianMct/helium/circuits"
-	"github.com/ChristianMct/helium/coordinator"
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/protocols"
@@ -49,7 +48,7 @@ type Server struct {
 	circuits *circuits.Runner
 
 	// node-level event log
-	log *coordinator.Log[node.Event]
+	log *helium.Log[node.Event]
 
 	// grpc API
 	*grpc.Server
@@ -102,7 +101,7 @@ func NewServer(config Config, nl helium.NodeList) (*Server, error) {
 		return nil, fmt.Errorf("cannot create circuit runner: %w", err)
 	}
 
-	hsv.log = coordinator.NewLog[node.Event]()
+	hsv.log = helium.NewLog[node.Event]()
 
 	interceptors := []grpc.UnaryServerInterceptor{
 		// t.serverSigChecker,

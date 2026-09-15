@@ -3,9 +3,8 @@ package circuits
 import (
 	"context"
 	"fmt"
-	"github.com/ChristianMct/helium"
 
-	"github.com/ChristianMct/helium/coordinator"
+	"github.com/ChristianMct/helium"
 )
 
 // Coordinator is the interface through which a Runner is driven. It mirrors
@@ -22,12 +21,12 @@ type Coordinator interface {
 
 // LogCoordinator is a Coordinator backed by an in-memory coordinator.Log.
 type LogCoordinator struct {
-	*coordinator.Log[Event]
+	*helium.Log[Event]
 }
 
 // NewLogCoordinator creates a LogCoordinator over a new log.
 func NewLogCoordinator() *LogCoordinator {
-	return &LogCoordinator{Log: coordinator.NewLog[Event]()}
+	return &LogCoordinator{Log: helium.NewLog[Event]()}
 }
 
 // Register implements Coordinator.
