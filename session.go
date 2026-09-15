@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/utils"
+	"github.com/ChristianMct/helium/utils/objectstore"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
 	"github.com/tuneinsight/lattigo/v5/ring"

@@ -10,8 +10,8 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/heliumtest"
-	"github.com/ChristianMct/helium/objectstore"
 	"github.com/ChristianMct/helium/utils"
+	"github.com/ChristianMct/helium/utils/objectstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tuneinsight/lattigo/v5/core/rlwe"
 	"golang.org/x/sync/errgroup"

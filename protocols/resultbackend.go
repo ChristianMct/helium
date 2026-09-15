@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ChristianMct/helium"
-	"github.com/ChristianMct/helium/objectstore"
+	"github.com/ChristianMct/helium/utils/objectstore"
 )
 
 // ErrResultNotFound is returned by ResultBackend implementations when no
