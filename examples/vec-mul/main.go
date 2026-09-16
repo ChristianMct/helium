@@ -82,9 +82,6 @@ var (
 				// node ids is provided when requesting the circuit's evaluation.
 				in0, in1, in2, in3 := rt.Input("//p0/in"), rt.Input("//p1/in"), rt.Input("//p2/in"), rt.Input("//p3/in")
 
-				// declares the output of the circuit, owned by the evaluator
-				out := rt.Output("prod")
-
 				// computes the product between all inputs
 				eval := rt.Evaluator()
 				ctmul01, err := eval.MulRelinNew(in0.Get().Ciphertext, in1.Get().Ciphertext)
@@ -99,7 +96,7 @@ var (
 				if err != nil {
 					return err
 				}
-				out.Set(res)
+				rt.Output("prod").Set(res)
 				return nil
 			}),
 		},
