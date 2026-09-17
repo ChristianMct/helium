@@ -11,7 +11,9 @@ type Config struct {
 	// SessionParameters describes the session the node takes part in.
 	SessionParameters Parameters
 	// MaxParticipation is the maximum number of protocols the node participates in
-	// concurrently. Zero means no limit.
+	// concurrently. Zero selects the runner's default. On the helper, this value is
+	// also used as the concurrency cap applied to every participant when selecting
+	// protocols to run (there is no support for node-specific configuration yet).
 	MaxParticipation int
 	// MaxEvaluation is the maximum number of circuits the node evaluates concurrently.
 	// Zero selects the runner's default.

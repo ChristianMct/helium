@@ -116,12 +116,12 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 		Config: helium.Config{
 			ID:                lt.helperID,
 			SessionParameters: sp,
+			MaxParticipation:  1,
 			MaxEvaluation:     4,
 			ObjectStore:       objStore,
 		},
-		Helper:          helium.NodeInfo{NodeID: lt.helperID, NodeAddress: "local"},
-		MaxProtoPerNode: 1,
-		TLS:             TLSConfig{InsecureChannels: true},
+		Helper: helium.NodeInfo{NodeID: lt.helperID, NodeAddress: "local"},
+		TLS:    TLSConfig{InsecureChannels: true},
 	}
 	for _, nid := range lt.peerIDs {
 		lt.configs[nid] = Config{

@@ -35,33 +35,19 @@ var (
 		PublicSeed: []byte{'e', 'x', 'a', 'm', 'p', 'l', 'e', 's', 'e', 'e', 'd'},                               // the CRS
 	}
 
-	// the configuration of peer nodes
-	peerNodeConfig = helper.Config{
+	// the configuration shared by all nodes, some fields are set at runtime by the program..
+	config = helper.Config{
 		Config: helium.Config{
 			ID:                "", // read from command line args
 			SessionParameters: sessionParams,
-			// in this example, peer node can only participate in one protocol at a time
-			MaxParticipation: 1,
-			ObjectStore:      helium.ObjectStoreConfig{BackendName: "mem"}, // use a volatile in-memory store for state
+			MaxParticipation:  1,                                            // max number of concurrent protocols a node can be included in.
+			MaxEvaluation:     16,                                           // max number of concurrent circuit executions initiated by the helper.
+			ObjectStore:       helium.ObjectStoreConfig{BackendName: "mem"}, // use a volatile in-memory store for state
 		},
 		Helper: helium.NodeInfo{NodeID: "helper"}, // the node info of the helper node, the address is set by the program.
 		// the node authenticates the helper, and proves its own identity to it, with the
 		// certificates in certDir (see the -certs and -no-tls flags).
 		TLS: helper.TLSConfig{FromDirectory: defaultCertDir},
-	}
-
-	// the configuration of the helper node. Similar as for peer node, but enables multiple circuit evaluations at once.
-	helperConfig = helper.Config{
-		Config: helium.Config{
-			ID:                "", // read from command line args
-			SessionParameters: sessionParams,
-			MaxEvaluation:     16,
-			ObjectStore:       helium.ObjectStoreConfig{BackendName: "mem"},
-		},
-		Helper: helium.NodeInfo{NodeID: "helper"}, // the node info of the helper node, the address is set by the program.
-		// each node is not chosen as participant for more than one protocol at the time.
-		MaxProtoPerNode: 1,
-		TLS:             helper.TLSConfig{FromDirectory: defaultCertDir},
 	}
 
 	// the application defines the MHE circuits to be evaluated, their required setup, and the
@@ -182,15 +168,12 @@ func main() {
 	log.Printf("%s | [main] started\n", nodeID)
 
 	// completes the config according to the node id and helper address
-	var config helper.Config
+	config.ID = nodeID
 	if nodeID == helperID {
-		config = helperConfig
 		config.Helper.NodeAddress = nodeAddr
 	} else {
-		config = peerNodeConfig
 		config.Helper.NodeAddress = helperAddress
 	}
-	config.ID = nodeID
 
 	if noTLS {
 		config.TLS = helper.TLSConfig{InsecureChannels: true}

@@ -92,7 +92,7 @@ func NewServer(config Config) (*Server, error) {
 		return nil, fmt.Errorf("cannot create protocol runner: %w", err)
 	}
 
-	hsv.coord, err = protocols.NewCentralCoordinator(hsv.id, hsv.sess, protocols.CoordinatorConfig{MaxProtoPerNode: config.MaxProtoPerNode}, hsv.protocols)
+	hsv.coord, err = protocols.NewCentralCoordinator(hsv.id, hsv.sess, protocols.CoordinatorConfig{MaxProtoPerNode: config.MaxParticipation}, hsv.protocols)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create coordinator: %w", err)
 	}

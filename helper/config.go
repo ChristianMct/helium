@@ -18,10 +18,6 @@ type Config struct {
 	// HelperID is the node id of the helper node.
 	Helper helium.NodeInfo
 
-	// MaxProtoPerNode is the maximum number of protocols a node is selected as
-	// participant for, at any given time (helper only). Zero means no limit.
-	MaxProtoPerNode int
-
 	TLS TLSConfig
 }
 
