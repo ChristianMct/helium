@@ -16,7 +16,8 @@ type Config struct {
 	helium.Config
 
 	// HelperID is the node id of the helper node.
-	HelperID helium.NodeID
+	Helper helium.NodeInfo
+
 	// MaxProtoPerNode is the maximum number of protocols a node is selected as
 	// participant for, at any given time (helper only). Zero means no limit.
 	MaxProtoPerNode int
@@ -45,36 +46,61 @@ func LoadConfigFromFile(filename string) (Config, error) {
 }
 
 // ValidateConfig checks that the configuration is valid.
-func ValidateConfig(config Config, nl helium.NodeList) error {
+func ValidateConfig(config Config) error {
 	if len(config.ID) == 0 {
 		return fmt.Errorf("config must specify a node ID")
 	}
-	if len(config.HelperID) == 0 {
+	if err := validNodeID(config.ID); err != nil {
+		return fmt.Errorf("invalid node id: %w", err)
+	}
+	if len(config.Helper.NodeID) == 0 {
 		return fmt.Errorf("config must specify a helper ID")
 	}
+	if err := validNodeID(config.Helper.NodeID); err != nil {
+		return fmt.Errorf("invalid helper id: %w", err)
+	}
+	if len(config.Helper.NodeAddress) == 0 {
+		return fmt.Errorf("config must specify a helper address")
+	}
+	// validate the session parameters.   TODO: should be a separated function.
 	if len(config.SessionParameters.ID) == 0 {
 		return fmt.Errorf("config must specify the session parameters")
 	}
-	if len(nl) == 0 {
+	if len(config.SessionParameters.Nodes) == 0 {
 		return fmt.Errorf("node list is empty or nil")
 	}
-	if nl.AddressOf(config.HelperID) == "" {
-		return fmt.Errorf("no address for helper node `%s` in the node list", config.HelperID)
+	for _, nid := range config.SessionParameters.Nodes {
+		if err := validNodeID(nid); err != nil {
+			return fmt.Errorf("invalid node id in the node list: %w", err)
+		}
+	}
+	if err := config.TLS.validate(config.ID); err != nil {
+		return fmt.Errorf("invalid TLS config: %w", err)
 	}
 	return nil
 }
 
-// TLSConfig is a struct for specifying TLS-related configuration.
-// TLS is not supported yet.
-//
-//nolint:gosec // sha1 needed to check certificate
+// TLSConfig configures the mutual TLS authentication between the helper and its
+// peers. All nodes present a certificate issued by a common certificate authority,
+// and a node's certificate must carry its node id as a dNSName SAN: the helper
+// derives the caller's node id from the verified client certificate, and the peers
+// authenticate the helper by its node id (see helium.NodeID).
 type TLSConfig struct {
-	InsecureChannels bool                     // if set, disables TLS authentication
-	FromDirectory    string                   // path to a directory containing the TLS material as files
-	PeerPKs          map[helium.NodeID]string // Mapping of <node, pubKey> where pubKey is PEM encoded
-	PeerCerts        map[helium.NodeID]string // Mapping of <node, certifcate> where pubKey is PEM encoded ASN.1 DER string
-	CACert           string                   // Root CA certificate as a PEM encoded ASN.1 DER string
-	OwnCert          string                   // Own certificate as a PEM encoded ASN.1 DER string
-	OwnPk            string                   // Own public key as a PEM encoded string
-	OwnSk            string                   // Own secret key as a PEM encoded string
+	// InsecureChannels disables TLS altogether. The sender's identity then falls
+	// back to a self-asserted metadata header, so any node can impersonate any
+	// other: FOR TESTING ONLY.
+	InsecureChannels bool
+
+	// FromDirectory is the path to a directory holding the TLS material as PEM files:
+	// ca.crt, <node-id>.crt and <node-id>.key. It is only read for the fields left
+	// empty below.
+	FromDirectory string
+
+	// CACert is the PEM-encoded certificate of the authority that issued all the
+	// node certificates.
+	CACert string
+	// OwnCert is the node's own PEM-encoded certificate.
+	OwnCert string
+	// OwnKey is the node's own PEM-encoded private key.
+	OwnKey string
 }

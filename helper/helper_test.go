@@ -119,7 +119,7 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 			MaxEvaluation:     4,
 			ObjectStore:       objStore,
 		},
-		HelperID:        lt.helperID,
+		Helper:          helium.NodeInfo{NodeID: lt.helperID, NodeAddress: "local"},
 		MaxProtoPerNode: 1,
 		TLS:             TLSConfig{InsecureChannels: true},
 	}
@@ -132,8 +132,8 @@ func newLocalTest(t *testing.T, N, T int) *localTest {
 				MaxEvaluation:     1,
 				ObjectStore:       objStore,
 			},
-			HelperID: lt.helperID,
-			TLS:      TLSConfig{InsecureChannels: true},
+			Helper: helium.NodeInfo{NodeID: lt.helperID, NodeAddress: "local"},
+			TLS:    TLSConfig{InsecureChannels: true},
 		}
 	}
 	return lt
@@ -151,7 +151,7 @@ func (lt *localTest) secretProvider(sid helium.SessionID, nid helium.NodeID) (*h
 }
 
 func (lt *localTest) newServer(t *testing.T) (*Server, *bufconn.Listener) {
-	hsv, err := NewServer(lt.configs[lt.helperID], lt.nl)
+	hsv, err := NewServer(lt.configs[lt.helperID])
 	require.NoError(t, err)
 	lis := bufconn.Listen(buffConBufferSize)
 	go func() {
@@ -163,7 +163,7 @@ func (lt *localTest) newServer(t *testing.T) (*Server, *bufconn.Listener) {
 }
 
 func (lt *localTest) newClient(t *testing.T, nid helium.NodeID) *Client {
-	cli, err := NewClient(lt.configs[nid], lt.nl, lt.secretProvider)
+	cli, err := NewClient(lt.configs[nid], lt.secretProvider)
 	require.NoError(t, err)
 	return cli
 }

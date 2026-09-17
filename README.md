@@ -112,6 +112,36 @@ requires a coordinator and a transport for that setting.
 
 Roadmap: to come.
 
+## Authentication
+
+In the helper-assisted setting, the peers and the helper mutually authenticate with TLS. Node ids double as
+network names: a node's certificate must chain to the certificate authority the other nodes are configured
+with, and must carry the node's id as a `dNSName` SAN. Node ids are therefore restricted to lowercase DNS
+names. Peers authenticate the helper by its node id rather than by the address they dial it at, so the helper
+can sit behind any address or container name.
+
+The helper derives the caller's node id from the verified client certificate, and checks it against the
+declared origin of the objects it receives: a peer can only submit a share in its own name, and can only push
+an input operand under an id it owns. This binds identity to the channel rather than to the message, which is
+sufficient here because every attributed object reaches the helper directly from the node that produced it.
+Relaying attributed objects between peers, or an actively malicious helper, would call for message-level
+signatures instead.
+
+Certificates are configured with `helper.TLSConfig`, either inline as PEM strings or as a directory holding
+`ca.crt`, `<node-id>.crt` and `<node-id>.key`. A deployment is expected to issue the node certificates from
+its own PKI; for tests and development, `examples/gencerts` generates a CA and the node certificates in that
+layout:
+
+```bash
+go run ./examples/gencerts -out ./certs helper node-1 node-2 node-3 node-4
+```
+
+The `vec-mul` example runs over mutual TLS out of the box (`make run` in `examples/vec-mul` generates the
+certificates and starts the nodes).
+
+Setting `TLSConfig.InsecureChannels` disables TLS altogether, and makes the helper fall back to a
+self-asserted node id sent by the caller. Any node can then impersonate any other: this is for testing only.
+
 ## MHE-based MPC
 
 Helium currently supports the MHE scheme and associated MPC protocol described in the paper ["Multiparty Homomorphic Encryption from Ring-Learning-With-Errors"](https://eprint.iacr.org/2020/304.pdf) along with its extension to t-out-of-N-threshold encryption described in ["An Efficient Threshold Access-Structure for RLWE-Based Multiparty Homomorphic Encryption"](https://eprint.iacr.org/2022/780.pdf). These schemes provide security against passive attackers that can corrupt up to t-1 of the input parties and can operate in various system models such as peer-to-peer, cloud-assisted or hybrid architecture.

@@ -59,18 +59,21 @@ type Server struct {
 var _ node.Starter = (*Server)(nil)
 
 // NewServer creates a new helper server from the provided config and node list.
-func NewServer(config Config, nl helium.NodeList) (*Server, error) {
-	if err := ValidateConfig(config, nl); err != nil {
+func NewServer(config Config) (*Server, error) {
+	if err := ValidateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
-	if config.ID != config.HelperID {
-		return nil, fmt.Errorf("the server must be the helper node, got id %s and helper id %s", config.ID, config.HelperID)
+	if config.ID != config.Helper.NodeID {
+		return nil, fmt.Errorf("the server must be the helper node, got id %s and helper id %s", config.ID, config.Helper.NodeID)
 	}
 
 	hsv := new(Server)
 	hsv.id = config.ID
 	hsv.config = config
-	hsv.nodeList = nl
+	hsv.nodeList = make(helium.NodeList, len(config.SessionParameters.Nodes))
+	for _, nid := range config.SessionParameters.Nodes {
+		hsv.nodeList = append(hsv.nodeList, helium.NodeInfo{NodeID: nid})
+	}
 
 	var err error
 	hsv.sess, err = helium.NewSession(config.ID, config.SessionParameters, nil) // the helper node has no secrets
@@ -103,19 +106,24 @@ func NewServer(config Config, nl helium.NodeList) (*Server, error) {
 
 	hsv.log = helium.NewLog[node.Event]()
 
-	interceptors := []grpc.UnaryServerInterceptor{
-		// t.serverSigChecker,
-	}
-
 	serverOpts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(MaxMsgSize),
 		grpc.MaxSendMsgSize(MaxMsgSize),
 		grpc.StatsHandler(&hsv.statsHandler),
-		grpc.ChainUnaryInterceptor(interceptors...),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    KeepaliveTime,
 			Timeout: KeepaliveTimeout,
 		}),
+	}
+
+	if config.TLS.InsecureChannels {
+		hsv.Logf("WARNING: running with TLS disabled, peer identities are unauthenticated")
+	} else {
+		creds, err := config.TLS.serverCredentials(hsv.id)
+		if err != nil {
+			return nil, fmt.Errorf("cannot build the server TLS credentials: %w", err)
+		}
+		serverOpts = append(serverOpts, grpc.Creds(creds))
 	}
 
 	hsv.Server = grpc.NewServer(serverOpts...)
@@ -326,18 +334,35 @@ func (noOperandTransport) GetOperand(_ context.Context, id helium.OperandID) (*h
 	return nil, fmt.Errorf("the helper node does not query operands (operand %s)", id)
 }
 
+// ---- peer authentication
+
+// callerID returns the authenticated node id of the caller. With TLS enabled, the id
+// is certified by the peer's certificate; with TLS disabled, it falls back to the
+// unauthenticated metadata header, which any node can forge.
+func (hsv *Server) callerID(ctx context.Context) (helium.NodeID, error) {
+	if hsv.config.TLS.InsecureChannels {
+		id := unauthenticatedNodeIDFromMetadata(ctx)
+		if !hsv.nodeList.Contains(id) {
+			return "", status.Errorf(codes.Unauthenticated, "caller declares an unknown node id: %q", id)
+		}
+		return id, nil
+	}
+	id, err := authenticatedNodeID(ctx, hsv.nodeList)
+	if err != nil {
+		return "", status.Errorf(codes.Unauthenticated, "cannot authenticate the caller: %s", err)
+	}
+	return id, nil
+}
+
 // ---- gRPC API
 
 // Register is a gRPC handler for the Register method of the Helium service. It streams the
 // node-level event log to the peer, and tracks the peer's connection for the coordinator.
 func (hsv *Server) Register(_ *pb.Void, stream pb.Helium_RegisterServer) error {
 	ctx := stream.Context()
-	nodeID := senderIDFromIncomingContext(ctx)
-	if len(nodeID) == 0 {
-		return status.Error(codes.FailedPrecondition, "caller must specify node id for stream")
-	}
-	if !hsv.nodeList.Contains(nodeID) {
-		return status.Errorf(codes.PermissionDenied, "unknown node id: %s", nodeID)
+	nodeID, err := hsv.callerID(ctx)
+	if err != nil {
+		return err
 	}
 
 	hsv.Logf("connected %s", nodeID)
@@ -388,8 +413,23 @@ func (hsv *Server) PutShare(ctx context.Context, apiShare *pb.Share) (*pb.Void, 
 		return nil, status.Errorf(codes.InvalidArgument, "invalid share: %s", err)
 	}
 
+	from, err := hsv.callerID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// a peer sends its own share only: pre-aggregated shares are not supported, so
+	// the origin set must be the singleton of the authenticated node. Whether that
+	// node is an expected participant of the protocol is checked downstream, by the
+	// protocol's aggregator.
+	if len(s.From) != 1 || !s.From.Contains(from) {
+		hsv.Logf("rejected share from %s: declared origin %v", from, s.From.Elements())
+		return nil, status.Errorf(codes.PermissionDenied,
+			"share origin %v does not match the authenticated node %s", s.From.Elements(), from)
+	}
+
 	if err := hsv.protocols.HandleShare(ctx, s); err != nil {
-		hsv.Logf("rejected share from %s: %s", senderIDFromIncomingContext(ctx), err)
+		hsv.Logf("rejected share from %s: %s", from, err)
 		return nil, status.Errorf(codes.FailedPrecondition, "share rejected: %s", err)
 	}
 
@@ -409,8 +449,6 @@ func (hsv *Server) GetAggregationOutput(ctx context.Context, apipd *pb.ProtocolD
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "error converting share to API: %s", err)
 	}
-
-	hsv.Logf("aggregation output %s query from %s", pd.HID(), senderIDFromIncomingContext(ctx))
 
 	return &pb.AggregationOutput{AggregatedShare: s}, nil
 }
@@ -435,9 +473,22 @@ func (hsv *Server) GetCiphertext(ctx context.Context, ctid *pb.CiphertextID) (*p
 // PutCiphertext is a gRPC handler for the PutCiphertext method of the Helium service.
 // It delivers an input operand to the circuit runner.
 func (hsv *Server) PutCiphertext(ctx context.Context, apict *pb.Ciphertext) (*pb.CiphertextID, error) {
+	// ToOperand validates that the id is a well-formed operand URI, so NodeID below
+	// returns the parsed host part.
 	op, err := ToOperand(apict)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "invalid operand: %s", err)
+	}
+
+	from, err := hsv.callerID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if op.ID.NodeID() != from {
+		hsv.Logf("rejected operand from %s: declared owner %s", from, op.ID.NodeID())
+		return nil, status.Errorf(codes.PermissionDenied,
+			"operand id %s is not owned by the authenticated node %s", op.ID, from)
 	}
 
 	if err := hsv.circuits.HandleOperand(ctx, *op); err != nil {

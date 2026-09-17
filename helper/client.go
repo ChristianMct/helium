@@ -56,15 +56,15 @@ type Dialer = func(c context.Context, addr string) (net.Conn, error)
 // NewClient creates a new helper-assisted client from the provided config and node
 // list. The secrets provider is called for the node's session secrets if the node is
 // a session node.
-func NewClient(config Config, nl helium.NodeList, secrets helium.SecretProvider) (*Client, error) {
-	if err := ValidateConfig(config, nl); err != nil {
+func NewClient(config Config, secrets helium.SecretProvider) (*Client, error) {
+	if err := ValidateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	hc := new(Client)
 	hc.id = config.ID
-	hc.helperID = config.HelperID
-	hc.helperAddress = nl.AddressOf(config.HelperID)
+	hc.helperID = config.Helper.NodeID
+	hc.helperAddress = config.Helper.NodeAddress
 	hc.config = config
 
 	sp := config.SessionParameters
@@ -147,8 +147,17 @@ func (hc *Client) ConnectWithDialer(dialer Dialer) error {
 // connect creates the connection to the helper at the given grpc target, with the
 // client's transport options and the provided extra ones.
 func (hc *Client) connect(target string, extraOpts ...grpc.DialOption) error {
-	interceptors := []grpc.UnaryClientInterceptor{
-		// t.clientSigner,
+
+	// the helper is authenticated by its node id, not by the dialed address (see
+	// TLSConfig.clientCredentials).
+	creds := insecure.NewCredentials()
+	if hc.config.TLS.InsecureChannels {
+		hc.Logf("WARNING: connecting with TLS disabled, the helper is unauthenticated")
+	} else {
+		var err error
+		if creds, err = hc.config.TLS.clientCredentials(hc.id, hc.helperID); err != nil {
+			return fmt.Errorf("cannot build the client TLS credentials: %w", err)
+		}
 	}
 
 	opts := []grpc.DialOption{
@@ -157,9 +166,8 @@ func (hc *Client) connect(target string, extraOpts ...grpc.DialOption) error {
 			grpc.MaxCallRecvMsgSize(MaxMsgSize),
 			grpc.MaxCallSendMsgSize(MaxMsgSize)),
 		grpc.WithStatsHandler(&hc.statsHandler),
-		grpc.WithChainUnaryInterceptor(interceptors...),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: time.Second, Timeout: time.Minute}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 	}
 	opts = append(opts, extraOpts...)
 

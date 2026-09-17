@@ -26,6 +26,10 @@ import (
 )
 
 // NodeID is the unique identifier of a node.
+//
+// It is also used as the host part of the operand ids (see OperandID), and, in the
+// helper-assisted setting, as the node's TLS server name (see helper.TLSConfig):
+// settings that rely on such a use may impose their own syntax restrictions on top of this type.
 type NodeID string
 
 // SessionID is the unique identifier of a session.

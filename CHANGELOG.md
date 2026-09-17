@@ -50,6 +50,18 @@ package of its setting only, in preparation for the peer-to-peer setting.
 - The `helium.OperandID` type: system-wide operand ids of the form `//<node>/<circuit-id>/<name>`,
   resolved once from a descriptor and an interface (`helium.Resolve`).
 - The `protocols.Runner.DecryptOutput` method, returning the plaintext output of a decryption protocol to its target.
+- Mutual TLS authentication between the helper and its peers, configured by `helper.TLSConfig`. Node ids are
+  used as TLS server names, and a node's certificate must chain to a common certificate authority and carry
+  its node id as a `dNSName` SAN. The helper derives the caller's node id from the verified client
+  certificate.
+- The `helium.NodeID.Validate` method, checking that a node id is a valid lowercase DNS name, as required for
+  its use as a TLS server name and as the host part of an operand id. It is enforced by
+  `helper.ValidateConfig` over the node's own id, the helper id and the node list.
+- The `certs.Authority` type (`utils/certs`) and the `examples/gencerts` command, generating a certificate
+  authority and the node certificates in the layout expected by `TLSConfig.FromDirectory`, for tests and
+  development deployments.
+- The `vec-mul` example runs over mutual TLS by default and has two new flags:
+  `-certs` points the nodes at a specific certificates directory, and `-no-tls` runs without TLS.
 
 ### Changed
 
@@ -96,6 +108,12 @@ package of its setting only, in preparation for the peer-to-peer setting.
   `protocols.CompleteMap` types, and the `coordinator.TestCoordinator` type.
 - The `services` packages: `services/compute` is replaced by the `circuits.Runner` type.
 - The `sessions.Ciphertext` type, replaced by `helium.Operand`.
+- The per-node certificate and public-key pinning fields of `helper.TLSConfig` (`PeerCerts`, `PeerPKs`,
+  `OwnPk`), left over from an earlier experiment: nodes are now authenticated by a common certificate
+  authority. `OwnSk` is renamed `OwnKey`.
+- The unused PEM and CSR helpers of the `utils/certs` package (`PEMEncode`, `GenCSR`, `ToPEM`, `ReadPEM`,
+  `ParsePk`, `ParseCert`, `ParseSk`, `X509ToTLS` and the `PemString*` constants), left over from the same
+  experiment. The package now generates the TLS material of a deployment (`certs.Authority`).
 
 ## [v0.3.0] - 20.06.2025 
 

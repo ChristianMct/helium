@@ -14,6 +14,11 @@ import (
 	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
 )
 
+// defaultCertDir points to the TLS material: ca.crt, and the
+// <node-id>.crt / <node-id>.key pair of the node it runs. The compose setup populates
+// it with the gencerts command (see the README).
+const defaultCertDir = "certs"
+
 var (
 	// sessionParams defines the session parameters for the example application
 	sessionParams = helium.Parameters{
@@ -39,8 +44,10 @@ var (
 			MaxParticipation: 1,
 			ObjectStore:      helium.ObjectStoreConfig{BackendName: "mem"}, // use a volatile in-memory store for state
 		},
-		HelperID: "helper",                                 // the node id of the helper node
-		TLS:      helper.TLSConfig{InsecureChannels: true}, // no TLS for simplicity
+		Helper: helium.NodeInfo{NodeID: "helper"}, // the node info of the helper node, the address is set by the program.
+		// the node authenticates the helper, and proves its own identity to it, with the
+		// certificates in certDir (see the -certs and -no-tls flags).
+		TLS: helper.TLSConfig{FromDirectory: defaultCertDir},
 	}
 
 	// the configuration of the helper node. Similar as for peer node, but enables multiple circuit evaluations at once.
@@ -51,17 +58,10 @@ var (
 			MaxEvaluation:     16,
 			ObjectStore:       helium.ObjectStoreConfig{BackendName: "mem"},
 		},
-		HelperID: "helper",
+		Helper: helium.NodeInfo{NodeID: "helper"}, // the node info of the helper node, the address is set by the program.
 		// each node is not chosen as participant for more than one protocol at the time.
 		MaxProtoPerNode: 1,
-		TLS:             helper.TLSConfig{InsecureChannels: true},
-	}
-
-	// the node list for the example system
-	nodelist = helium.NodeList{
-		helium.NodeInfo{NodeID: "helper", NodeAddress: "helper:40000"},
-		helium.NodeInfo{NodeID: "node-1"}, helium.NodeInfo{NodeID: "node-2"},
-		helium.NodeInfo{NodeID: "node-3"}, helium.NodeInfo{NodeID: "node-4"},
+		TLS:             helper.TLSConfig{FromDirectory: defaultCertDir},
 	}
 
 	// the application defines the MHE circuits to be evaluated, their required setup, and the
@@ -153,17 +153,23 @@ var (
 )
 
 var (
-	nodeID   helium.NodeID
-	nodeAddr helium.NodeAddress
-	helperID helium.NodeID = "helper"
-	input    uint64
+	nodeID        helium.NodeID
+	nodeAddr      helium.NodeAddress
+	helperID      helium.NodeID = "helper"
+	helperAddress helium.NodeAddress
+	input         uint64
+	certDir       string
+	noTLS         bool
 )
 
 func init() {
 	// registers the command line arguments
 	flag.StringVar((*string)(&nodeID), "id", "", "the node's id")
 	flag.StringVar((*string)(&nodeAddr), "address", "", "the node's address")
+	flag.StringVar((*string)(&helperAddress), "helper", "helper:40000", "the node's address")
 	flag.Uint64Var(&input, "input", 0, "the private input value")
+	flag.StringVar(&certDir, "certs", defaultCertDir, "the directory holding ca.crt and the node's <id>.crt and <id>.key")
+	flag.BoolVar(&noTLS, "no-tls", false, "run without TLS: node identities are then unauthenticated, FOR TESTING ONLY")
 }
 
 func main() {
@@ -175,27 +181,35 @@ func main() {
 
 	log.Printf("%s | [main] started\n", nodeID)
 
-	// completes the config according to the node id
+	// completes the config according to the node id and helper address
 	var config helper.Config
 	if nodeID == helperID {
 		config = helperConfig
+		config.Helper.NodeAddress = nodeAddr
 	} else {
 		config = peerNodeConfig
+		config.Helper.NodeAddress = helperAddress
 	}
 	config.ID = nodeID
+
+	if noTLS {
+		config.TLS = helper.TLSConfig{InsecureChannels: true}
+	} else {
+		config.TLS = helper.TLSConfig{FromDirectory: certDir}
+	}
 
 	ctx := context.Background()
 	start := time.Now()
 
 	if nodeID == helperID {
-		hsv, err := helper.RunServer(ctx, config, nodelist, app)
+		hsv, err := helper.RunServer(ctx, config, app)
 		if err != nil {
 			log.Fatalf("%s | [main] error running node: %v\n", nodeID, err)
 		}
 		fmt.Println(hsv.GetStats())
 		hsv.GracefulStop()
 	} else {
-		hc, err := helper.RunClient(ctx, config, nodelist, loadSecrets(sessionParams, nodeID), app)
+		hc, err := helper.RunClient(ctx, config, loadSecrets(sessionParams, nodeID), app)
 		if err != nil {
 			log.Fatalf("%s | [main] error running node: %v\n", nodeID, err)
 		}
