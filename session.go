@@ -104,6 +104,7 @@ type Session struct {
 
 	Params FHEParameters
 
+	// derived from Session.Secrets
 	secretKey *rlwe.SecretKey
 	rlkEphSk  *rlwe.SecretKey
 }
