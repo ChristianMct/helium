@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // OperandID is the system-wide identifier of an operand. Operand ids have the URL form

@@ -3,10 +3,10 @@ package helium
 import (
 	"fmt"
 
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/he"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
-	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	he "github.com/tuneinsight/lattigo/v6/schemes"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v6/schemes/ckks"
 )
 
 // Evaluator is the homomorphic evaluator available to circuits. It extends
@@ -14,7 +14,7 @@ import (
 // (rotations, conjugation, automorphisms, inner sums) under scheme-agnostic
 // names, so that the evaluation keys required by a circuit can be inferred by
 // symbolic execution (see Parse).
-//
+// "github.com/tuneinsight/lattigo/v6/he"
 // Scheme returns the underlying Lattigo evaluator for scheme-specific
 // operations; it is not available during symbolic execution, so circuits
 // using it must declare their interface explicitly (see Circuit.Interface).

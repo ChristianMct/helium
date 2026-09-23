@@ -18,7 +18,7 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/circuits"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // Starter is implemented by the coordinating node to start circuits and protocols.

@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/he"
-	"github.com/tuneinsight/lattigo/v5/ring"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/ring"
+	"github.com/tuneinsight/lattigo/v6/ring/ringqp"
+	he "github.com/tuneinsight/lattigo/v6/schemes"
 )
 
 // errParseNoScheme is the panic value raised when a circuit requests the scheme
@@ -139,10 +140,38 @@ func (pr *parseRuntime) Logf(format string, args ...interface{}) {
 // recordingEvaluator is the Evaluator used during symbolic execution: it records the
 // keys required by the requested operations in the interface being built, and tracks the
 // degree and level of the placeholder ciphertexts instead of computing on them.
+// TODO: lattigo strongly couples the evk and evaluator interface, so the recording evaluator design is not ideal: circuits might assume an already-setup evaluator.
 type recordingEvaluator struct {
 	params rlwe.Parameters
 	meta   *rlwe.MetaData
 	itf    *Interface
+}
+
+func (r *recordingEvaluator) AutomorphismHoistedLazy(levelQ int, ctIn *rlwe.Ciphertext, c1DecompQP []ringqp.Poly, galEl uint64, ctQP *rlwe.Element[ringqp.Poly]) (err error) {
+	panic("unimplemented")
+}
+
+func (r *recordingEvaluator) AutomorphismIndex(uint64) []uint64 {
+	return nil // could also return the current set. But the current lattugo design strongly couples the evk and evaluation interface so not ideal.
+}
+
+func (r *recordingEvaluator) CheckAndGetGaloisKey(galEl uint64) (evk *rlwe.GaloisKey, err error) {
+	r.needGaloisEls(galEl)
+	return nil, nil
+}
+
+func (r *recordingEvaluator) DecomposeNTT(level int, levelP int, pCount int, c1 ring.Poly, isNTT bool, BuffDecompQP []ringqp.Poly) {
+}
+
+func (r *recordingEvaluator) GadgetProductHoistedLazy(levelQ int, BuffQPDecompQP []ringqp.Poly, gadgetCt *rlwe.GadgetCiphertext, ct *rlwe.Element[ringqp.Poly]) (err error) {
+	return nil
+}
+
+func (r *recordingEvaluator) GadgetProductLazy(levelQ int, cx ring.Poly, gadgetCt *rlwe.GadgetCiphertext, ct *rlwe.Element[ringqp.Poly]) (err error) {
+	return nil
+}
+
+func (r *recordingEvaluator) ModDownQPtoQNTT(levelQ int, levelP int, p1Q ring.Poly, p1P ring.Poly, p2Q ring.Poly) {
 }
 
 func newRecordingEvaluator(params FHEParameters, itf *Interface) *recordingEvaluator {
@@ -218,10 +247,6 @@ func (r *recordingEvaluator) product(op0 *rlwe.Ciphertext, op1 rlwe.Operand) (de
 
 func (r *recordingEvaluator) GetRLWEParameters() *rlwe.Parameters {
 	return &r.params
-}
-
-func (r *recordingEvaluator) GetEvaluatorBuffer() *rlwe.EvaluatorBuffers {
-	return nil
 }
 
 func (r *recordingEvaluator) Add(op0 *rlwe.Ciphertext, op1 rlwe.Operand, opOut *rlwe.Ciphertext) error {

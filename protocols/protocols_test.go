@@ -11,9 +11,9 @@ import (
 	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/mhe"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	mhe "github.com/tuneinsight/lattigo/v6/multiparty"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
 type testSetting struct {

@@ -13,7 +13,7 @@ import (
 	"github.com/ChristianMct/helium/utils"
 	"github.com/ChristianMct/helium/utils/certs"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

@@ -7,8 +7,8 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	mhe "github.com/tuneinsight/lattigo/v6/multiparty"
 )
 
 // CheckSetup checks that a public key provider produces valid keys for the given

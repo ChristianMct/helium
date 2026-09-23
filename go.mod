@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
-	github.com/stretchr/testify v1.9.0
-	github.com/tuneinsight/lattigo/v5 v5.0.2
+	github.com/stretchr/testify v1.10.0
+	github.com/tuneinsight/lattigo/v6 v6.2.1-0.20260616130121-c71b2b8bc60f
 	golang.org/x/crypto v0.55.0
 	golang.org/x/sync v0.22.0
 	google.golang.org/grpc v1.83.2
@@ -30,7 +30,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/exp v0.0.0-20240314144324-c7f7c6466f7f // indirect
+	golang.org/x/exp v0.0.0-20250506013437-ce4c2cf36ca6 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect

@@ -10,8 +10,8 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/ChristianMct/helium/helper"
-	"github.com/tuneinsight/lattigo/v5/mhe"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	mhe "github.com/tuneinsight/lattigo/v6/multiparty"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
 // defaultCertDir points to the TLS material: ca.crt, and the

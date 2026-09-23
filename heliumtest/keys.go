@@ -3,7 +3,7 @@ package heliumtest
 import (
 	"context"
 
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // KeyProvider is an implementation of helium.PublicKeyProvider that generates the

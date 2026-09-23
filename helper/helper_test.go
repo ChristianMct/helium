@@ -14,8 +14,8 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v5/mhe"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	mhe "github.com/tuneinsight/lattigo/v6/multiparty"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/test/bufconn"
 )

@@ -5,8 +5,8 @@ import (
 	"log"
 
 	"github.com/ChristianMct/helium"
-	"github.com/tuneinsight/lattigo/v5/ring"
-	"github.com/tuneinsight/lattigo/v5/utils/sampling"
+	"github.com/tuneinsight/lattigo/v6/ring"
+	"github.com/tuneinsight/lattigo/v6/utils/sampling"
 )
 
 // circuitRuntime is the helium.CircuitRuntime given to a circuit evaluated by the runner.

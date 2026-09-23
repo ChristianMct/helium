@@ -6,7 +6,7 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/protocols"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // GetOperand returns the operand with the given id. The operand is looked up in the

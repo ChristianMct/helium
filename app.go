@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // App is a Helium application: the MHE setup it requires, the circuits it can

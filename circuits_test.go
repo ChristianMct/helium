@@ -7,8 +7,8 @@ import (
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
 var bgvParamsLiteral = bgv.ParametersLiteral{

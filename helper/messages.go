@@ -9,7 +9,7 @@ import (
 	"github.com/ChristianMct/helium/node"
 	"github.com/ChristianMct/helium/protocols"
 	"github.com/ChristianMct/helium/utils"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // ---- node events

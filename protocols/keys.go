@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/ChristianMct/helium"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // KeyProvider is a view of a Runner that exposes the outputs of the

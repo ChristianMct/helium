@@ -7,11 +7,11 @@ import (
 
 	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
-	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
-	"github.com/tuneinsight/lattigo/v5/utils/bignum"
-	"github.com/tuneinsight/lattigo/v5/utils/sampling"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v6/schemes/ckks"
+	"github.com/tuneinsight/lattigo/v6/utils/bignum"
+	"github.com/tuneinsight/lattigo/v6/utils/sampling"
 )
 
 // sumCRS returns the seed of the common random polynomial used to encrypt the
@@ -147,7 +147,7 @@ func (ie *inputEncryptor) encrypt(md *helium.Metadata, in Input) (*rlwe.Cipherte
 	if err != nil {
 		return nil, err
 	}
-	return rlwe.NewEncryptor(ie.sess.Params, sk).WithPRNG(prng).EncryptNew(pt)
+	return rlwe.NewEncryptor(ie.sess.Params, sk).EncryptSKWithPRNGNew(prng, pt)
 }
 
 func (ie *inputEncryptor) encode(v any) (*rlwe.Plaintext, error) {

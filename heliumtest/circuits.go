@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/ChristianMct/helium"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
-	"github.com/tuneinsight/lattigo/v5/schemes/ckks"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v6/schemes/ckks"
 )
 
 // Circuits contains a set of test circuits for the helium framework.

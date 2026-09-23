@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"github.com/ChristianMct/helium"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 // Runtime is an implementation of the helium.CircuitRuntime interface for testing circuits

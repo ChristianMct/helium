@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/ChristianMct/helium"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 )
 
 const defaultMaxEvaluation = 8 // max number of concurrent circuit evaluations
