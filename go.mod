@@ -2,7 +2,7 @@ module github.com/ChristianMct/helium
 
 go 1.25.0
 
-replace github.com/tuneinsight/lattigo/v6 => /home/cmouchet/Dev/lattigo
+replace github.com/tuneinsight/lattigo/v6 => github.com/ChristianMct/lattigo/v6 v6.0.0-20260924092224-a20aa9db781d
 
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
