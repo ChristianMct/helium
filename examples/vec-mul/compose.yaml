@@ -1,26 +1,65 @@
-version: '3'
 services:
+  # generates the CA and one certificate per node into the shared `certs` volume, then
+  # exits. The nodes wait for it to complete before starting: they authenticate each
+  # other with the material it produces. Container names match the node ids, which is
+  # what the certificates attest to.
+  certgen:
+    container_name: certgen
+    image: helium:vec-mul
+    entrypoint: /helium/gencerts
+    command: -out /helium/certs helper node-1 node-2 node-3 node-4
+    volumes:
+      - certs:/helium/certs
+
   helper:
     container_name: helper
     image: helium:vec-mul
-    command: -id helper -address :40000 
+    command: -id helper -address :40000
+    volumes:
+      - certs:/helium/certs:ro
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
 
   node-1:
     container_name: node-1
     image: helium:vec-mul
     command: -id node-1 -input 1
+    volumes:
+      - certs:/helium/certs:ro
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
 
   node-2:
     container_name: node-2
     image: helium:vec-mul
     command: -id node-2 -input 2
+    volumes:
+      - certs:/helium/certs:ro
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
 
   node-3:
     container_name: node-3
     image: helium:vec-mul
     command: -id node-3 -input 3
+    volumes:
+      - certs:/helium/certs:ro
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
 
   node-4:
     container_name: node-4
     image: helium:vec-mul
     command: -id node-4 -input 4
+    volumes:
+      - certs:/helium/certs:ro
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
+
+volumes:
+  certs:

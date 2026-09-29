@@ -62,3 +62,6 @@ out
 *key
 *crt
 *csr
+
+# TLS material generated for the examples (see examples/gencerts)
+examples/*/certs/
