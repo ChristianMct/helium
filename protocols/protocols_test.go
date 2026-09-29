@@ -210,3 +210,43 @@ func checkOutput(out interface{}, pd Descriptor, testSess heliumtest.Sessions, t
 		t.Fatalf("invalid protocol type")
 	}
 }
+
+// TestProtocolDeterminism checks that the randomness of a protocol is derived anew at each call,
+// so that repeated calls to ReadCRP and GenShare, on the same or on a new Protocol, yield the same results.
+func TestProtocolDeterminism(t *testing.T) {
+	hid := helium.NodeID("helper")
+	testSess, err := heliumtest.NewSessions(3, 3, TestPN12QP109, hid)
+	require.NoError(t, err)
+
+	pd := Descriptor{Signature: Signature{Type: CKG}, Participants: testSess.SessParams.Nodes, Aggregator: hid}
+	nid := pd.Participants[0]
+	sess := testSess.Nodes[nid]
+	sk, err := sess.GetSecretKeyForGroup(pd.Participants)
+	require.NoError(t, err)
+
+	genShare := func(p *Protocol, crp CRP) []byte {
+		share := p.AllocateShare()
+		require.NoError(t, p.GenShare(sk, crp, &share))
+		b, err := share.MHEShare.MarshalBinary()
+		require.NoError(t, err)
+		return b
+	}
+
+	p, err := NewProtocol(pd, sess)
+	require.NoError(t, err)
+
+	crp1, err := p.ReadCRP()
+	require.NoError(t, err)
+	crp2, err := p.ReadCRP()
+	require.NoError(t, err)
+	require.Equal(t, crp1, crp2)
+
+	share1 := genShare(p, crp1)
+	share2 := genShare(p, crp1)
+	require.Equal(t, share1, share2)
+
+	// a restarted node re-creates the protocol
+	pRestart, err := NewProtocol(pd, sess)
+	require.NoError(t, err)
+	require.Equal(t, share1, genShare(pRestart, crp1))
+}

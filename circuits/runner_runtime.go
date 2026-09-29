@@ -66,7 +66,7 @@ func (rt *circuitRuntime) InputSum(name string, _ ...string) *helium.FutureOpera
 		if err != nil {
 			panic(err)
 		}
-		ring.NewUniformSampler(prng, rq).Read(ct.Value[1])
+		ring.NewUniformSampler(rq).Read(prng, ct.Value[1])
 
 		for i, id := range rc.md.SumInputs[name] {
 			c := rc.inputs[id].Get().Ciphertext

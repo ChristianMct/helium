@@ -147,7 +147,7 @@ func (ie *inputEncryptor) encrypt(md *helium.Metadata, in Input) (*rlwe.Cipherte
 	if err != nil {
 		return nil, err
 	}
-	return rlwe.NewEncryptor(ie.sess.Params, sk).EncryptSKWithPRNGNew(prng, pt)
+	return rlwe.NewEncryptor(ie.sess.Params, sk).EncryptNew(pt, rlwe.PRNGs{PublicPRNG: prng})
 }
 
 func (ie *inputEncryptor) encode(v any) (*rlwe.Plaintext, error) {

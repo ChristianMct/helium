@@ -138,12 +138,12 @@ func GenSecretKeys(sessParams helium.Parameters) (secs map[helium.NodeID]*helium
 		shares[nidi] = make(map[helium.NodeID]mhe.ShamirSecretShare, len(sessParams.Nodes))
 
 		// TODO: add seeding to Thresholdizer and replace the following code with the Thresholdizer.GenShamirPolynomial method
-		usampleri := ringqp.NewUniformSampler(prngi, *params.RingQP())
+		usampleri := ringqp.NewUniformSampler(*params.RingQP())
 		shamirPoly := mhe.ShamirPolynomial{Value: make([]ringqp.Poly, int(sessParams.Threshold))}
 		shamirPoly.Value[0] = *ski.Value.CopyNew()
 		for i := 1; i < sessParams.Threshold; i++ {
 			shamirPoly.Value[i] = params.RingQP().NewPoly()
-			usampleri.Read(shamirPoly.Value[i])
+			usampleri.Read(prngi, shamirPoly.Value[i])
 		}
 
 		for _, nidj := range sessParams.Nodes {

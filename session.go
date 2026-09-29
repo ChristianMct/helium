@@ -217,7 +217,7 @@ func genSecretKey(pp rlwe.ParameterProvider, prng sampling.PRNG) (sk *rlwe.Secre
 
 	params := pp.GetRLWEParameters()
 
-	ts, err := ring.NewSampler(prng, params.RingQ(), params.Xs(), false)
+	ts, err := ring.NewSampler(params.RingQ(), params.Xs(), false)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +226,7 @@ func genSecretKey(pp rlwe.ParameterProvider, prng sampling.PRNG) (sk *rlwe.Secre
 	ringQP := params.RingQP()
 	sk.Value = ringQP.NewPoly()
 	levelQ, levelP := sk.LevelQ(), sk.LevelP()
-	ts.Read(sk.Value.Q)
+	ts.Read(prng, sk.Value.Q)
 
 	if levelP > -1 {
 		ringQP.ExtendBasisSmallNormAndCenter(sk.Value.Q, levelP, sk.Value.Q, sk.Value.P)
