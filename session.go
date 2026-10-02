@@ -60,6 +60,13 @@ type Parameters struct {
 	PublicSeed    []byte
 }
 
+// IsTOutOfN returns whether the session has a T-out-of-N access structure with T < N,
+// i.e., whether its threshold is less than its number of nodes. Otherwise, the session
+// is N-out-of-N (an unspecified threshold defaults to N).
+func (p Parameters) IsTOutOfN() bool {
+	return p.Threshold > 0 && p.Threshold < len(p.Nodes)
+}
+
 func (p *Parameters) UnmarshalJSON(data []byte) error {
 	type Alias Parameters
 	aux := &struct {
@@ -85,10 +92,26 @@ func (p *Parameters) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MaskKeySize is the size in bytes of the PRF keys in a MaskKeyPair.
+const MaskKeySize = 32
+
+// MaskKeyPair holds the two PRF keys that the node shares with another session node,
+// from which the two nodes derive the masks of their key-switching protocol shares
+// (see [github.com/ChristianMct/helium/protocols.Protocol.GenShare]).
+type MaskKeyPair struct {
+	// Own is k_{i,j}.
+	Own []byte
+	// Peer is k_{j,i}.
+	Peer []byte
+}
+
 // Secrets holds the secret material of a node for a session.
 type Secrets struct {
-	PrivateSeed        []byte
-	ThresholdSecretKey *mhe.ShamirSecretShare
+	PrivateSeed []byte
+
+	// T-out-of-N only
+	ThresholdSecretKey *mhe.ShamirSecretShare // holds the shamir share of the ideal N-out-of-N secret-key
+	MaskKeys           map[NodeID]MaskKeyPair // holds the node's shared MaskKeyPair with each of the other session nodes.
 }
 
 // SecretProvider is a function that returns the secrets of a node for a session,
@@ -139,15 +162,6 @@ func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *S
 	}
 	sess.PublicSeed = slices.Clone(sessParams.PublicSeed)
 
-	sess.ShamirPks = make(map[NodeID]mhe.ShamirPublicPoint, len(sessParams.ShamirPks))
-	needShamirPks := sess.Parameters.Threshold < len(sess.Parameters.Nodes)
-	for _, nid := range sess.Nodes {
-		var has bool
-		if sess.ShamirPks[nid], has = sessParams.ShamirPks[nid]; !has && needShamirPks {
-			return nil, fmt.Errorf("invalid session parameters: missing Shamir public point for node %s", nid)
-		}
-	}
-
 	sess.FHEParameters = sessParams.FHEParameters
 	sess.Params, err = NewFHEParameters(sessParams.FHEParameters)
 	if err != nil {
@@ -178,11 +192,38 @@ func NewSession(nodeID NodeID, sessParams Parameters, secrets *Secrets) (sess *S
 			return nil, fmt.Errorf("could not generate rlk eph secret key: %s", err)
 		}
 
-		if sessParams.Threshold < len(sessParams.Nodes) {
+		if sess.IsTOutOfN() {
+
+			// reads each session node's Shamir public point from the params
+			sess.ShamirPks = make(map[NodeID]mhe.ShamirPublicPoint, len(sessParams.ShamirPks))
+			for _, nid := range sess.Nodes {
+				var has bool
+				if sess.ShamirPks[nid], has = sessParams.ShamirPks[nid]; !has {
+					return nil, fmt.Errorf("invalid session parameters: missing Shamir public point for node %s", nid)
+				}
+			}
+
+			// reads the node's Shamir secret share of the ideal N-out-of-N secret key from the secrets.
 			if secrets.ThresholdSecretKey == nil {
 				return nil, fmt.Errorf("session nodes must specify threshold secret key when session threshold is less than the number of nodes")
 			}
 			sess.ThresholdSecretKey = &mhe.ShamirSecretShare{Poly: *secrets.ThresholdSecretKey.CopyNew()} // TODO: add copy method to Lattigo
+
+			// reads the node's pairwise shared PRF secret tuples from the secrets.
+			sess.MaskKeys = make(map[NodeID]MaskKeyPair, len(sessParams.Nodes)-1)
+			for _, nid := range sessParams.Nodes {
+				if nid == nodeID {
+					continue
+				}
+				mk, has := secrets.MaskKeys[nid]
+				if !has {
+					return nil, fmt.Errorf("session nodes must specify mask keys when session threshold is less than the number of nodes: missing keys for node %s", nid)
+				}
+				if len(mk.Own) != MaskKeySize || len(mk.Peer) != MaskKeySize {
+					return nil, fmt.Errorf("invalid mask keys for node %s: keys must be %d bytes", nid, MaskKeySize)
+				}
+				sess.MaskKeys[nid] = MaskKeyPair{Own: slices.Clone(mk.Own), Peer: slices.Clone(mk.Peer)}
+			}
 		}
 	}
 
@@ -291,6 +332,15 @@ func (sess *Session) GetThresholdSecretKey() (*mhe.ShamirSecretShare, error) {
 		return nil, fmt.Errorf("node has no threshold secret-key in the session")
 	}
 	return sess.ThresholdSecretKey, nil
+}
+
+// GetMaskKeys returns the node's mask keys with the session node nid.
+func (sess *Session) GetMaskKeys(nid NodeID) (MaskKeyPair, error) {
+	mk, has := sess.MaskKeys[nid]
+	if !has {
+		return MaskKeyPair{}, fmt.Errorf("node has no mask keys with node %s in the session", nid)
+	}
+	return mk, nil
 }
 
 // GetShamirPublicPoints returns the Shamir public points of the session nodes.

@@ -101,7 +101,7 @@ func (te *testRunners) checkOutputs(t *testing.T, ctx context.Context, e *Runner
 		require.NoError(t, err, "node %s awaiting %s", e.NodeID(), sig)
 		out, err := e.GetOutput(ctx, pd)
 		require.NoError(t, err, "node %s output for %s", e.NodeID(), sig)
-		checkOutput(out.Result, pd, *te.sess, t)
+		checkOutput(out.Result, pd, e.NodeID(), *te.sess, t)
 	}
 }
 
@@ -436,7 +436,7 @@ func TestRunnerStateMachine(t *testing.T) {
 
 		out, err := helper.GetOutput(ctx, pdCkg)
 		require.NoError(t, err)
-		checkOutput(out.Result, pdCkg, *testSess, t)
+		checkOutput(out.Result, pdCkg, hid, *testSess, t)
 
 		// a restarted helper restores the completion from its backend
 		restarted, err := NewRunner(hid, testSess.Helper, testConf, rt, helper.results, nil)
@@ -446,6 +446,6 @@ func TestRunnerStateMachine(t *testing.T) {
 		require.Equal(t, []Descriptor{pdCkg}, restored)
 		out, err = restarted.GetOutput(ctx, pdCkg)
 		require.NoError(t, err)
-		checkOutput(out.Result, pdCkg, *testSess, t)
+		checkOutput(out.Result, pdCkg, hid, *testSess, t)
 	})
 }

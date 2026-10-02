@@ -115,7 +115,7 @@ func GenSecretKeys(sessParams helium.Parameters) (secs map[helium.NodeID]*helium
 		ss.PrivateSeed = []byte(nid) // uses the node id as the private seed for testing
 	}
 
-	if sessParams.Threshold == 0 || sessParams.Threshold == len(sessParams.Nodes) {
+	if !sessParams.IsTOutOfN() {
 		return secs, nil
 	}
 
@@ -158,6 +158,29 @@ func GenSecretKeys(sessParams helium.Parameters) (secs map[helium.NodeID]*helium
 		secs[nidi].ThresholdSecretKey = &tsk
 		for _, nidj := range sessParams.Nodes {
 			thresholdizer.AggregateShares(shares[nidj][nidi], tsk, &tsk)
+		}
+	}
+
+	// simulates the generation of the mask keys: node i samples k_ij for each other node j
+	for _, nidi := range sessParams.Nodes {
+		secs[nidi].MaskKeys = make(map[helium.NodeID]helium.MaskKeyPair, len(sessParams.Nodes)-1)
+	}
+	for _, nidi := range sessParams.Nodes {
+		prngi, err := sampling.NewKeyedPRNG(append([]byte("mask-keys-"), secs[nidi].PrivateSeed...))
+		if err != nil {
+			return nil, err
+		}
+		for _, nidj := range sessParams.Nodes {
+			if nidi == nidj {
+				continue
+			}
+			kij := make([]byte, helium.MaskKeySize)
+			if _, err := prngi.Read(kij); err != nil {
+				return nil, err
+			}
+			mki, mkj := secs[nidi].MaskKeys[nidj], secs[nidj].MaskKeys[nidi]
+			mki.Own, mkj.Peer = kij, kij
+			secs[nidi].MaskKeys[nidj], secs[nidj].MaskKeys[nidi] = mki, mkj
 		}
 	}
 

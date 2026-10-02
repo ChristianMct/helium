@@ -62,8 +62,15 @@ package of its setting only, in preparation for the peer-to-peer setting.
   development deployments.
 - The `vec-mul` example runs over mutual TLS by default and has two new flags:
   `-certs` points the nodes at a specific certificates directory, and `-no-tls` runs without TLS.
+- PRF-based masking of the decryption shares in the T-out-of-N-threshold sessions, following
+  ["On Threshold Fully Homomorphic Encryption with Synchronized Decryptors"](https://eprint.iacr.org/2026/031). The nodes' PRF keys are part of the session secrets (`helium.Secrets.MaskKeys` required when the threshold is less than the number of nodes).
 
 ### Changed
+
+- The output of a T-out-of-N-threshold decryption protocol with a session node as target is a valid ciphertext
+  for that target only: the target removes the remaining mask when computing the output.
+- The smudging noise of the decryption shares is derived from the input ciphertext, in addition to the
+  protocol descriptor.
 
 - The package graph is inverted: `helium` is now the lowest-level package, holding the session
   vocabulary (`NodeID`, `SessionID`, `CircuitID`, `Parameters`, `Session`, `Secrets`,

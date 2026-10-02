@@ -1,5 +1,23 @@
-// Package protocols implements the MHE protocol execution.
-// It uses Lattigo as the underlying MHE library.
+// Package protocols implements the execution of the MHE protocols of a Helium session.
+//
+// It builds on the multiparty package of Lattigo, which provides the cryptographic
+// protocols (CKG, RTG, RKG, key switching), and adds what is needed to run them among
+// the nodes of a session:
+//
+//   - A common interface to the MHE protocols, [Protocol], identified by a [Signature] and
+//     executed by a [Descriptor] (signature, participants and aggregator). It is built on
+//     an adapter that wraps each Lattigo protocol behind a single, private interface, so that
+//     the rest of Helium neither depends on the specifics of the Lattigo types nor on their
+//     differing share, input and output types. The protocols' randomness (CRPs, private
+//     seeding) is derived from the session's seeds.
+//   - A protocol [Runner], the state machine of a node in the protocols of a session. It
+//     is driven by the coordination events of a [Coordinator] (e.g., the [CentralCoordinator]
+//     of the helper-assisted setting) and by incoming shares, and takes care of generating
+//     and sending the node's shares, aggregating them, and storing the outputs.
+//   - The masking of the key-switching shares in the T-out-of-N sessions, which makes it
+//     secure to retry a decryption with another set of participants, as presented in
+//     "On Threshold Fully Homomorphic Encryption with Synchronized Decryptors"
+//     (https://eprint.iacr.org/2026/031). See [Protocol.GenShare].
 package protocols
 
 import (
@@ -200,7 +218,22 @@ func (p *Protocol) ReadCRP() (CRP, error) {
 
 // GenShare is called by the session nodes to generate their share in the protocol,
 // storing the result in the provided shareOut. The method returns an error if the node should
-// not generate a share in the protocol.
+// not generate a share in the protocol. The share is computed by calling the `GenShare`
+// method of Lattigo.
+//
+// # T-out-of-N Threshold Decryption
+//
+// Helium attempts to retry DEC protocols under different participant sets in the T-out-of-N
+// threshold setting. However, the proposed techniques based on ct re-randomization was
+// shown to be insecure (see https://eprint.iacr.org/2026/031, Section 4). The same work
+// provides a secure technique based on share masking (see https://eprint.iacr.org/2026/031,
+// Section 5): each node i in S adds to its share in the DEC protocol the mask
+//
+//	r_i = sum_{j in S} F(k_{i,j}, (S, ct)) - F(k_{j,i}, (S, ct))
+//
+// where F is a PRF with range R_q and the k_{i,j} are the nodes' mask keys (see
+// [helium.MaskKeyPair]). The masks of the nodes in S sum to zero, and a share is pseudorandom
+// until all the nodes in S have released theirs for the same (S, ct).
 func (p *Protocol) GenShare(sk *rlwe.SecretKey, in Input, shareOut *Share) error {
 
 	if !p.IsParticipant() {
@@ -215,12 +248,42 @@ func (p *Protocol) GenShare(sk *rlwe.SecretKey, in Input, shareOut *Share) error
 	shareOut.ProtocolID = p.id
 	shareOut.From = utils.NewSingletonSet(p.self)
 	shareOut.ProtocolType = p.pd.Type
+
 	privPRNG, err := GetPrivatePRNG(p.pd, p.sess)
 	if err != nil {
 		return fmt.Errorf("cannot get private PRNG: %w", err)
 	}
+
+	var ctDigest []byte
+	_, isKeySwitch := in.(*KeySwitchInput)
+
+	// for key-switches, the private PRNG must depend on the target ciphertext
+	if isKeySwitch {
+		ctDigest, err = keySwitchInputDigest(in)
+		if err != nil {
+			return err
+		}
+		if _, err := privPRNG.Write(ctDigest); err != nil {
+			panic(err)
+		}
+	}
+
 	prngs := rlwe.PRNGs{PrivatePRNG: privPRNG}
-	return p.proto.genShare(prngs, sk, in, *shareOut)
+	if err := p.proto.genShare(prngs, sk, in, *shareOut); err != nil {
+		return err
+	}
+
+	if p.isMasked() { // implies isKeySwitch, so ctDigest is set
+		cksShare, ok := shareOut.MHEShare.(*mhe.KeySwitchShare)
+		if !ok {
+			return fmt.Errorf("bad share type: %T instead of %T", shareOut.MHEShare, cksShare)
+		}
+
+		if err := p.addKeySwitchMask(ctDigest, cksShare.Level(), cksShare.Value); err != nil {
+			return fmt.Errorf("cannot mask share: %w", err)
+		}
+	}
+	return nil
 }
 
 // Aggregate is called by the aggregator node to aggregate the shares of the protocol.
@@ -327,6 +390,23 @@ func (p *Protocol) Output(in Input, agg AggregationOutput, out interface{}) erro
 	if err := p.proto.finalize(in, agg.Share, out); err != nil {
 		return fmt.Errorf("error at output: %w", err)
 	}
+
+	//  For T-out-of-N decryptions, adds the mask of the target (which has provided no share for aggregation).
+	if p.isMasked() && p.isSessionReceiver() {
+		outCt, ok := out.(*rlwe.Ciphertext)
+		if !ok {
+			return fmt.Errorf("bad receiver type: %T instead of %T", out, outCt)
+		}
+
+		ctDigest, err := keySwitchInputDigest(in) // TODO: recomputes the digest and mask if the same Protocol ran GenShare, could be cached.
+		if err != nil {
+			return err
+		}
+
+		if err := p.addKeySwitchMask(ctDigest, in.(*KeySwitchInput).InpuCt.Level(), outCt.Value[0]); err != nil {
+			return fmt.Errorf("cannot unmask output: %w", err)
+		}
+	}
 	p.Logf("finalized protocol")
 	return nil
 }
@@ -372,6 +452,12 @@ func (p *Protocol) Logf(msg string, v ...any) {
 		return
 	}
 	log.Printf("%s | [%s] %s\n", p.self, p.HID(), fmt.Sprintf(msg, v...))
+}
+
+// isSessionReceiver returns whether the node is the target of the DEC protocol and one of
+// its participants. Such a node does not provide a share (hence, no mask) to the aggregator.
+func (p *Protocol) isSessionReceiver() bool {
+	return p.pd.Type == DEC && p.pd.Args["target"] == string(p.self) && p.IsParticipant()
 }
 
 func checkProtocolDescriptor(pd Descriptor, sess *helium.Session) error {

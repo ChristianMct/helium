@@ -199,7 +199,7 @@ func (c *CentralCoordinator) RunDescriptor(_ context.Context, pd Descriptor) err
 	if _, completed := c.completed[pid]; completed {
 		return fmt.Errorf("protocol %s is already completed", pd.HID())
 	}
-	if !c.fullThreshold() {
+	if c.sess.IsTOutOfN() {
 		for _, nid := range pd.Participants {
 			if _, online := c.online[nid]; !online && nid != c.self {
 				return fmt.Errorf("participant %s is not connected", nid)
@@ -243,7 +243,7 @@ func (c *CentralCoordinator) PeerDisconnected(nid helium.NodeID) {
 	}
 	delete(c.online, nid)
 
-	if !c.fullThreshold() {
+	if c.sess.IsTOutOfN() {
 		for pid := range pids {
 			s, running := c.running[pid]
 			if !running {
@@ -300,10 +300,6 @@ func (c *CentralCoordinator) Logf(msg string, v ...any) {
 }
 
 // ---- internals (caller holds c.mu)
-
-func (c *CentralCoordinator) fullThreshold() bool {
-	return c.sess.Threshold == len(c.sess.Nodes)
-}
 
 func (c *CentralCoordinator) append(ev Event) {
 	if err := c.log.Append(ev); err != nil {
@@ -390,7 +386,7 @@ func (c *CentralCoordinator) tryStart(req *sigRequest) (bool, error) {
 // sessions, all session nodes are selected.
 func (c *CentralCoordinator) selectParticipants(sig Signature) ([]helium.NodeID, bool) {
 	selected := utils.NewEmptySet[helium.NodeID]()
-	if c.fullThreshold() {
+	if !c.sess.IsTOutOfN() {
 		selected.Add(c.sess.Nodes...)
 	} else {
 		if sig.Type == DEC {

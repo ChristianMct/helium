@@ -101,7 +101,16 @@ func TestProtocols(t *testing.T) {
 				out := AllocateOutput(pd.Signature, testSess.RlweParams)
 				err = p.Output(input, aggOut, out)
 				require.Nil(t, err)
-				checkOutput(out, pd, *testSess, t)
+				checkOutput(out, pd, hid, *testSess, t)
+
+				if pd.Signature.Type == DEC {
+					target := helium.NodeID(pd.Signature.Args["target"])
+					targetP, err := NewProtocol(pd, testSess.Nodes[target])
+					require.Nil(t, err)
+					out := AllocateOutput(pd.Signature, testSess.RlweParams)
+					require.Nil(t, targetP.Output(input, aggOut, out))
+					checkOutput(out, pd, target, *testSess, t)
+				}
 			})
 		}
 	}
@@ -170,7 +179,8 @@ func runProto(pd Descriptor, testSess heliumtest.Sessions, input Input, t *testi
 	return aggOut
 }
 
-func checkOutput(out interface{}, pd Descriptor, testSess heliumtest.Sessions, t *testing.T) {
+// checkOutput checks the output of the protocol pd, as computed by node view.
+func checkOutput(out interface{}, pd Descriptor, view helium.NodeID, testSess heliumtest.Sessions, t *testing.T) {
 
 	nParties := len(testSess.Nodes)
 	sk := testSess.SkIdeal
@@ -196,7 +206,8 @@ func checkOutput(out interface{}, pd Descriptor, testSess heliumtest.Sessions, t
 		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*mhe.NoiseRelinearizationKey(params, nParties)) + 1
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	case DEC:
-		recSk, err := testSess.Nodes[helium.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
+		target := helium.NodeID(pd.Signature.Args["target"])
+		recSk, err := testSess.Nodes[target].GetSecretKeyForGroup(pd.Participants)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,6 +216,11 @@ func checkOutput(out interface{}, pd Descriptor, testSess heliumtest.Sessions, t
 		ct, isCt := out.(*rlwe.Ciphertext)
 		require.True(t, isCt)
 		std, _, _ := rlwe.Norm(ct, dec)
+		if testSess.Nodes[target].IsTOutOfN() && view != target {
+			// the output still has the mask of the target
+			require.Greater(t, std, float64(params.LogQ()-4))
+			break
+		}
 		require.Less(t, std, testSess.RlweParams.NoiseFreshPK()) // TODO better bound
 	default:
 		t.Fatalf("invalid protocol type")
