@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "github.com/ChristianMct/helium/transport/pb";
+option go_package = "github.com/ChristianMct/helium/api/pb";
 
 package helium_proto;
 
@@ -74,19 +74,13 @@ message CircuitEvent {
     EventType Type = 2;
 }
 
-message SetupEvent {
-    ProtocolEvent ProtocolEvent = 1;
-}
-
-message ComputeEvent {
-    CircuitEvent CircuitEvent = 1;
-    optional ProtocolEvent ProtocolEvent = 2;
-}
-
+/* NodeEvent is an event of the node-level coordination log: either a protocol
+   event (emitted by the coordinator and the protocol runner) or a circuit event
+   (emitted by the circuit evaluator). */
 message NodeEvent {
     oneof Event {
-        SetupEvent SetupEvent = 1;
-        ComputeEvent ComputeEvent = 2;
+        ProtocolEvent ProtocolEvent = 1;
+        CircuitEvent CircuitEvent = 2;
     }
 }
 

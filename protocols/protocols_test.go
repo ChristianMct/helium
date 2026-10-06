@@ -1,17 +1,19 @@
 package protocols
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
 	"testing"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
+	"github.com/ChristianMct/helium/heliumtest"
 	"github.com/ChristianMct/helium/utils"
 	"github.com/stretchr/testify/require"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
-	"github.com/tuneinsight/lattigo/v5/schemes/bgv"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	mhe "github.com/tuneinsight/lattigo/v6/multiparty"
+	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
 type testSetting struct {
@@ -42,8 +44,8 @@ func TestProtocols(t *testing.T) {
 
 		params := TestPN12QP109
 
-		hid := sessions.NodeID("helper")
-		testSess, err := sessions.NewTestSession(ts.N, ts.T, params, hid)
+		hid := helium.NodeID("helper")
+		testSess, err := heliumtest.NewSessions(ts.N, ts.T, params, hid)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +74,7 @@ func TestProtocols(t *testing.T) {
 			t.Run(fmt.Sprintf("N=%d/T=%d/Type=%s", ts.N, ts.T, pd.Signature.Type), func(t *testing.T) {
 				var input Input
 
-				p, err := NewProtocol(pd, testSess.HelperSession)
+				p, err := NewProtocol(pd, testSess.Helper)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -99,20 +101,29 @@ func TestProtocols(t *testing.T) {
 				out := AllocateOutput(pd.Signature, testSess.RlweParams)
 				err = p.Output(input, aggOut, out)
 				require.Nil(t, err)
-				checkOutput(out, pd, *testSess, t)
+				checkOutput(out, pd, hid, *testSess, t)
+
+				if pd.Signature.Type == DEC {
+					target := helium.NodeID(pd.Signature.Args["target"])
+					targetP, err := NewProtocol(pd, testSess.Nodes[target])
+					require.Nil(t, err)
+					out := AllocateOutput(pd.Signature, testSess.RlweParams)
+					require.Nil(t, targetP.Output(input, aggOut, out))
+					checkOutput(out, pd, target, *testSess, t)
+				}
 			})
 		}
 	}
 }
 
-func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *testing.T) AggregationOutput {
+func runProto(pd Descriptor, testSess heliumtest.Sessions, input Input, t *testing.T) AggregationOutput {
 
-	helperP, err := NewProtocol(pd, testSess.HelperSession)
+	helperP, err := NewProtocol(pd, testSess.Helper)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	ctx := sessions.NewBackgroundContext(testSess.SessParams.ID)
+	ctx := context.Background()
 	incoming := make(chan Share)
 	resc := make(chan AggregationOutput, 1)
 	errc := make(chan error, 1)
@@ -121,7 +132,7 @@ func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *test
 		resc <- <-aggOutC
 	}()
 
-	for nid, nodeSess := range testSess.NodeSessions {
+	for nid, nodeSess := range testSess.Nodes {
 		nodeP, err := NewProtocol(pd, nodeSess)
 
 		if err != nil {
@@ -139,7 +150,7 @@ func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *test
 			continue
 		}
 
-		if pd.Signature.Type == DEC && sessions.NodeID(pd.Signature.Args["target"]) == nid {
+		if pd.Signature.Type == DEC && helium.NodeID(pd.Signature.Args["target"]) == nid {
 			require.NotNil(t, err, "decryption receiver should not generate a share")
 			continue
 		}
@@ -168,9 +179,10 @@ func runProto(pd Descriptor, testSess sessions.TestSession, input Input, t *test
 	return aggOut
 }
 
-func checkOutput(out interface{}, pd Descriptor, testSess sessions.TestSession, t *testing.T) {
+// checkOutput checks the output of the protocol pd, as computed by node view.
+func checkOutput(out interface{}, pd Descriptor, view helium.NodeID, testSess heliumtest.Sessions, t *testing.T) {
 
-	nParties := len(testSess.NodeSessions)
+	nParties := len(testSess.Nodes)
 	sk := testSess.SkIdeal
 	params := testSess.RlweParams
 	decompositionVectorSize := params.BaseRNSDecompositionVectorSize(params.MaxLevelQ(), params.MaxLevelP())
@@ -185,16 +197,17 @@ func checkOutput(out interface{}, pd Descriptor, testSess sessions.TestSession, 
 		require.True(t, isSwk)
 
 		noise := rlwe.NoiseGaloisKey(swk, sk, params)
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseGaloisKey(params, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*mhe.NoiseGaloisKey(params, nParties)) + 1
 		require.Less(t, noise, noiseBound, "rtk for galEl %d should be correct", swk.GaloisElement)
 	case RKG:
 		rlk, isRlk := out.(*rlwe.RelinearizationKey)
 		require.True(t, isRlk)
 
-		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*drlwe.NoiseRelinearizationKey(params, nParties)) + 1
+		noiseBound := math.Log2(math.Sqrt(float64(decompositionVectorSize))*mhe.NoiseRelinearizationKey(params, nParties)) + 1
 		require.Less(t, rlwe.NoiseRelinearizationKey(rlk, sk, params), noiseBound)
 	case DEC:
-		recSk, err := testSess.NodeSessions[sessions.NodeID("node-0")].GetSecretKeyForGroup(pd.Participants)
+		target := helium.NodeID(pd.Signature.Args["target"])
+		recSk, err := testSess.Nodes[target].GetSecretKeyForGroup(pd.Participants)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -203,8 +216,53 @@ func checkOutput(out interface{}, pd Descriptor, testSess sessions.TestSession, 
 		ct, isCt := out.(*rlwe.Ciphertext)
 		require.True(t, isCt)
 		std, _, _ := rlwe.Norm(ct, dec)
+		if testSess.Nodes[target].IsTOutOfN() && view != target {
+			// the output still has the mask of the target
+			require.Greater(t, std, float64(params.LogQ()-4))
+			break
+		}
 		require.Less(t, std, testSess.RlweParams.NoiseFreshPK()) // TODO better bound
 	default:
 		t.Fatalf("invalid protocol type")
 	}
+}
+
+// TestProtocolDeterminism checks that the randomness of a protocol is derived anew at each call,
+// so that repeated calls to ReadCRP and GenShare, on the same or on a new Protocol, yield the same results.
+func TestProtocolDeterminism(t *testing.T) {
+	hid := helium.NodeID("helper")
+	testSess, err := heliumtest.NewSessions(3, 3, TestPN12QP109, hid)
+	require.NoError(t, err)
+
+	pd := Descriptor{Signature: Signature{Type: CKG}, Participants: testSess.SessParams.Nodes, Aggregator: hid}
+	nid := pd.Participants[0]
+	sess := testSess.Nodes[nid]
+	sk, err := sess.GetSecretKeyForGroup(pd.Participants)
+	require.NoError(t, err)
+
+	genShare := func(p *Protocol, crp CRP) []byte {
+		share := p.AllocateShare()
+		require.NoError(t, p.GenShare(sk, crp, &share))
+		b, err := share.MHEShare.MarshalBinary()
+		require.NoError(t, err)
+		return b
+	}
+
+	p, err := NewProtocol(pd, sess)
+	require.NoError(t, err)
+
+	crp1, err := p.ReadCRP()
+	require.NoError(t, err)
+	crp2, err := p.ReadCRP()
+	require.NoError(t, err)
+	require.Equal(t, crp1, crp2)
+
+	share1 := genShare(p, crp1)
+	share2 := genShare(p, crp1)
+	require.Equal(t, share1, share2)
+
+	// a restarted node re-creates the protocol
+	pRestart, err := NewProtocol(pd, sess)
+	require.NoError(t, err)
+	require.Equal(t, share1, genShare(pRestart, crp1))
 }

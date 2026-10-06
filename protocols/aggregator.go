@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
 )
 
 type shareAggregator struct {
 	aggFunc func(Share, ...Share) error
 	share   Share
-	exp     utils.Set[sessions.NodeID]
+	exp     utils.Set[helium.NodeID]
 	l       sync.RWMutex
 }
 
@@ -19,7 +19,7 @@ func newShareAggregator(pd Descriptor, share Share, aggFunc func(Share, ...Share
 	agg := new(shareAggregator)
 	agg.exp = utils.NewSet(pd.Participants)
 	if pd.Signature.Type == DEC { // the receiver does not provide a share in the DEC protocol
-		agg.exp.Remove(sessions.NodeID(pd.Signature.Args["target"]))
+		agg.exp.Remove(helium.NodeID(pd.Signature.Args["target"]))
 	}
 	agg.share = share
 	agg.aggFunc = aggFunc
@@ -47,7 +47,7 @@ func (a *shareAggregator) put(share Share) (bool, error) {
 	return a.complete(), nil
 }
 
-func (a *shareAggregator) missing() utils.Set[sessions.NodeID] {
+func (a *shareAggregator) missing() utils.Set[helium.NodeID] {
 	a.l.RLock()
 	defer a.l.RUnlock()
 	return a.exp.Diff(a.share.From)

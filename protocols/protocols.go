@@ -1,5 +1,23 @@
-// Package protocols implements the MHE protocol execution.
-// It uses Lattigo as the underlying MHE library.
+// Package protocols implements the execution of the MHE protocols of a Helium session.
+//
+// It builds on the multiparty package of Lattigo, which provides the cryptographic
+// protocols (CKG, RTG, RKG, key switching), and adds what is needed to run them among
+// the nodes of a session:
+//
+//   - A common interface to the MHE protocols, [Protocol], identified by a [Signature] and
+//     executed by a [Descriptor] (signature, participants and aggregator). It is built on
+//     an adapter that wraps each Lattigo protocol behind a single, private interface, so that
+//     the rest of Helium neither depends on the specifics of the Lattigo types nor on their
+//     differing share, input and output types. The protocols' randomness (CRPs, private
+//     seeding) is derived from the session's seeds.
+//   - A protocol [Runner], the state machine of a node in the protocols of a session. It
+//     is driven by the coordination events of a [Coordinator] (e.g., the [CentralCoordinator]
+//     of the helper-assisted setting) and by incoming shares, and takes care of generating
+//     and sending the node's shares, aggregating them, and storing the outputs.
+//   - The masking of the key-switching shares in the T-out-of-N sessions, which makes it
+//     secure to retry a decryption with another set of participants, as presented in
+//     "On Threshold Fully Homomorphic Encryption with Synchronized Decryptors"
+//     (https://eprint.iacr.org/2026/031). See [Protocol.GenShare].
 package protocols
 
 import (
@@ -12,10 +30,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ChristianMct/helium/sessions"
+	"github.com/ChristianMct/helium"
 	"github.com/ChristianMct/helium/utils"
-	"github.com/tuneinsight/lattigo/v5/core/rlwe"
-	drlwe "github.com/tuneinsight/lattigo/v5/mhe"
+	"github.com/tuneinsight/lattigo/v6/core/rlwe"
+	mhe "github.com/tuneinsight/lattigo/v6/multiparty"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -65,8 +83,8 @@ type Signature struct {
 // However, a protocol is uniquely identified by its descriptor.
 type Descriptor struct {
 	Signature
-	Participants []sessions.NodeID
-	Aggregator   sessions.NodeID
+	Participants []helium.NodeID
+	Aggregator   helium.NodeID
 }
 
 // ID is a type for protocol IDs. Protocol IDs are unique identifiers for
@@ -108,7 +126,7 @@ type Output struct {
 // Share is a type for the nodes' protocol shares.
 type Share struct {
 	ShareMetadata
-	MHEShare LattigoShare
+	MHEShare lattigoShare
 }
 
 // ShareMetadata retains the necessary information for the framework to
@@ -116,7 +134,7 @@ type Share struct {
 type ShareMetadata struct {
 	ProtocolID   ID
 	ProtocolType Type
-	From         utils.Set[sessions.NodeID]
+	From         utils.Set[helium.NodeID]
 }
 
 // ReceiverKey is a type for the output keys in the key switching
@@ -139,9 +157,11 @@ type Protocol struct {
 	pd   Descriptor
 	id   ID
 	hid  string
-	self sessions.NodeID
+	self helium.NodeID
 
-	pubrand, privrand blake2b.XOF
+	// sess is used to derive the protocol's randomness on demand (see [GetPublicPRNG] and [GetPrivatePRNG]),
+	// so that the Protocol does not hold any random stream state across calls.
+	sess *helium.Session
 
 	proto mheProtocol
 
@@ -150,20 +170,14 @@ type Protocol struct {
 }
 
 // NewProtocol creates a new protocol from the provided protocol descriptor, session and inputs.
-func NewProtocol(pd Descriptor, sess *sessions.Session) (*Protocol, error) {
+func NewProtocol(pd Descriptor, sess *helium.Session) (*Protocol, error) {
 
 	err := checkProtocolDescriptor(pd, sess)
 	if err != nil {
 		return nil, fmt.Errorf("invalid protocol descriptor: %w", err)
 	}
 
-	p := &Protocol{id: pd.ID(), hid: pd.HID(), pd: pd, self: sess.NodeID}
-
-	// initilize the randomness sources from the session
-	p.pubrand = GetProtocolPublicRandomness(pd, sess)
-	if p.IsParticipant() {
-		p.privrand = GetProtocolPrivateRandomness(pd, sess)
-	}
+	p := &Protocol{id: pd.ID(), hid: pd.HID(), pd: pd, self: sess.NodeID, sess: sess}
 
 	// intialize the protocol
 	p.proto, err = newMHEProtocol(pd.Signature, *sess.Params.GetRLWEParameters()) // TODO: lattigo could return rlwe.Parameters
@@ -172,13 +186,13 @@ func NewProtocol(pd Descriptor, sess *sessions.Session) (*Protocol, error) {
 	}
 
 	if p.IsAggregator() {
-		p.agg = newShareAggregator(pd, p.proto.AllocateShare(), p.proto.AggregatedShares) // TODO: could cache the shares
+		p.agg = newShareAggregator(pd, p.proto.allocateShare(), p.proto.aggregatedShares) // TODO: could cache the shares
 	}
 
 	// protocol-type-specific initialization
 	switch {
 	case (p.pd.Type == RKG1 || p.pd.Type == RKG) && p.IsParticipant():
-		p.proto.(*RKGProtocol).ephSk, err = sess.GetRLKEphemeralSecretKey()
+		p.proto.(*rkgProtocol).ephSk, err = sess.GetRLKEphemeralSecretKey()
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +203,7 @@ func NewProtocol(pd Descriptor, sess *sessions.Session) (*Protocol, error) {
 
 // AllocateShare returns a newly allocated share for the protocol.
 func (p *Protocol) AllocateShare() Share {
-	return p.proto.AllocateShare()
+	return p.proto.allocateShare()
 }
 
 // ReadCRP reads the common random polynomial for this protocol. Returns an error
@@ -197,14 +211,29 @@ func (p *Protocol) AllocateShare() Share {
 func (p *Protocol) ReadCRP() (CRP, error) {
 	switch p.pd.Type {
 	case CKG, RTG, RKG, RKG1:
-		return p.proto.ReadCRP(p.pubrand)
+		return p.proto.readCRP(GetPublicPRNG(p.pd, p.sess))
 	}
 	return nil, fmt.Errorf("protocol does not use CRP")
 }
 
 // GenShare is called by the session nodes to generate their share in the protocol,
 // storing the result in the provided shareOut. The method returns an error if the node should
-// not generate a share in the protocol.
+// not generate a share in the protocol. The share is computed by calling the `GenShare`
+// method of Lattigo.
+//
+// # T-out-of-N Threshold Decryption
+//
+// Helium attempts to retry DEC protocols under different participant sets in the T-out-of-N
+// threshold setting. However, the proposed techniques based on ct re-randomization was
+// shown to be insecure (see https://eprint.iacr.org/2026/031, Section 4). The same work
+// provides a secure technique based on share masking (see https://eprint.iacr.org/2026/031,
+// Section 5): each node i in S adds to its share in the DEC protocol the mask
+//
+//	r_i = sum_{j in S} F(k_{i,j}, (S, ct)) - F(k_{j,i}, (S, ct))
+//
+// where F is a PRF with range R_q and the k_{i,j} are the nodes' mask keys (see
+// [helium.MaskKeyPair]). The masks of the nodes in S sum to zero, and a share is pseudorandom
+// until all the nodes in S have released theirs for the same (S, ct).
 func (p *Protocol) GenShare(sk *rlwe.SecretKey, in Input, shareOut *Share) error {
 
 	if !p.IsParticipant() {
@@ -219,7 +248,42 @@ func (p *Protocol) GenShare(sk *rlwe.SecretKey, in Input, shareOut *Share) error
 	shareOut.ProtocolID = p.id
 	shareOut.From = utils.NewSingletonSet(p.self)
 	shareOut.ProtocolType = p.pd.Type
-	return p.proto.GenShare(sk, in, *shareOut)
+
+	privPRNG, err := GetPrivatePRNG(p.pd, p.sess)
+	if err != nil {
+		return fmt.Errorf("cannot get private PRNG: %w", err)
+	}
+
+	var ctDigest []byte
+	_, isKeySwitch := in.(*KeySwitchInput)
+
+	// for key-switches, the private PRNG must depend on the target ciphertext
+	if isKeySwitch {
+		ctDigest, err = keySwitchInputDigest(in)
+		if err != nil {
+			return err
+		}
+		if _, err := privPRNG.Write(ctDigest); err != nil {
+			panic(err)
+		}
+	}
+
+	prngs := rlwe.PRNGs{PrivatePRNG: privPRNG}
+	if err := p.proto.genShare(prngs, sk, in, *shareOut); err != nil {
+		return err
+	}
+
+	if p.isMasked() { // implies isKeySwitch, so ctDigest is set
+		cksShare, ok := shareOut.MHEShare.(*mhe.KeySwitchShare)
+		if !ok {
+			return fmt.Errorf("bad share type: %T instead of %T", shareOut.MHEShare, cksShare)
+		}
+
+		if err := p.addKeySwitchMask(ctDigest, cksShare.Level(), cksShare.Value); err != nil {
+			return fmt.Errorf("cannot mask share: %w", err)
+		}
+	}
+	return nil
 }
 
 // Aggregate is called by the aggregator node to aggregate the shares of the protocol.
@@ -282,6 +346,40 @@ func (p *Protocol) Aggregate(ctx context.Context, incoming <-chan Share) <-chan 
 	return aggOutChan
 }
 
+// PutShare aggregates a single share into the protocol's aggregate. It is the synchronous
+// counterpart of Aggregate, meant for callers that drive the aggregation as a state machine.
+// It returns whether the aggregation is complete after this share, and an error if the share
+// cannot be aggregated (in which case the aggregation state is unchanged).
+// The method panics if called by a non-aggregator node.
+func (p *Protocol) PutShare(share Share) (complete bool, err error) {
+	if !p.IsAggregator() {
+		panic(fmt.Errorf("node is not the aggregator"))
+	}
+	return p.agg.put(share)
+}
+
+// AggregatedShare returns the current aggregated share, with its metadata set.
+// The share is complete only if PutShare has returned complete=true.
+// The method panics if called by a non-aggregator node.
+func (p *Protocol) AggregatedShare() Share {
+	if !p.IsAggregator() {
+		panic(fmt.Errorf("node is not the aggregator"))
+	}
+	agg := p.agg.getAggregatedShare()
+	agg.ProtocolID = p.id
+	agg.ProtocolType = p.pd.Type
+	return agg
+}
+
+// Missing returns the set of participants whose share has not been aggregated yet.
+// The method panics if called by a non-aggregator node.
+func (p *Protocol) Missing() utils.Set[helium.NodeID] {
+	if !p.IsAggregator() {
+		panic(fmt.Errorf("node is not the aggregator"))
+	}
+	return p.agg.missing()
+}
+
 // Output computes the output of the protocol from the input and aggregation output, storing the result in out.
 // Out must be a pointer to the type of the protocol's output, see AllocateOutput.
 func (p *Protocol) Output(in Input, agg AggregationOutput, out interface{}) error {
@@ -289,8 +387,25 @@ func (p *Protocol) Output(in Input, agg AggregationOutput, out interface{}) erro
 		return fmt.Errorf("error at aggregation: %w", agg.Error)
 	}
 
-	if err := p.proto.Finalize(in, agg.Share, out); err != nil {
+	if err := p.proto.finalize(in, agg.Share, out); err != nil {
 		return fmt.Errorf("error at output: %w", err)
+	}
+
+	//  For T-out-of-N decryptions, adds the mask of the target (which has provided no share for aggregation).
+	if p.isMasked() && p.isSessionReceiver() {
+		outCt, ok := out.(*rlwe.Ciphertext)
+		if !ok {
+			return fmt.Errorf("bad receiver type: %T instead of %T", out, outCt)
+		}
+
+		ctDigest, err := keySwitchInputDigest(in) // TODO: recomputes the digest and mask if the same Protocol ran GenShare, could be cached.
+		if err != nil {
+			return err
+		}
+
+		if err := p.addKeySwitchMask(ctDigest, in.(*KeySwitchInput).InpuCt.Level(), outCt.Value[0]); err != nil {
+			return fmt.Errorf("cannot unmask output: %w", err)
+		}
 	}
 	p.Logf("finalized protocol")
 	return nil
@@ -312,7 +427,7 @@ func (p *Protocol) Descriptor() Descriptor {
 }
 
 // HasShareFrom returns whether the protocol has already recieved a share from the specified node.
-func (p *Protocol) HasShareFrom(nid sessions.NodeID) bool {
+func (p *Protocol) HasShareFrom(nid helium.NodeID) bool {
 	return !p.agg.missing().Contains(nid)
 }
 
@@ -339,7 +454,13 @@ func (p *Protocol) Logf(msg string, v ...any) {
 	log.Printf("%s | [%s] %s\n", p.self, p.HID(), fmt.Sprintf(msg, v...))
 }
 
-func checkProtocolDescriptor(pd Descriptor, sess *sessions.Session) error {
+// isSessionReceiver returns whether the node is the target of the DEC protocol and one of
+// its participants. Such a node does not provide a share (hence, no mask) to the aggregator.
+func (p *Protocol) isSessionReceiver() bool {
+	return p.pd.Type == DEC && p.pd.Args["target"] == string(p.self) && p.IsParticipant()
+}
+
+func checkProtocolDescriptor(pd Descriptor, sess *helium.Session) error {
 
 	if len(pd.Participants) < sess.Threshold {
 		return fmt.Errorf("invalid protocol descriptor: not enough participant to execute protocol: %d < %d", len(pd.Participants), sess.Threshold)
@@ -351,7 +472,7 @@ func checkProtocolDescriptor(pd Descriptor, sess *sessions.Session) error {
 		}
 	}
 
-	target := sessions.NodeID(pd.Signature.Args["target"])
+	target := helium.NodeID(pd.Signature.Args["target"])
 
 	switch pd.Signature.Type {
 	case CKS:
@@ -382,20 +503,20 @@ func (t Type) String() string {
 }
 
 // Share returns a lattigo share with the correct go type for the protocol type.
-func (t Type) Share() LattigoShare {
+func (t Type) Share() lattigoShare {
 	switch t {
 	case SKG:
-		return &drlwe.ShamirSecretShare{}
+		return &mhe.ShamirSecretShare{}
 	case CKG:
-		return &drlwe.PublicKeyGenShare{}
+		return &mhe.PublicKeyGenShare{}
 	case RKG1, RKG:
-		return &drlwe.RelinearizationKeyGenShare{}
+		return &mhe.RelinearizationKeyGenShare{}
 	case RTG:
-		return &drlwe.GaloisKeyGenShare{}
+		return &mhe.GaloisKeyGenShare{}
 	case CKS, DEC:
-		return &drlwe.KeySwitchShare{}
+		return &mhe.KeySwitchShare{}
 	case PCKS:
-		return &drlwe.PublicKeySwitchShare{}
+		return &mhe.PublicKeySwitchShare{}
 	default:
 		return nil
 	}
@@ -480,8 +601,8 @@ func (pd *Descriptor) UnmarshalBinary(b []byte) (err error) {
 // Copy returns a copy of the Share.
 func (s Share) Copy() Share {
 	switch st := s.MHEShare.(type) {
-	case *drlwe.PublicKeyGenShare:
-		return Share{ShareMetadata: s.ShareMetadata, MHEShare: &drlwe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
+	case *mhe.PublicKeyGenShare:
+		return Share{ShareMetadata: s.ShareMetadata, MHEShare: &mhe.PublicKeyGenShare{Value: *st.Value.CopyNew()}}
 	default:
 		panic("not implemented") // TODO: implement on Lattigo side ?
 	}
@@ -500,16 +621,16 @@ func (s Share) UnmarshalBinary(data []byte) error {
 // GetParticipants returns a set of protocol participants, given the online nodes and the threshold.
 // This function handle the case of the DEC protocol, where the target must be considered a participant.
 // It returns an error if there are not enough online nodes.
-func GetParticipants(sig Signature, onlineNodes utils.Set[sessions.NodeID], threshold int) ([]sessions.NodeID, error) {
+func GetParticipants(sig Signature, onlineNodes utils.Set[helium.NodeID], threshold int) ([]helium.NodeID, error) {
 	if len(onlineNodes) < threshold {
 		return nil, fmt.Errorf("not enough online node")
 	}
 
 	available := onlineNodes.Copy()
-	selected := utils.NewEmptySet[sessions.NodeID]()
+	selected := utils.NewEmptySet[helium.NodeID]()
 	needed := threshold
 	if sig.Type == DEC {
-		target := sessions.NodeID(sig.Args["target"])
+		target := helium.NodeID(sig.Args["target"])
 		selected.Add(target)
 		available.Remove(target)
 		needed--
@@ -519,10 +640,11 @@ func GetParticipants(sig Signature, onlineNodes utils.Set[sessions.NodeID], thre
 
 }
 
-// GetProtocolPublicRandomness intitializes a keyed PRF from the session's public seed and
+// GetPublicPRNG intitializes a keyed PRF from the session's public seed and
 // the protocol's information.
 // This function ensures that the PRF is unique for each protocol execution.
-func GetProtocolPublicRandomness(pd Descriptor, sess *sessions.Session) blake2b.XOF {
+// Each call returns a new, independent stream in its initial state.
+func GetPublicPRNG(pd Descriptor, sess *helium.Session) blake2b.XOF {
 	xof, _ := blake2b.NewXOF(blake2b.OutputLengthUnknown, nil)
 	_, err := xof.Write(sess.PublicSeed)
 	if err != nil {
@@ -540,19 +662,25 @@ func GetProtocolPublicRandomness(pd Descriptor, sess *sessions.Session) blake2b.
 	return xof
 }
 
-// GetProtocolPrivateRandomness intitializes a keyed PRF from the session's private seed and
+// GetPrivatePRNG intitializes a keyed PRF from the session's private seed and
 // the protocol's information.
 // This function ensures that the PRF is unique for each protocol execution.
-func GetProtocolPrivateRandomness(pd Descriptor, sess *sessions.Session) blake2b.XOF {
-	xof := GetProtocolPublicRandomness(pd, sess)
+// Each call returns a new, independent stream in its initial state.
+// It returns an error if the session has no private seed, as the resulting
+// stream would otherwise be equal to the public one.
+func GetPrivatePRNG(pd Descriptor, sess *helium.Session) (blake2b.XOF, error) {
+	if len(sess.PrivateSeed) == 0 {
+		return nil, fmt.Errorf("session has no private seed")
+	}
+	xof := GetPublicPRNG(pd, sess)
 	_, err := xof.Write(sess.PrivateSeed)
 	if err != nil {
 		panic(err)
 	}
-	return xof
+	return xof, nil
 }
 
-func partyListToString(partList []sessions.NodeID) []byte {
+func partyListToString(partList []helium.NodeID) []byte {
 	partListSorted := make(sort.StringSlice, len(partList))
 	for i, nid := range partList {
 		partListSorted[i] = string(nid)

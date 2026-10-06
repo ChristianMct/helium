@@ -84,4 +84,4 @@ check_tools: ## Check if all required tools are installed
 install_tools: ## Install all required tools
 	@echo "Installing tools"
 	@$(GOCMD) install golang.org/x/tools/cmd/goimports@latest
-	@$(GOCMD) install honnef.co/go/tools/cmd/staticcheck@2023.1.7
+	@$(GOCMD) install honnef.co/go/tools/cmd/staticcheck@2026.2.1
